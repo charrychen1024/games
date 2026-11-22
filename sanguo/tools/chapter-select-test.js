@@ -35,6 +35,25 @@ const check = (n, ok, d) => { if (ok) { pass++; console.log('  ✓ ' + n); } els
   };
   // 标题画面上真的有「章节选择」
   check('标题菜单有「章节选择」', await ev(() => G.scenes[0].items().some(i => i.label === '章节选择')));
+  // 章节随主线推进解锁：新玩家只能选第一章
+  const peek = () => ev(async () => {
+    G.ui.clear(); const p = G.chapterSelect(); await new Promise(r => setTimeout(r, 30));
+    const m = G.ui.stack[G.ui.stack.length - 1]; const r = { title: m.title, open: m.items.filter(i => !i.disabled).length, locked: m.items.filter(i => i.disabled).length, idx: m.idx, label: m.items[m.idx].label };
+    G.ui.clear(); return r;
+  });
+  await ev(() => { localStorage.clear(); G._reached = 0; });
+  let sel = await peek();
+  check('新玩家：只开放第一章，其余锁定', sel.open === 1 && sel.locked === 33 && /已解锁 1 \/ 34/.test(sel.title), JSON.stringify(sel));
+  await ev(() => { G.state = G.newState(); G.state.chapter = 5; G.writeSlot(1); });
+  sel = await peek();
+  check('旧存档玩到第五章：开放一至五章，光标停在第五章', sel.open === 5 && sel.label.startsWith('第五章'), JSON.stringify(sel));
+  await ev(() => { localStorage.clear(); G._reached = 0; G.state = G.newState(); G.startChapter(7); });
+  await wait(400);
+  sel = await peek();
+  check('开始第七章后记住进度：开放一至七章', sel.open === 7 && (await ev(() => localStorage.getItem('fengyan_ch_reached'))) === '7', JSON.stringify(sel));
+  await ev(() => { G.markReached(34); });
+  sel = await peek();
+  check('通关后全部开放', sel.open === 34 && sel.locked === 0, JSON.stringify(sel));
   const ns = await ev(() => Object.keys(G.CHAPTERS).map(Number).sort((a, b) => a - b).filter(n => n > 1));
   for (const n of ns) {
     const before = errors.length;

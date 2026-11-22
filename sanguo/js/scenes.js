@@ -231,10 +231,36 @@
   const LATE = [['guanxing', 24, 31], ['zhangbao2', 24, 30], ['madai', 32, 99], ['liaohua', 32, 99], ['xiahouba', 34, 99]];
   const ARMOR = [[6, 'tiejia'], [11, 'longlin'], [15, 'jinsuo'], [19, 'shujin'], [23, 'longwen'], [27, 'wuxing'], [31, 'zhuge'], [99, 'zhaolie']];
   const HEAL = [[11, 'dahuan'], [15, 'shenghui'], [19, 'xuelian'], [23, 'tianxiang'], [27, 'huixin'], [31, 'jiuzhuan'], [99, 'shenyao']];
+  // 章节随主线推进解锁：玩到过哪一章，章节选择里就开放到哪一章（新玩家只有第一章）
+  const REACH_KEY = 'fengyan_ch_reached';
+  G.reachedChapter = () => {
+    let n = G._reached || 1;
+    try { n = Math.max(n, parseInt(localStorage.getItem(REACH_KEY), 10) || 1); } catch (e) { /* ignore */ }
+    // 旧版本没有这条记录：按现有存档补上（通关存档 = 全部开放）
+    for (let i = 0; i < 4; i++) {
+      const d = G.readSlot(i); if (!d || !d.meta) continue;
+      const m = d.meta, st = d.state || {};
+      if (m.cleared || st.cleared) n = Math.max(n, G.FINAL_CHAPTER);
+      else if (m.chapter && m.chapter !== G.EX_CHAPTER) n = Math.max(n, m.chapter);
+    }
+    if (G.exUnlocked && (G.exUnlocked() || G._exUnlocked)) n = Math.max(n, G.FINAL_CHAPTER);
+    return Math.min(n, G.FINAL_CHAPTER);
+  };
+  G.markReached = n => {
+    if (!(n > 0) || n === G.EX_CHAPTER || n <= G.reachedChapter()) return;
+    G._reached = n;
+    try { localStorage.setItem(REACH_KEY, String(n)); } catch (e) { /* 隐私模式：本次会话内有效 */ }
+  };
   const selList = () => Object.keys(G.CHAPTERS).map(Number).sort((a, b) => a - b).filter(n => n !== G.EX_CHAPTER || (G.exUnlocked && (G.exUnlocked() || G._exUnlocked)));
-  G.chapterSelect = () => { const list = selList(); return G.menu({ title: '章节选择', x: G.W / 2 - 200, w: 400, bottom: G.H - 40, rows: 9, cancel: true,
-    items: list.map(n => ({ label: `${G.chLabel(n)}　${G.CHAPTERS[n].title}`, right: 'Lv' + (n === G.EX_CHAPTER ? 72 : CH_LV[n] || 1) })) })
-    .then(k => (k < 0 ? -1 : list[k])); };
+  G.chapterSelect = () => {
+    const list = selList(), reached = G.reachedChapter(), open = n => n === G.EX_CHAPTER || n <= reached;
+    const idx = Math.max(0, list.indexOf(reached));
+    return G.menu({ title: `章节选择　已解锁 ${reached} / ${G.FINAL_CHAPTER}`, x: G.W / 2 - 200, w: 400, bottom: G.H - 40, rows: 9, cancel: true, idx,
+      items: list.map(n => open(n)
+        ? { label: `${G.chLabel(n)}　${G.CHAPTERS[n].title}`, right: 'Lv' + (n === G.EX_CHAPTER ? 72 : CH_LV[n] || 1) }
+        : { label: `${G.chLabel(n)}　？？？？`, right: '未解锁', disabled: true }) })
+      .then(k => (k < 0 || !open(list[k]) ? -1 : list[k]));
+  };
   G.startFrom = n => {
     if (n <= 1) { G.newGame(); return; }
     if (n === G.EX_CHAPTER) { G.startExtra(); return; }
@@ -264,6 +290,7 @@
     G.ui.clear();
     const ch = G.CHAPTERS[n];
     G.state.chapter = n; G.state.map = null;
+    G.markReached(n);
     G.restoreAll(); G.MAPS = {};
     G.save();
     const lines = ch.prologue.concat(['', `—— ${G.chLabel(n)}　${ch.title} ——`]);
