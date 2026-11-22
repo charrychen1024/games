@@ -8,6 +8,8 @@ node_modules/
 # 内部测试与审查文档（不公开）
 docs/
 */docs/
+# macOS 不区分大小写：南明的公开设计文档放在 Docs/，需要单独放行
+!nanming/Docs/
 *.log
 *.jsonl
 

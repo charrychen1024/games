@@ -1,0 +1,5 @@
+node_modules/
+screenshots/*
+!screenshots/01-overview.png
+!screenshots/02-siege.png
+!screenshots/03-battle.png

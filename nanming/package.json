@@ -1,0 +1,30 @@
+{
+  "name": "nanming",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "author": "一尾小石斑",
+  "description": "南明：1644—1662 历史地图策略游戏（网页版）",
+  "scripts": {
+    "dev": "vite --port 8110",
+    "build": "tsc --noEmit && vite build",
+    "start": "node tools/serve.mjs 8110",
+    "test": "vitest run",
+    "e2e": "node tools/e2e.mjs",
+    "verify": "npm run build && npm test && npm run e2e"
+  },
+  "devDependencies": {
+    "@types/d3-delaunay": "^6.0.4",
+    "@types/node": "^26.6.6",
+    "@types/topojson-client": "^3.1.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
+  },
+  "dependencies": {
+    "d3-delaunay": "^6.0.6",
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2"
+  }
+}
