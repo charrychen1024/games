@@ -1,7 +1,7 @@
 /* 电脑行为：规则 + 随时间变化的战略倾向。倾向只定大方向，用兵仍看局势。 */
 import type { Army, ArmyOrder, GameState, Order } from './types';
 import { armiesOf, armyPower, cityDefense, hostile, friendly, topOf, report, nodeName, adjustAtt, citiesOf } from './state';
-import { shortestPath, pathDays, neighbors } from '../data/geography';
+import { shortestPath, pathDays, neighbors, NODE } from '../data/geography';
 import { maxRecruit } from './orders';
 import { defectFaction } from './military';
 import { RECRUIT_SILVER } from './economy';
@@ -27,6 +27,19 @@ function doctrineTargets(s: GameState, a: Army): string[] {
     default:
       return [];
   }
+}
+
+/** 各家用兵范围（清军不限） */
+const SPHERE: Record<string, string[]> = {
+  shun: ['陕西', '山西', 'luoyang', 'nanyang', 'xiangyang', 'jingzhou', 'kaifeng'],
+  xi: ['四川', 'jingzhou', 'yuezhou'],
+  zheng: ['福建'],
+  zuoliangyu: ['湖广', '江西'],
+};
+function inSphere(f: string, node: string): boolean {
+  const sp = SPHERE[f];
+  if (!sp) return true;
+  return sp.includes(node) || sp.includes(NODE[node]?.area ?? '');
 }
 
 function canTake(s: GameState, a: Army, node: string): boolean {
@@ -82,7 +95,7 @@ export function aiOrders(s: GameState, f: string): Order[] {
     }
     // 机会进攻：相邻弱敌
     if (!fac.overlord || fac.overlord !== s.player) {
-      const opp = neighbors(a.location).map(nb => nb.to).filter(nid => canTake(s, a, nid))
+      const opp = neighbors(a.location).map(nb => nb.to).filter(nid => canTake(s, a, nid) && inSphere(f, nid))
         .map(nid => ({ nid, d: cityDefense(s.cities[nid]) })).sort((x, y) => x.d - y.d)[0];
       if (opp && armyPower(a, s) > opp.d * 2.2 && rng.chance(0.6)) {
         orders.push({ id: id(), kind: 'army', army: a.id, order: { kind: 'move', target: opp.nid, attack: true } });
@@ -103,6 +116,12 @@ export function aiOrders(s: GameState, f: string): Order[] {
     if (want >= 1000 && soldiers < 25000 + cityCount * 6000) orders.push({ id: id(), kind: 'recruit', node: cap.id, troops: want });
   }
   return orders;
+}
+
+/** 大顺新败之余，部众逐月离散（至乙酉春） */
+export function aiAttrition(s: GameState) {
+  if (s.turn > 10) return;
+  for (const a of Object.values(s.armies)) if (a.faction === 'shun' && a.faction !== s.player) a.troops = Math.round(a.troops * 0.97);
 }
 
 /** 电脑扩军：都城驻军充裕时编成新军，交给闲置将领 */
@@ -133,9 +152,16 @@ export function aiFixSupply(s: GameState) {
     const sup = s.cities[a.supply];
     const ok = sup && sameTop(s, sup.controller, a.faction) && sup.grain > a.troops * 0.6;
     if (ok) continue;
-    const best = Object.values(s.cities).filter(c => c.controller === a.faction && c.grain > a.troops * 0.6)
+    const lord = s.factions[a.faction]?.overlord;
+    const ownCities = Object.values(s.cities).filter(c => c.controller === a.faction && c.grain > a.troops * 0.6);
+    // 无城可依的下属军镇，就近向上级的城池索粮
+    const pool = ownCities.length || !lord ? ownCities : Object.values(s.cities).filter(c => c.controller === lord && c.grain > a.troops * 1.2);
+    const best = pool
       .map(c => ({ c, p: shortestPath(a.location, c.id, true) })).filter(x => x.p)
       .sort((x, y) => (pathDays(a.location, x.p!) - x.c.grain / 20000) - (pathDays(a.location, y.p!) - y.c.grain / 20000))[0];
+    if (best && !ownCities.length && lord === s.player && best.c.id !== a.supply) {
+      report(s, { cat: '急报', urgent: true, node: best.c.id, text: `${a.name}已无城可依，改向${nodeName(best.c.id)}支粮，每月约 ${Math.round(a.troops * 0.25)} 石。可另拨钱粮，或令其移驻。`, src: { kind: 'upkeep', ref: a.id } });
+    }
     if (best) a.supply = best.c.id;
   }
 }

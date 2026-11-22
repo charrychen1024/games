@@ -9,6 +9,31 @@ import { project, WORLD_W, WORLD_H, worldToScreen, screenToWorld, type Camera } 
 import { makeRng } from '../core/rng';
 import { routeBetween } from '../data/geography';
 import land from '../data/geo-land.json';
+import { ICONS } from '../ui/icons';
+
+const ICON_CACHE: Record<string, Path2D> = {};
+/** game-icons 的 SVG 路径 → Canvas Path2D（512×512 坐标） */
+export function iconPath(name: string): Path2D {
+  if (!ICON_CACHE[name]) {
+    const body = ICONS[name] ?? '';
+    const p = new Path2D();
+    for (const m of body.matchAll(/ d="([^"]+)"/g)) p.addPath(new Path2D(m[1]));
+    ICON_CACHE[name] = p;
+  }
+  return ICON_CACHE[name];
+}
+function drawIcon(g: CanvasRenderingContext2D, name: string, cx: number, cy: number, size: number, color: string) {
+  g.save();
+  g.translate(cx - size / 2, cy - size / 2);
+  g.scale(size / 512, size / 512);
+  g.fillStyle = color;
+  g.fill(iconPath(name));
+  g.restore();
+}
+function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  g.beginPath();
+  g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
 
 export const INK = '#2a2118';
 export const PAPER = '#ecdfc0';
@@ -221,6 +246,7 @@ export class MapRenderer {
       this.drawSieges(g, s, time);
       this.drawNodes(g, s, time);
       this.drawArmies(g, s, time);
+      this.drawSiegeSeals(g, s);
     }
     g.restore();
     if (s) this.drawLabels(g, s);
@@ -325,69 +351,87 @@ export class MapRenderer {
   drawSieges(g: CanvasRenderingContext2D, s: GameState, time: number) {
     for (const sg of Object.values(s.sieges)) {
       const [x, y] = nodePt(sg.node);
-      const r = 15;
+      const r = 22;
+      const pulse = 0.5 + 0.5 * Math.sin(time / 300);
       g.save();
       g.translate(x, y);
-      g.rotate(time / 4000);
+      // 红光
+      const grd = g.createRadialGradient(0, 0, r * 0.4, 0, 0, r + 10);
+      grd.addColorStop(0, 'rgba(224,80,63,0)'); grd.addColorStop(0.7, `rgba(224,80,63,${0.18 + pulse * 0.2})`); grd.addColorStop(1, 'rgba(224,80,63,0)');
+      g.fillStyle = grd; g.beginPath(); g.arc(0, 0, r + 10, 0, Math.PI * 2); g.fill();
+      // 刺圈
+      g.rotate(time / 5000);
       g.strokeStyle = s.factions[sg.attacker]?.color ?? '#333';
-      g.lineWidth = 2;
-      for (let k = 0; k < 12; k++) {
-        const a = k * Math.PI / 6;
-        g.beginPath(); g.moveTo(Math.cos(a) * r, Math.sin(a) * r); g.lineTo(Math.cos(a) * (r + 5), Math.sin(a) * (r + 5)); g.stroke();
+      g.lineWidth = 2.6;
+      for (let k = 0; k < 16; k++) {
+        const a = k * Math.PI / 8;
+        g.beginPath(); g.moveTo(Math.cos(a) * r, Math.sin(a) * r); g.lineTo(Math.cos(a) * (r + 6), Math.sin(a) * (r + 6)); g.stroke();
       }
-      g.setLineDash([2, 2]);
+      g.strokeStyle = '#e0503f'; g.lineWidth = 1.6; g.setLineDash([3, 3]);
       g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.stroke();
+      g.restore();
+    }
+  }
+  drawSiegeSeals(g: CanvasRenderingContext2D, s: GameState) {
+    for (const sg of Object.values(s.sieges)) {
+      const [x, y] = nodePt(sg.node);
+      const sx = x - 22, sy = y - 24;
+      g.save();
+      g.translate(sx, sy); g.rotate(-0.12);
+      roundRect(g, -8, -8, 16, 16, 3);
+      g.fillStyle = '#c8352a'; g.fill();
+      g.strokeStyle = '#f0cf86'; g.lineWidth = 1.2; g.stroke();
+      g.fillStyle = '#fff3d9'; g.font = '700 11px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('围', 0, 0.5);
       g.restore();
     }
   }
 
   drawNodes(g: CanvasRenderingContext2D, s: GameState, time: number) {
     const z = this.cam.z;
+    const k = Math.max(0.7, Math.min(1.35, 1.2 / Math.sqrt(z)));
     for (const n of NODES) {
       if (n.kind === 'outland') continue;
       const c = s.cities[n.id];
       if (!c) continue;
-      if (z < 1.0 && !n.major && !n.detail) continue;
+      if (z < 1.0 && !n.major && n.kind !== 'region') continue;
       const [x, y] = nodePt(n.id);
       const col = s.factions[c.controller]?.color ?? '#999';
-      const sz = n.kind === 'region' ? 6.5 : n.major ? 5.6 : n.kind === 'city' ? 4.4 : 3.8;
+      const big = n.kind === 'region' || n.major;
+      const sz = (big ? 8.5 : n.kind === 'city' ? 7 : 6) * k;
       const isSel = this.view.selected === n.id, isHover = this.view.hover === n.id;
       if (isSel) {
-        const pulse = 3 + Math.sin(time / 260) * 1.5;
-        g.strokeStyle = 'rgba(181,52,42,0.85)'; g.lineWidth = 2;
-        g.beginPath(); g.arc(x, y, sz + 7 + pulse, 0, Math.PI * 2); g.stroke();
+        const pulse = 3 + Math.sin(time / 260) * 2;
+        g.strokeStyle = 'rgba(255,214,120,0.95)'; g.lineWidth = 2.4;
+        g.beginPath(); g.arc(x, y, sz + 6 + pulse, 0, Math.PI * 2); g.stroke();
       }
-      g.lineWidth = isHover ? 1.8 : 1.1;
-      g.strokeStyle = INK;
-      g.fillStyle = col;
-      switch (n.kind) {
-        case 'pass':
-          // 关：门楼
-          g.beginPath(); g.rect(x - sz, y - sz * 0.6, sz * 2, sz * 1.3); g.fill(); g.stroke();
-          g.beginPath(); g.moveTo(x - sz * 1.3, y - sz * 0.6); g.lineTo(x, y - sz * 1.4); g.lineTo(x + sz * 1.3, y - sz * 0.6); g.closePath(); g.fill(); g.stroke();
-          break;
-        case 'ferry': case 'port':
-          g.beginPath(); g.arc(x, y, sz, 0, Math.PI * 2); g.fill(); g.stroke();
-          if (z >= 1.4) { g.strokeStyle = '#f5ecd7'; g.lineWidth = 0.9; g.beginPath(); g.moveTo(x, y - sz * 0.6); g.lineTo(x, y + sz * 0.6); g.moveTo(x - sz * 0.5, y + sz * 0.2); g.quadraticCurveTo(x, y + sz * 0.9, x + sz * 0.5, y + sz * 0.2); g.stroke(); }
-          break;
-        case 'region':
-          g.beginPath(); g.rect(x - sz, y - sz, sz * 2, sz * 2); g.fill(); g.stroke();
-          g.beginPath(); g.rect(x - sz + 2, y - sz + 2, sz * 2 - 4, sz * 2 - 4); g.strokeStyle = 'rgba(245,236,215,0.8)'; g.lineWidth = 0.8; g.stroke();
-          break;
-        default:
-          // 府城：双框方印
-          g.beginPath(); g.rect(x - sz, y - sz, sz * 2, sz * 2); g.fill(); g.stroke();
-          if (z >= 1.3) { g.beginPath(); g.rect(x - sz * 0.45, y - sz * 0.45, sz * 0.9, sz * 0.9); g.strokeStyle = 'rgba(245,236,215,0.85)'; g.lineWidth = 0.8; g.stroke(); }
-      }
-      // 所奉政权的旗记
-      if (z >= 1.3 || n.major) {
+      // 徽章：势力色底、金边、白色图标
+      g.save();
+      g.shadowColor = 'rgba(0,0,0,0.55)'; g.shadowBlur = 4; g.shadowOffsetY = 1.5;
+      if (n.kind === 'port' || n.kind === 'ferry') { g.beginPath(); g.arc(x, y, sz, 0, Math.PI * 2); }
+      else if (n.kind === 'pass') { g.beginPath(); g.moveTo(x, y - sz * 1.15); g.lineTo(x + sz, y - sz * 0.2); g.lineTo(x + sz * 0.8, y + sz); g.lineTo(x - sz * 0.8, y + sz); g.lineTo(x - sz, y - sz * 0.2); g.closePath(); }
+      else roundRect(g, x - sz, y - sz, sz * 2, sz * 2, sz * 0.35);
+      g.fillStyle = col; g.fill();
+      g.restore();
+      g.lineWidth = (isHover ? 2.2 : 1.4) * k;
+      g.strokeStyle = big ? '#f0cf86' : '#e8d9b4';
+      g.stroke();
+      const icon = n.kind === 'port' ? 'port' : n.kind === 'ferry' ? 'ferry' : n.kind === 'pass' ? 'pass' : 'city';
+      drawIcon(g, icon, x, y + (n.kind === 'pass' ? sz * 0.1 : 0), sz * 1.45, '#fff8e6');
+      // 所奉政权的小旗
+      if (z >= 1.3 || big) {
         const pol = POLITIES[s.factions[c.controller]?.polity ?? 'none'];
-        if (pol && pol.mark) drawFlag(g, x + sz * 0.6, y - sz, pol.flag, '#f3e9d2', pol.mark, 0.62, INK);
+        if (pol && pol.mark) {
+          g.strokeStyle = '#1b130c'; g.lineWidth = 1; g.beginPath(); g.moveTo(x + sz * 0.75, y - sz * 0.6); g.lineTo(x + sz * 0.75, y - sz * 1.9); g.stroke();
+          drawFlag(g, x + sz * 0.75, y - sz * 1.9, pol.flag, '#f3e9d2', pol.mark, 0.62 * k, '#1b130c');
+        }
       }
-      // 城防（放大后）
+      // 城防环（放大后）
       if (z >= 2.2 && (n.kind === 'city' || n.kind === 'region')) {
-        g.strokeStyle = 'rgba(42,33,24,0.6)'; g.lineWidth = 1.4;
-        g.beginPath(); g.arc(x, y, sz + 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * c.wall / 100); g.stroke();
+        g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 2.2;
+        g.beginPath(); g.arc(x, y, sz + 3.5, 0, Math.PI * 2); g.stroke();
+        g.strokeStyle = c.wall > 60 ? '#9fd18f' : c.wall > 30 ? '#e8a447' : '#e0503f';
+        g.beginPath(); g.arc(x, y, sz + 3.5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * c.wall / 100); g.stroke();
       }
     }
   }
@@ -395,38 +439,51 @@ export class MapRenderer {
   drawArmies(g: CanvasRenderingContext2D, s: GameState, _time: number) {
     this.armyHits = [];
     const byNode: Record<string, Army[]> = {};
-    for (const a of Object.values(s.armies)) { if (!visibleArmy(s, a)) continue; const k = a.progress > 0 ? a.id : a.location; (byNode[k] ??= []).push(a); }
+    for (const a of Object.values(s.armies)) { if (!visibleArmy(s, a)) continue; const key = a.progress > 0 ? a.id : a.location; (byNode[key] ??= []).push(a); }
     const z = this.cam.z;
-    const scale = Math.max(0.75, Math.min(1.4, 1.25 / Math.sqrt(z)));
-    for (const [, list] of Object.entries(byNode)) {
+    const scale = Math.max(0.7, Math.min(1.3, 1.2 / Math.sqrt(z)));
+    for (const list of Object.values(byNode)) {
       list.sort((a, b) => a.id.localeCompare(b.id));
       list.forEach((a, i) => {
         const [bx, by] = armyPt(a);
-        const ang = -Math.PI / 2 - 0.9 + i * 0.75;
-        const off = a.progress > 0 ? 0 : 13;
-        const x = bx + Math.cos(ang) * off * (1 + i * 0.15), y = by + Math.sin(ang) * off * 0.8 - 2;
+        const ang = -Math.PI / 2 - 0.85 + i * 0.85;
+        const off = a.progress > 0 ? 0 : (s.sieges[a.location] ? 30 : 19) * scale;
+        const x = bx + Math.cos(ang) * off * (1 + i * 0.12), y = by + Math.sin(ang) * off * 0.85 - 2;
         const f = s.factions[a.faction];
         const pol = POLITIES[f?.polity ?? 'none'];
         const cmd = s.chars[a.commander];
         const mark = (cmd?.name ?? f?.short ?? '?').slice(0, 1);
         const sel = this.view.selectedArmy === a.id;
+        const mine = topOfSafe(s, a.faction) === s.player;
         g.save();
         g.translate(x, y); g.scale(scale, scale);
-        if (sel) { g.fillStyle = 'rgba(255,240,200,0.8)'; g.beginPath(); g.arc(0, -6, 13, 0, Math.PI * 2); g.fill(); }
-        // 旗杆
-        g.strokeStyle = INK; g.lineWidth = 1.4;
-        g.beginPath(); g.moveTo(0, 6); g.lineTo(0, -16); g.stroke();
-        drawFlag(g, 0, -16, pol?.flag ?? 'rect', f?.color ?? '#888', mark, 1.15, INK);
-        // 兵力条
-        const w = Math.min(18, 4 + a.troops / 5000);
-        g.fillStyle = 'rgba(42,33,24,0.85)'; g.fillRect(-w / 2, 7, w, 2.6);
-        g.fillStyle = a.morale > 50 ? '#e8d9a8' : a.morale > 25 ? '#d99a4e' : '#c0392b';
-        g.fillRect(-w / 2, 7, w * Math.min(1, a.morale / 100), 2.6);
+        if (sel) { g.fillStyle = 'rgba(255,214,120,0.55)'; g.beginPath(); g.arc(0, 0, 15, 0, Math.PI * 2); g.fill(); }
+        // 旗杆与小旗（所奉政权）
+        g.strokeStyle = '#1b130c'; g.lineWidth = 1.3;
+        g.beginPath(); g.moveTo(7, -4); g.lineTo(7, -20); g.stroke();
+        drawFlag(g, 7, -20, pol?.flag ?? 'rect', '#f3e9d2', pol?.mark ?? '', 0.7, '#1b130c');
+        // 圆章：主将姓氏
+        g.shadowColor = 'rgba(0,0,0,0.6)'; g.shadowBlur = 5; g.shadowOffsetY = 2;
+        g.beginPath(); g.arc(0, 0, 10.5, 0, Math.PI * 2);
+        g.fillStyle = f?.color ?? '#888'; g.fill();
+        g.shadowColor = 'transparent';
+        g.lineWidth = 2; g.strokeStyle = mine ? '#f0cf86' : '#e8d9b4'; g.stroke();
+        g.fillStyle = '#fff8e6'; g.font = '700 12px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(mark, 0, 0.5);
+        // 兵力牌
+        const t = this.knownArmy(s, a) ? fmtTroops(a.troops) : roughT(a.troops);
+        g.font = '700 8.5px "Noto Serif SC", serif';
+        const tw = g.measureText(t).width + 6;
+        roundRect(g, -tw / 2, 11, tw, 10, 3);
+        g.fillStyle = 'rgba(15,10,6,0.85)'; g.fill();
+        g.fillStyle = a.morale > 50 ? '#f0cf86' : a.morale > 25 ? '#e8a447' : '#ff8f7f';
+        g.fillText(t, 0, 16.5);
         g.restore();
-        this.armyHits.push({ id: a.id, x, y: y - 8 * scale, r: 12 * scale });
+        this.armyHits.push({ id: a.id, x, y, r: 13 * scale });
       });
     }
   }
+  knownArmy(s: GameState, a: Army) { const t = topOfSafe(s, a.faction); return t === s.player || a.faction === s.player; }
 
   drawLabels(g: CanvasRenderingContext2D, s: GameState) {
     const z = this.cam.z;
@@ -469,7 +526,7 @@ export class MapRenderer {
       g.textAlign = 'left';
       const label = n.name;
       const tw = label.length * size, th = size + (z >= 2.6 ? size : 0);
-      const gap = 8 * Math.min(2, z) * 0.7 + 4;
+      const gap = 13;
       const cands: [number, number][] = [[sx + gap, sy + 1], [sx - gap - tw, sy + 1], [sx - tw / 2, sy - gap - size / 2], [sx - tw / 2, sy + gap + size / 2]];
       let tx = cands[0][0], ty = cands[0][1], ok = false;
       for (const [cx, cy] of cands) {
@@ -477,17 +534,19 @@ export class MapRenderer {
         if (prio(n.id) <= 1 || !placed.some(r => r[0] < rect[0] + rect[2] && rect[0] < r[0] + r[2] && r[1] < rect[1] + rect[3] && rect[1] < r[1] + r[3])) { tx = cx; ty = cy; placed.push(rect); ok = true; break; }
       }
       if (!ok) continue;
-      g.lineWidth = 3.5; g.strokeStyle = 'rgba(240,230,205,0.9)'; g.lineJoin = 'round';
-      g.strokeText(label, tx, ty);
-      g.fillStyle = INK; g.fillText(label, tx, ty);
+      g.fillStyle = big ? 'rgba(20,13,8,0.82)' : 'rgba(20,13,8,0.66)';
+      roundRect(g, tx - 4, ty - size / 2 - 3, g.measureText(label).width + 8, size + 6, 4); g.fill();
+      if (big) { g.strokeStyle = 'rgba(217,173,91,0.7)'; g.lineWidth = 1; g.stroke(); }
+      g.fillStyle = big ? '#f6e3b4' : '#efe2c6'; g.fillText(label, tx, ty + 0.5);
       // 放大后：驻军
       if (z >= 2.6) {
         const c = s.cities[n.id];
         const own = c.controller === s.player || topOfSafe(s, c.controller) === s.player;
         const txt = own ? `驻 ${fmtTroops(c.garrison)}` : `驻 ${roughT(c.garrison)}`;
         g.font = `500 ${size - 3}px "Noto Serif SC", serif`;
-        g.fillStyle = 'rgba(60,40,25,0.85)';
-        g.strokeText(txt, tx, ty + size);
+        g.fillStyle = 'rgba(20,13,8,0.6)';
+        roundRect(g, tx - 4, ty + size - (size - 3) / 2 - 1, g.measureText(txt).width + 8, size - 1, 3); g.fill();
+        g.fillStyle = '#e8d9b4';
         g.fillText(txt, tx, ty + size);
       }
     }

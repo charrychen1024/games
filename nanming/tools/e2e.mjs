@@ -38,9 +38,10 @@ async function nextMonth(manualBattle = false) {
       await page.click('#battle-auto', { timeout: 600 }).catch(() => {});
       await wait(400); continue;
     }
+    if (await visible('#splash-go')) { await page.click('#splash-go', { timeout: 1000 }).catch(() => {}); await wait(150); continue; }
     const enabled = await page.locator('#btn-next').isEnabled().catch(() => false);
     const label = await text('#btn-next');
-    if (enabled || label.includes('结束')) break;
+    if (enabled || label.includes('本局')) break;
     await wait(150);
   }
   await wait(200);
@@ -66,7 +67,8 @@ try {
   check('详情写明实控者与所奉政权', (await text('#city-controller')).includes('弘光朝廷') && (await text('#city-polity')).includes('明'));
 
   console.log('下达命令');
-  await page.selectOption('#policy-select', 'agri');
+  await page.click('#act-policy');
+  await page.click('[data-policy="agri"]');
   await wait(200);
   check('改方针加入本月命令', (await text('#orders')).includes('劝农'));
   await page.click('#act-recruit');
@@ -108,29 +110,31 @@ try {
   check('第一个月有史事抉择（高杰争扬州）', m1.choices >= 1);
   check('月报自动展开且有内容', await visible('#report-entries .entry'));
   const reportText = await text('#report-entries');
-  check('月报包含号令下属的结果与原因', reportText.includes('号令黄得功部') && reportText.includes('结果'), reportText.slice(0, 200));
+  check('军情包含号令下属的结果', reportText.includes('号令黄得功部 →'), reportText.slice(0, 200));
   check('月报包含史事', reportText.includes('史可法督师江北'));
   await page.locator('#report-entries .locate').first().click();
   await wait(250);
   check('点“定位”打开对应城池', await visible('#city-name'));
   await page.evaluate(() => NM.selectNode('nanjing'));
   await wait(150);
+  await page.click('#tab-ledger');
+  await wait(150);
   check('城池详情逐项列出钱粮变化并标出你的命令', (await text('#ledger')).includes('你的命令'), (await text('#ledger')).slice(0, 160));
   let months = 1, totalBattles = m1.battles;
   for (let i = 0; i < 11; i++) {
     const label = await text('#btn-next');
-    if (label.includes('结束')) break;
+    if (label.includes('本局')) break;
     const r = await nextMonth();
     months++; totalBattles += r.battles;
   }
   check('连续推进满十二个月', months === 12, `months=${months}`);
   check('试玩结束弹窗出现', (await text('#modal')).includes('试玩结束'), (await text('#modal')).slice(0, 80));
   console.log(`  （本局玩家参与的战斗 ${totalBattles} 场）`);
-  const endDate = await text('#date-label');
+  const endDate = await page.getAttribute('#date-label', 'title');
   check('最后一月为乙酉四月', endDate.includes('四月') && endDate.includes('1645'), endDate);
 
   console.log('存档与读档');
-  await page.locator('#modal button', { hasText: '继续推进' }).click();
+  await page.click('#end-continue');
   await wait(200);
   await page.click('#btn-save');
   await page.click('[data-save="1"]');
@@ -139,14 +143,14 @@ try {
   await page.reload();
   await wait(800);
   check('刷新后标题页有“继续游戏”', await visible('#btn-continue'));
-  await page.click('text=读取存档');
+  await page.click('#btn-load');
   await page.click('[data-load="1"]');
   await wait(500);
   check('读档后日期一致', (await text('#date-label')) === saved, `${saved} vs ${await text('#date-label')}`);
 
   console.log('地图样稿：扬州被围');
-  await page.click('text=标题');
-  await page.locator('#modal button', { hasText: '回到标题' }).click();
+  await page.click('#btn-title');
+  await page.click('#title-ok');
   await wait(300);
   await page.click('#btn-sample');
   await wait(500);

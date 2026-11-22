@@ -1,37 +1,53 @@
-/* 截图：node tools/shot.mjs —— 生成 screenshots/ 下的几张图 */
+/* 截图：node tools/shot.mjs —— 生成 screenshots/ 下的几张图（先 npm run build） */
 import { serve } from './serve.mjs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const pw = require('/opt/homebrew/lib/node_modules/agent-browser/node_modules/playwright-core');
-const PORT = 8211;
-const server = await serve(PORT);
+const W = Number(process.env.W ?? 1440), H = Number(process.env.H ?? 900);
+const server = await serve(8211);
 const browser = await pw.chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+const page = await browser.newPage({ viewport: { width: W, height: H } });
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
-page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
-await page.goto(`http://127.0.0.1:${PORT}/`);
-await page.waitForTimeout(1200);
-await page.screenshot({ path: 'screenshots/00-title.png' });
-await page.evaluate(() => { try { localStorage.clear(); } catch {} });
-await page.click('#btn-new');
-await page.waitForTimeout(700);
-await page.screenshot({ path: 'screenshots/03-start.png' });
-await page.evaluate(() => { NM.closePanel(); NM.map.focus('wuchang'); NM.map.cam.z = 0.8; document.querySelector('#hint').classList.add('hidden'); });
-await page.waitForTimeout(300);
-await page.screenshot({ path: 'screenshots/01-overview.png' });
+const shot = async (name) => { await page.waitForTimeout(350); await page.screenshot({ path: `screenshots/${name}.png` }); };
+await page.goto('http://127.0.0.1:8211/');
+await page.evaluate(() => { try { localStorage.clear(); localStorage.setItem('nanming:hint', '9'); } catch {} });
+await page.reload(); await page.waitForTimeout(1200);
+await shot('00-title');
+await page.click('#btn-new'); await page.waitForTimeout(500);
+await page.evaluate(() => NM.selectNode('nanjing'));
+await shot('03-start');
+await page.evaluate(() => { NM.closePanel(); NM.map.focus('wuchang', 0.8); });
+await shot('01-overview');
+// 推进一个月，看要闻与军情
+await page.evaluate(() => { NM.addOrder({ id: 'o0-9', kind: 'recruit', node: 'nanjing', troops: 2000 }); });
+await page.click('#btn-next');
+for (let i = 0; i < 80; i++) {
+  if (await page.locator('[data-choice]').first().isVisible().catch(() => false)) { await shot('07-choice'); await page.click('[data-choice="0"]'); }
+  if (await page.locator('#splash-go').isVisible().catch(() => false)) break;
+  await page.waitForTimeout(150);
+}
+await shot('08-splash');
+await page.click('#splash-go');
+await page.evaluate(() => { NM.selectNode('nanjing'); NM.cityTab = 'ledger'; NM.renderCity('nanjing'); });
+await shot('06-report');
+await page.evaluate(() => NM.selectArmy('a_huang'));
+await shot('09-army');
+await page.evaluate(() => NM.formCommand('a_huang', { kind: 'move', target: 'chuzhou', attack: false }));
+await shot('10-command');
+await page.evaluate(() => NM.closeModal());
+// 样稿
 await page.evaluate(() => NM.showTitle());
-await page.click('#btn-sample');
-await page.waitForTimeout(800);
-await page.screenshot({ path: 'screenshots/02-siege.png' });
+await page.click('#btn-sample'); await page.waitForTimeout(600);
+await page.evaluate(() => document.querySelector('#report').classList.add('hidden'));
+await shot('02-siege');
 await page.click('#btn-next');
 await page.waitForSelector('#battle-go', { timeout: 20000 });
-await page.waitForTimeout(500);
-await page.locator('#battle-ui .ord[data-lane="1"]').nth(2).click();
+await page.waitForTimeout(400);
 await page.click('#battle-go');
 await page.waitForTimeout(700);
-await page.screenshot({ path: 'screenshots/04-battle-anim.png' });
-await page.waitForTimeout(1400);
-await page.screenshot({ path: 'screenshots/05-battle.png' });
+await shot('04-battle-anim');
+await page.waitForTimeout(1300);
+await shot('05-battle');
 console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no errors');
 await browser.close(); server.close();

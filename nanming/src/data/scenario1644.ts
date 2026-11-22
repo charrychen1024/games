@@ -105,8 +105,8 @@ export const ARMIES_1644: Army[] = [
   A('a_ajige', '英亲王军', 'qing', 'ajige', 40000, mix(0.35, 0.55, 0.1, 0), 'beijing', 'beijing', 80),
   A('a_wu', '关宁军', 'qing', 'wusangui', 30000, mix(0.5, 0.35, 0.15, 0), 'beijing', 'beijing', 75),
   A('a_zhunta', '山东路清军', 'qing', 'zhunta', 15000, mix(0.4, 0.5, 0.1, 0), 'tianjin', 'tianjin', 78),
-  A('a_li', '大顺御营', 'shun', 'lizicheng', 50000, mix(0.55, 0.35, 0.1, 0), 'taiyuan', 'taiyuan', 55),
-  A('a_liguo', '李过部', 'shun', 'liguo', 30000, mix(0.6, 0.3, 0.1, 0), 'xian', 'xian', 62),
+  A('a_li', '大顺御营', 'shun', 'lizicheng', 50000, mix(0.55, 0.35, 0.1, 0), 'taiyuan', 'taiyuan', 42),
+  A('a_liguo', '李过部', 'shun', 'liguo', 30000, mix(0.6, 0.3, 0.1, 0), 'xian', 'xian', 52),
   A('a_bai', '襄阳顺军', 'shun', 'baiwang', 15000, mix(0.65, 0.25, 0.1, 0), 'xiangyang', 'xiangyang', 55),
   A('a_zhang', '西营本部', 'xi', 'zhangxianzhong', 80000, mix(0.65, 0.2, 0.1, 0.05), 'kuizhou', 'kuizhou', 72),
 ];

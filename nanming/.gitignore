@@ -1,5 +1,7 @@
 node_modules/
 screenshots/*
+!screenshots/00-title.png
 !screenshots/01-overview.png
 !screenshots/02-siege.png
-!screenshots/03-battle.png
+!screenshots/05-battle.png
+!screenshots/06-report.png

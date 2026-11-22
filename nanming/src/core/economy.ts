@@ -137,8 +137,9 @@ export function runEconomy(s: GameState) {
       }
     }
   }
-  // 4. 民心、人口、缺粮
+  // 4. 民心、人口、缺粮、城防自修
   for (const c of cities) {
+    if (!s.sieges[c.id] && c.wall < 60) bump(s, c.id, 'wall', 1, '民夫修城', { kind: 'income' });
     if (s.sieges[c.id]) bump(s, c.id, 'minxin', -3, '城被围困', { kind: 'siege', ref: c.id });
     else if (c.minxin < 55 && c.policy !== 'levy') bump(s, c.id, 'minxin', 0.5, '休养', { kind: 'income' });
     if (c.grain <= 0 && c.garrison > 0) {

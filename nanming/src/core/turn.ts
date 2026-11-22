@@ -7,7 +7,7 @@ import { autoResolve } from './battle';
 import { applyOrder, resolveMissions } from './orders';
 import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects } from './military';
 import { runEconomy } from './economy';
-import { aiOrders, aiFixSupply, aiDefections, aiRaiseArmies } from './ai';
+import { aiOrders, aiFixSupply, aiDefections, aiRaiseArmies, aiAttrition } from './ai';
 import { dueEvents, fireEvent, choiceFor, applyChoice, type EventDef, type PendingChoice } from './events';
 import { EVENTS } from '../data/events';
 import { pruneLedger, topOf, report, friendly, citiesOf, armiesOf } from './state';
@@ -43,6 +43,7 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   for (const o of delayed) applyOrder(s, s.player, o.kind === 'command' ? { ...o, silver: 0 } : o);
   for (const o of playerOrders) applyOrder(s, s.player, o);
   aiRaiseArmies(s);
+  aiAttrition(s);
   aiFixSupply(s);
   for (const f of Object.keys(s.factions).sort()) if (f !== s.player) for (const o of aiOrders(s, f)) applyOrder(s, f, o);
 

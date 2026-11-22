@@ -7,11 +7,16 @@ import {
   type BattleState, type Choice, type LaneOrder, type Stratagem,
 } from '../core/battle';
 import { h, $, clear, wan } from './dom';
+import { iconSvg } from './icons';
 import { beat, gong } from './audio';
 import { drawFlag } from '../render/map';
 import { POLITIES } from '../data/factions';
 import { makeRng } from '../core/rng';
 
+const ic = (name: string) => { const sp = h('span', { style: { display: 'contents' } }); sp.innerHTML = iconSvg(name); return sp; };
+const ORDER_ICON: Record<string, string> = { attack: 'attack', hold: 'hold', flank: 'flank', volley: 'volley', charge: 'charge', withdraw: 'withdraw', storm: 'storm', bombard: 'bombard', sap: 'sap', blockade: 'blockade', sortie: 'sortie', repair: 'repair' };
+const STRAT_ICON: Record<string, string> = { ambush: 'ambush', fire: 'fire', night: 'night', persuade: 'persuade' };
+const meterEl = (v: number) => h('div', { class: 'meter' }, h('i', { style: { width: Math.max(0, Math.min(100, v)) + '%', background: v >= 50 ? 'var(--green)' : v >= 25 ? 'var(--amber)' : 'var(--red-2)' } }));
 interface Anim { from: BattleState; to: BattleState; start: number; dur: number }
 const WEATHER_NAME = { clear: '晴', rain: '雨', wind: '大风', fog: '雾' };
 const TERRAIN_NAME = { plain: '平野', river: '临江', hills: '山隘', city: '城下' };
@@ -218,51 +223,54 @@ export function playBattle(s: GameState, b0: BattleState, side: 'att' | 'def', f
       clear(ui);
       const me = cur[side], them = cur[foe];
       const left = h('div');
-      left.append(h('div', { class: 'battle-head' },
-        h('b', null, `${me.commanderName}（统 ${me.tong} · 谋 ${me.mou}）  ${wan(sideTroops(me))}  对  ${them.commanderName}  ${wan(sideTroops(them))}`),
-        h('small', null, cur.kind === 'siege' ? `城防 ${Math.round(cur.wall)}` : '')));
+      const coin = (f: string, name: string) => h('div', { class: 'coin', style: { background: colorOf(f) } }, name.slice(0, 1));
+      left.append(h('div', { class: 'bhead' },
+        h('div', { class: 'side' }, coin(me.faction, me.commanderName), h('div', null, h('b', null, wan(sideTroops(me))), h('div', { style: { fontSize: '11.5px', color: 'var(--dim)' } }, `${me.commanderName} · 统${me.tong} 谋${me.mou}`))),
+        h('span', { class: 'vsx' }, '对'),
+        h('div', { class: 'side' }, coin(them.faction, them.commanderName), h('div', null, h('b', null, wan(sideTroops(them))), h('div', { style: { fontSize: '11.5px', color: 'var(--dim)' } }, them.commanderName))),
+        h('div', { style: { flex: '1' } }),
+        cur.kind === 'siege' ? h('div', { class: 'pill' }, ic('wall'), h('b', null, String(Math.round(cur.wall))), h('small', null, '城防')) : null,
+        h('div', { class: 'pill' }, ic('hourglass'), h('b', null, `${Math.min(cur.round + 1, cur.maxRounds)}/${cur.maxRounds}`), h('small', null, '回合'))));
       const lanes = h('div', { class: 'lanes' });
       const legal = legalOrders(cur, side);
-      const hint = h('div', { class: 'hint-line' }, '把鼠标移到命令上可看说明。');
+      const hint = h('span', { class: 'hintline' }, '');
       for (let i = 0; i < 3; i++) {
         const l = me.lanes[i];
-        const box = h('div', { class: 'lane' }, h('h4', null, LANE_NAMES[cur.kind][i], h('small', null, `${wan(l.troops)} · 士气 ${Math.round(l.morale)}${l.routed ? ' · 已溃' : l.withdrawn ? ' · 已退' : ''}`)));
-        const ords = h('div', { class: 'ords' });
+        const box = h('div', { class: 'lane' }, h('h4', null, h('span', null, LANE_NAMES[cur.kind][i]), h('b', null, l.routed ? '溃' : l.withdrawn ? '退' : wan(l.troops))));
+        box.append(meterEl(l.morale));
+        const ords = h('div', { class: 'ords', style: { marginTop: '6px' } });
         for (const o of legal) {
-          const btn = h('button', { class: 'ord' + (choice.lanes[i] === o ? ' on' : ''), disabled: !laneActive(l) || cur.over || busy, 'data-lane': i, 'data-order': o,
-            onclick: () => { choice.lanes[i] = o; renderUI(); }, onmouseenter: () => { hint.textContent = `${ORDER_NAME[o]}：${ORDER_HINT[o]}`; } }, ORDER_NAME[o]);
-          ords.append(btn);
+          ords.append(h('button', { class: 'ord' + (choice.lanes[i] === o ? ' on' : ''), disabled: !laneActive(l) || cur.over || busy, 'data-lane': i, 'data-order': o, title: ORDER_HINT[o],
+            onclick: () => { choice.lanes[i] = o; renderUI(); }, onmouseenter: () => { hint.textContent = `${ORDER_NAME[o]}：${ORDER_HINT[o]}`; } }, ic(ORDER_ICON[o]), ORDER_NAME[o]));
         }
         box.append(ords);
         lanes.append(box);
       }
       left.append(lanes);
-      const strats = h('div', { class: 'strats' }, h('span', null, `计策（余 ${me.stratagems} 次）：`));
-      const legalS = legalStratagems(cur, side);
-      strats.append(h('button', { class: 'ord' + (!choice.stratagem ? ' on' : ''), disabled: cur.over || busy, onclick: () => { choice.stratagem = undefined; renderUI(); } }, '不用'));
-      for (const k of legalS) {
-        strats.append(h('button', { class: 'ord' + (choice.stratagem === k ? ' on' : ''), disabled: cur.over || busy, 'data-strat': k,
+      const strats = h('div', { class: 'strats' }, h('span', { class: 'lbl' }, ic('ambush'), `计策 ×${me.stratagems}`));
+      strats.append(h('button', { class: 'strat' + (!choice.stratagem ? ' on' : ''), disabled: cur.over || busy, onclick: () => { choice.stratagem = undefined; renderUI(); } }, ic('close'), '不用'));
+      for (const k of legalStratagems(cur, side)) {
+        strats.append(h('button', { class: 'strat' + (choice.stratagem === k ? ' on' : ''), disabled: cur.over || busy, 'data-strat': k, title: STRATAGEM_HINT[k],
           onclick: () => { choice.stratagem = k as Stratagem; renderUI(); }, onmouseenter: () => { hint.textContent = `${STRATAGEM_NAME[k]}：${STRATAGEM_HINT[k]}`; } },
-          `${STRATAGEM_NAME[k]} ${Math.round(stratagemOdds(cur, side, k) * 100)}%`));
+          ic(STRAT_ICON[k]), STRATAGEM_NAME[k], h('em', null, `${Math.round(stratagemOdds(cur, side, k) * 100)}%`)));
       }
-      left.append(strats, hint);
-      const acts = h('div', { class: 'battle-actions' });
+      left.append(strats);
+      const acts = h('div', { class: 'bacts' });
       if (!cur.over) {
         acts.append(
-          h('button', { class: 'act primary', id: 'battle-go', disabled: busy, onclick: () => go() }, `下令（第 ${cur.round + 1} 回合）`),
-          h('button', { class: 'act', id: 'battle-auto', disabled: busy, onclick: () => auto() }, '交给部将，自动打完'),
-        );
+          h('button', { class: 'btn primary', id: 'battle-go', disabled: busy, onclick: () => go() }, ic('attack'), `下令 · 第 ${cur.round + 1} 回合`),
+          h('button', { class: 'btn', id: 'battle-auto', disabled: busy, onclick: () => auto() }, ic('auto'), '部将代打'), hint);
       } else {
-        acts.append(h('button', { class: 'act primary', id: 'battle-done', onclick: () => done() }, '收兵'));
+        acts.append(h('button', { class: 'btn primary', id: 'battle-done', onclick: () => done() }, ic('ok'), cur.winner === side ? '凯旋' : '收兵'));
       }
       left.append(acts);
-      const logBox = h('div', { class: 'battle-log' });
-      if (!cur.log.length) logBox.append(h('p', null, `${cur.att.name}${cur.kind === 'siege' ? '攻城' : '来攻'}，${cur.def.name}迎战。每回合为三路各下一令，可加一条计策。`));
+      const logBox = h('div', { class: 'blog' });
+      if (!cur.log.length) logBox.append(h('p', null, '三路各下一令，可加一条计策。'));
       for (const r of cur.log) {
-        logBox.append(h('p', { class: 'round' }, `第 ${r.round} 回合`));
+        logBox.append(h('p', { class: 'r' }, `第 ${r.round} 回合`));
         for (const t of r.text) logBox.append(h('p', null, t));
       }
-      if (cur.over) logBox.append(h('p', { class: 'round' }, outcomeText(cur)));
+      if (cur.over) logBox.append(h('p', { class: 'r' }, outcomeText(cur)));
       ui.append(left, logBox);
       logBox.scrollTop = logBox.scrollHeight;
     }

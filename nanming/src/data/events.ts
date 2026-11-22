@@ -245,7 +245,7 @@ export const EVENTS: EventDef[] = [
     id: 'ss_tongguan', kind: 'shishi', title: '李自成失潼关', from: 7, to: 9, node: 'tongguan',
     cond: s => ctrl(s, 'tongguan') === 'qing',
     altered: s => ctrl(s, 'tongguan') === 'shun',
-    text: (_s, v) => v === 'history' ? '清军破潼关，李自成放弃西安，经商洛南走湖广。' : '清军未能叩开潼关，大顺仍据关中，但已显疲态。',
+    text: (s, v) => v === 'history' ? `清军破潼关，${s.chars.lizicheng.status === 'active' ? '李自成' : '大顺余部'}放弃西安，经商洛南走湖广。` : '清军未能叩开潼关，大顺仍据关中，但已显疲态。',
     history: '顺治二年正月，清军克潼关，李自成弃西安南撤。',
     source: SRC_GU + '第四章',
     effect: (s, v) => {
