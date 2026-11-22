@@ -1,0 +1,26 @@
+import { serve } from './serve.mjs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const pw = require('/opt/homebrew/lib/node_modules/agent-browser/node_modules/playwright-core');
+const server = await serve(8214);
+const browser = await pw.chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+page.on('console', m => console.log('console:', m.type(), m.text()));
+page.on('pageerror', e => console.log('pageerror', e.message));
+await page.goto('http://127.0.0.1:8214/');
+await page.evaluate(() => localStorage.setItem('nanming:hint', '9'));
+await page.click('#btn-sample'); await page.waitForTimeout(500);
+await page.click('#btn-next');
+await page.waitForSelector('#battle-go', { timeout: 20000 });
+await page.waitForTimeout(1200);
+const info = await page.evaluate(() => {
+  const v = window.NM_battle; const sc = v.scene;
+  const src = sc.textures.get('wall').getSourceImage();
+  const d = src.getContext('2d').getImageData(0, 0, src.width, src.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  const imgs = sc.children.list.filter(o => o.texture && o.texture.key === 'wall').map(o => ({ x: o.x, y: o.y, vis: o.visible, depth: o.depth, w: o.displayWidth }));
+  return { W: sc.W, H: sc.H, kind: sc.b.kind, size: [src.width, src.height], painted: n, imgs, wallX: sc.geo.wallX(sc.geo.laneY(1)) };
+});
+console.log(info);
+await page.screenshot({ path: 'screenshots/dbg.png' });
+await browser.close(); server.close();
