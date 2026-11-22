@@ -10,6 +10,7 @@ import { makeRng } from '../core/rng';
 import { routeBetween } from '../data/geography';
 import land from '../data/geo-land.json';
 import { ICONS } from '../ui/icons';
+import { emblem, flagAnchor, drawWavingFlag, type EmblemType } from './emblems';
 
 const ICON_CACHE: Record<string, Path2D> = {};
 /** game-icons 的 SVG 路径 → Canvas Path2D（512×512 坐标） */
@@ -22,7 +23,7 @@ export function iconPath(name: string): Path2D {
   }
   return ICON_CACHE[name];
 }
-function drawIcon(g: CanvasRenderingContext2D, name: string, cx: number, cy: number, size: number, color: string) {
+export function drawIcon(g: CanvasRenderingContext2D, name: string, cx: number, cy: number, size: number, color: string) {
   g.save();
   g.translate(cx - size / 2, cy - size / 2);
   g.scale(size / 512, size / 512);
@@ -222,7 +223,16 @@ export class MapRenderer {
   }
 
   /* ---------- 每帧绘制 ---------- */
+  lastTime = 0;
+  target: { x: number; y: number; z: number } | null = null;
   render(time: number) {
+    this.lastTime = time;
+    if (this.target) {
+      const t = this.target;
+      this.cam.x += (t.x - this.cam.x) * 0.16; this.cam.y += (t.y - this.cam.y) * 0.16; this.cam.z += (t.z - this.cam.z) * 0.16;
+      if (Math.abs(t.x - this.cam.x) < 0.5 && Math.abs(t.y - this.cam.y) < 0.5 && Math.abs(t.z - this.cam.z) < 0.005) this.target = null;
+      this.clamp();
+    }
     const { ctx: g, cam } = this;
     const s = this.view.state;
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -245,9 +255,11 @@ export class MapRenderer {
       this.drawRoutes(g, s, time);
       this.drawSieges(g, s, time);
       this.drawNodes(g, s, time);
+      this.drawSiegeSmoke(g, s, time);
       this.drawArmies(g, s, time);
       this.drawSiegeSeals(g, s);
     }
+    this.drawCloudShadows(g, time);
     g.restore();
     if (s) this.drawLabels(g, s);
   }
@@ -303,6 +315,12 @@ export class MapRenderer {
       smoothPath(g, pts); g.stroke();
       g.strokeStyle = WATER; g.lineWidth = r.width * 0.55;
       smoothPath(g, pts); g.stroke();
+      if (r.width >= 1.6) {
+        g.setLineDash([6, 22]); g.lineDashOffset = -this.lastTime / 45;
+        g.strokeStyle = 'rgba(235,250,250,0.55)'; g.lineWidth = r.width * 0.35;
+        smoothPath(g, pts); g.stroke();
+        g.setLineDash([]);
+      }
     }
     g.setLineDash([4, 3]);
     g.strokeStyle = 'rgba(80,120,130,0.8)'; g.lineWidth = 1.2;
@@ -372,6 +390,31 @@ export class MapRenderer {
       g.restore();
     }
   }
+  /** 被围之城：烽烟与火光（画在城郭之上） */
+  drawSiegeSmoke(g: CanvasRenderingContext2D, s: GameState, time: number) {
+    for (const sg of Object.values(s.sieges)) {
+      const [x, y] = nodePt(sg.node);
+      for (let k = 0; k < 7; k++) {
+        const p = ((time / 2600 + k / 7) % 1);
+        const px = x - 4 + Math.sin(k * 2.1 + p * 3) * 4 + p * 10, py = y - 14 - p * 34;
+        g.fillStyle = `rgba(60,55,50,${0.45 * (1 - p)})`;
+        g.beginPath(); g.arc(px, py, 3 + p * 7, 0, Math.PI * 2); g.fill();
+      }
+      const fl = 0.6 + 0.4 * Math.sin(time / 90);
+      const gr = g.createRadialGradient(x - 3, y - 9, 0, x - 3, y - 9, 8);
+      gr.addColorStop(0, `rgba(255,200,90,${0.9 * fl})`); gr.addColorStop(1, 'rgba(255,90,20,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(x - 3, y - 9, 8, 0, Math.PI * 2); g.fill();
+    }
+  }
+  /** 云影：缓缓掠过 */
+  drawCloudShadows(g: CanvasRenderingContext2D, time: number) {
+    for (let k = 0; k < 5; k++) {
+      const x = ((time / 90 + k * 520) % (WORLD_W + 600)) - 300, y = 180 + k * 290 + Math.sin(time / 20000 + k) * 40;
+      const gr = g.createRadialGradient(x, y, 20, x, y, 220);
+      gr.addColorStop(0, 'rgba(20,30,40,0.10)'); gr.addColorStop(1, 'rgba(20,30,40,0)');
+      g.fillStyle = gr; g.beginPath(); g.ellipse(x, y, 260, 130, 0, 0, Math.PI * 2); g.fill();
+    }
+  }
   drawSiegeSeals(g: CanvasRenderingContext2D, s: GameState) {
     for (const sg of Object.values(s.sieges)) {
       const [x, y] = nodePt(sg.node);
@@ -389,49 +432,46 @@ export class MapRenderer {
 
   drawNodes(g: CanvasRenderingContext2D, s: GameState, time: number) {
     const z = this.cam.z;
-    const k = Math.max(0.7, Math.min(1.35, 1.2 / Math.sqrt(z)));
-    for (const n of NODES) {
-      if (n.kind === 'outland') continue;
+    const k = Math.max(0.7, Math.min(1.3, 1.25 / Math.sqrt(z)));
+    const order = NODES.filter(n => n.kind !== 'outland').sort((a, b) => a.lat === b.lat ? 0 : b.lat - a.lat); // 自北而南，近者压远者
+    for (const n of order) {
       const c = s.cities[n.id];
       if (!c) continue;
-      if (z < 1.0 && !n.major && n.kind !== 'region') continue;
+      const type = emblemTypeOf(s, n.id);
+      if (z < 1.0 && !n.major && type !== 'region' && type !== 'capital') continue;
       const [x, y] = nodePt(n.id);
-      const col = s.factions[c.controller]?.color ?? '#999';
-      const big = n.kind === 'region' || n.major;
-      const sz = (big ? 8.5 : n.kind === 'city' ? 7 : 6) * k;
+      const f = s.factions[c.controller];
+      const col = f?.color ?? '#999';
+      const w = EMBLEM_W[type] * k * (z < 1 ? 0.8 : 1);
       const isSel = this.view.selected === n.id, isHover = this.view.hover === n.id;
-      if (isSel) {
-        const pulse = 3 + Math.sin(time / 260) * 2;
-        g.strokeStyle = 'rgba(255,214,120,0.95)'; g.lineWidth = 2.4;
-        g.beginPath(); g.arc(x, y, sz + 6 + pulse, 0, Math.PI * 2); g.stroke();
-      }
-      // 徽章：势力色底、金边、白色图标
+      const mine = topOfSafe(s, c.controller) === s.player;
+      // 落地光环：实控者颜色
       g.save();
-      g.shadowColor = 'rgba(0,0,0,0.55)'; g.shadowBlur = 4; g.shadowOffsetY = 1.5;
-      if (n.kind === 'port' || n.kind === 'ferry') { g.beginPath(); g.arc(x, y, sz, 0, Math.PI * 2); }
-      else if (n.kind === 'pass') { g.beginPath(); g.moveTo(x, y - sz * 1.15); g.lineTo(x + sz, y - sz * 0.2); g.lineTo(x + sz * 0.8, y + sz); g.lineTo(x - sz * 0.8, y + sz); g.lineTo(x - sz, y - sz * 0.2); g.closePath(); }
-      else roundRect(g, x - sz, y - sz, sz * 2, sz * 2, sz * 0.35);
-      g.fillStyle = col; g.fill();
+      g.beginPath(); g.ellipse(x, y + 1, w * 0.52, w * 0.17, 0, 0, Math.PI * 2);
+      g.fillStyle = col; g.globalAlpha = 0.85; g.fill();
+      g.globalAlpha = 1; g.lineWidth = (mine ? 1.6 : 1) * k; g.strokeStyle = mine ? '#f0cf86' : 'rgba(30,20,10,0.7)'; g.stroke();
       g.restore();
-      g.lineWidth = (isHover ? 2.2 : 1.4) * k;
-      g.strokeStyle = big ? '#f0cf86' : '#e8d9b4';
-      g.stroke();
-      const icon = n.kind === 'port' ? 'port' : n.kind === 'ferry' ? 'ferry' : n.kind === 'pass' ? 'pass' : 'city';
-      drawIcon(g, icon, x, y + (n.kind === 'pass' ? sz * 0.1 : 0), sz * 1.45, '#fff8e6');
-      // 所奉政权的小旗
-      if (z >= 1.3 || big) {
-        const pol = POLITIES[s.factions[c.controller]?.polity ?? 'none'];
-        if (pol && pol.mark) {
-          g.strokeStyle = '#1b130c'; g.lineWidth = 1; g.beginPath(); g.moveTo(x + sz * 0.75, y - sz * 0.6); g.lineTo(x + sz * 0.75, y - sz * 1.9); g.stroke();
-          drawFlag(g, x + sz * 0.75, y - sz * 1.9, pol.flag, '#f3e9d2', pol.mark, 0.62 * k, '#1b130c');
-        }
+      if (isSel || isHover) {
+        const pulse = isSel ? 2 + Math.sin(time / 260) * 2 : 0;
+        g.strokeStyle = isSel ? 'rgba(255,214,120,0.95)' : 'rgba(255,240,200,0.7)'; g.lineWidth = 2;
+        g.beginPath(); g.ellipse(x, y + 1, w * 0.62 + pulse, w * 0.22 + pulse * 0.4, 0, 0, Math.PI * 2); g.stroke();
+      }
+      // 城郭插画
+      const top = y - w * 0.92;
+      g.drawImage(emblem(type), x - w / 2, top, w, w);
+      // 旗：实控者颜色，旗书所奉政权
+      if (z >= 0.9 || n.major) {
+        const pol = POLITIES[f?.polity ?? 'none'];
+        const [ax, ay] = flagAnchor(type);
+        drawWavingFlag(g, x - w / 2 + ax * w / 100, top + ay * w / 100, col, pol?.mark ?? '', time / 1000 + x * 0.01, pol?.flag ?? 'rect', w / 44);
       }
       // 城防环（放大后）
-      if (z >= 2.2 && (n.kind === 'city' || n.kind === 'region')) {
-        g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 2.2;
-        g.beginPath(); g.arc(x, y, sz + 3.5, 0, Math.PI * 2); g.stroke();
+      if (z >= 2.4 && (type !== 'ferry')) {
+        const r = w * 0.56;
+        g.strokeStyle = 'rgba(0,0,0,0.4)'; g.lineWidth = 2.2;
+        g.beginPath(); g.ellipse(x, y + 1, r, r * 0.33, 0, 0, Math.PI * 2); g.stroke();
         g.strokeStyle = c.wall > 60 ? '#9fd18f' : c.wall > 30 ? '#e8a447' : '#e0503f';
-        g.beginPath(); g.arc(x, y, sz + 3.5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * c.wall / 100); g.stroke();
+        g.beginPath(); g.ellipse(x, y + 1, r, r * 0.33, 0, Math.PI / 2, Math.PI / 2 + Math.PI * 2 * c.wall / 100); g.stroke();
       }
     }
   }
@@ -447,7 +487,7 @@ export class MapRenderer {
       list.forEach((a, i) => {
         const [bx, by] = armyPt(a);
         const ang = -Math.PI / 2 - 0.85 + i * 0.85;
-        const off = a.progress > 0 ? 0 : (s.sieges[a.location] ? 30 : 19) * scale;
+        const off = a.progress > 0 ? 0 : (s.sieges[a.location] ? 40 : 32) * scale;
         const x = bx + Math.cos(ang) * off * (1 + i * 0.12), y = by + Math.sin(ang) * off * 0.85 - 2;
         const f = s.factions[a.faction];
         const pol = POLITIES[f?.polity ?? 'none'];
@@ -527,16 +567,21 @@ export class MapRenderer {
       const label = n.name;
       const tw = label.length * size, th = size + (z >= 2.6 ? size : 0);
       const gap = 13;
-      const cands: [number, number][] = [[sx + gap, sy + 1], [sx - gap - tw, sy + 1], [sx - tw / 2, sy - gap - size / 2], [sx - tw / 2, sy + gap + size / 2]];
+      const kk = Math.max(0.7, Math.min(1.3, 1.25 / Math.sqrt(z)));
+      const below = sy + EMBLEM_W[emblemTypeOf(s, n.id)] * kk * 0.2 * z + size * 0.75;
+      const cands: [number, number][] = [[sx - tw / 2, below], [sx + gap + 6, sy - 4], [sx - gap - 6 - tw, sy - 4], [sx - tw / 2, sy - 34 * Math.min(2, z) * 0.6]];
       let tx = cands[0][0], ty = cands[0][1], ok = false;
       for (const [cx, cy] of cands) {
         const rect: [number, number, number, number] = [cx - 2, cy - size / 2 - 1, tw + 4, th + 2];
         if (prio(n.id) <= 1 || !placed.some(r => r[0] < rect[0] + rect[2] && rect[0] < r[0] + r[2] && r[1] < rect[1] + rect[3] && rect[1] < r[1] + r[3])) { tx = cx; ty = cy; placed.push(rect); ok = true; break; }
       }
       if (!ok) continue;
-      g.fillStyle = big ? 'rgba(20,13,8,0.82)' : 'rgba(20,13,8,0.66)';
-      roundRect(g, tx - 4, ty - size / 2 - 3, g.measureText(label).width + 8, size + 6, 4); g.fill();
-      if (big) { g.strokeStyle = 'rgba(217,173,91,0.7)'; g.lineWidth = 1; g.stroke(); }
+      const pw = g.measureText(label).width + 12;
+      g.fillStyle = big ? 'rgba(20,13,8,0.86)' : 'rgba(20,13,8,0.72)';
+      roundRect(g, tx - 7, ty - size / 2 - 3, pw, size + 6, 4); g.fill();
+      if (big) { g.strokeStyle = 'rgba(217,173,91,0.75)'; g.lineWidth = 1; g.stroke(); }
+      g.fillStyle = s.factions[s.cities[n.id].controller]?.color ?? '#888';
+      roundRect(g, tx - 7, ty - size / 2 - 3, 4, size + 6, 2); g.fill();
       g.fillStyle = big ? '#f6e3b4' : '#efe2c6'; g.fillText(label, tx, ty + 0.5);
       // 放大后：驻军
       if (z >= 2.6) {
@@ -568,6 +613,7 @@ export class MapRenderer {
   }
 
   zoomAt(sx: number, sy: number, factor: number) {
+    this.target = null;
     const [wx, wy] = screenToWorld(this.cam, this.w, this.h, sx, sy);
     const z = Math.max(this.minZoom(), Math.min(4, this.cam.z * factor));
     this.cam.z = z;
@@ -575,7 +621,7 @@ export class MapRenderer {
     this.cam.x += wx - nx; this.cam.y += wy - ny;
     this.clamp();
   }
-  pan(dx: number, dy: number) { this.cam.x -= dx / this.cam.z; this.cam.y -= dy / this.cam.z; this.clamp(); }
+  pan(dx: number, dy: number) { this.target = null; this.cam.x -= dx / this.cam.z; this.cam.y -= dy / this.cam.z; this.clamp(); }
   minZoom() { return Math.max(this.w / WORLD_W, this.h / WORLD_H, 0.5); }
   clamp() {
     this.cam.z = Math.max(this.minZoom(), this.cam.z);
@@ -583,7 +629,13 @@ export class MapRenderer {
     this.cam.x = Math.max(hw, Math.min(WORLD_W - hw, this.cam.x));
     this.cam.y = Math.max(hh, Math.min(WORLD_H - hh, this.cam.y));
   }
+  /** 平滑飞到某城 */
+  flyTo(id: string, z?: number) {
+    const [x, y] = nodePt(id);
+    this.target = { x, y, z: Math.max(this.minZoom(), Math.min(4, z ?? this.cam.z)) };
+  }
   focus(id: string, z?: number) {
+    this.target = null;
     const [x, y] = nodePt(id);
     this.cam.x = x; this.cam.y = y;
     if (z) this.cam.z = z;
@@ -592,6 +644,17 @@ export class MapRenderer {
 }
 
 /* ---------- 工具 ---------- */
+export function emblemTypeOf(s: GameState, id: string): EmblemType {
+  const n = NODE[id];
+  const c = s.cities[id];
+  if (c && s.factions[c.controller]?.capital === id && c.controller !== 'local' && (n.kind === 'city' || n.kind === 'region' || n.kind === 'port')) return 'capital';
+  if (n.kind === 'region') return 'region';
+  if (n.kind === 'port') return 'port';
+  if (n.kind === 'ferry') return 'ferry';
+  if (n.kind === 'pass') return 'pass';
+  return n.major ? 'major' : 'city';
+}
+const EMBLEM_W: Record<EmblemType, number> = { capital: 50, region: 42, major: 40, city: 32, port: 34, ferry: 28, pass: 34 };
 export function nodePt(id: string): Pt { const n = NODE[id]; return P(n.lon, n.lat); }
 export function armyPt(a: Army): Pt {
   if (a.progress > 0 && a.path.length) {

@@ -3,6 +3,7 @@ import type { GameState, Order, NodeId, ArmyOrder, Policy, ReportEntry, LedgerEn
 import { MapRenderer, nodePt } from '../render/map';
 import { h, $, clear, fmt, wan, signed } from './dom';
 import { iconSvg } from './icons';
+import gsap from 'gsap';
 import { playBattle } from './battle';
 import { chime, alarm, click, isMuted, setMuted } from './audio';
 import { resolveMonth, unificationProgress, type Answer } from '../core/turn';
@@ -57,6 +58,7 @@ export class App {
   reportTab = '全部';
   cityTab: 'main' | 'ledger' | 'army' = 'main';
   autoBattle = false;
+  lastPills: Record<string, number> = {};
   hintStep = 0;
   targetCb: ((node: NodeId) => void) | null = null;
   drag: { x: number; y: number; moved: boolean } | null = null;
@@ -77,6 +79,7 @@ export class App {
   }
 
   /* ================= 标题 ================= */
+  titleTimer = 0;
   showTitle() {
     const t = $('#title');
     t.classList.remove('gone');
@@ -84,22 +87,37 @@ export class App {
     this.s = null;
     this.map.view.state = trialState(1);
     this.map.view.selected = null;
-    this.map.focus('wuchang', 0.9);
+    this.map.focus('wuchang', 1.1);
     for (const id of ['#panel', '#report', '#hint']) $(id).classList.add('hidden');
     clear($('#orders'));
+    // 背景地图缓缓巡游
+    const tour = ['nanjing', 'yangzhou', 'beijing', 'xian', 'chengdu', 'wuchang', 'fuzhou'];
+    let ti = 0;
+    clearInterval(this.titleTimer);
+    this.map.flyTo(tour[0], 1.5);
+    this.titleTimer = window.setInterval(() => { if (this.s) { clearInterval(this.titleTimer); return; } ti = (ti + 1) % tour.length; this.map.flyTo(tour[ti], 1.3 + (ti % 3) * 0.25); }, 4200);
     const auto = loadFrom(this.kv, 'auto');
     const mb = (id: string, icon: string, title: string, sub: string, onclick: () => void, primary = false) =>
       h('button', { class: 'mbtn' + (primary ? ' primary' : ''), id, onclick }, ic(icon), h('div', null, h('b', null, title), h('small', null, sub)));
-    t.append(h('div', { class: 'title-in' },
-      h('div', { class: 'logo' }, h('div', { class: 't' }, '南', h('span', null, '明')), h('div', { class: 'seal' }, '甲申以后'), h('div', { class: 'years' }, '一六四四 — 一六六二')),
+    const embers = h('div', { class: 'embers' });
+    for (let k = 0; k < 28; k++) embers.append(h('i', { style: { left: (Math.random() * 100) + '%', animationDelay: (Math.random() * 8) + 's', animationDuration: (6 + Math.random() * 6) + 's', transform: `scale(${0.5 + Math.random()})` } }));
+    t.append(embers, h('div', { class: 'title-in' },
+      h('div', { class: 'logo' }, h('div', { class: 't' }, h('span', { class: 'ch' }, '南'), h('span', { class: 'ch red' }, '明')), h('div', { class: 'seal' }, '甲申以后'), h('div', { class: 'years' }, '一六四四 — 一六六二'),
+        h('div', { class: 'tagline' }, '北京失守的消息传到南京')),
       h('div', { class: 'menu hud' },
         mb('btn-new', 'newgame', '新开局 · 弘光朝廷', '十二回合试玩', () => this.start(trialState(Date.now() % 100000), true), true),
         mb('btn-sample', 'siege', '地图样稿 · 扬州被围', '乙酉四月', () => this.start(yangzhouSiegeState(), false, 'yangzhou')),
         auto ? mb('btn-continue', 'play', '继续游戏', auto.label, () => this.start(auto.state, false)) : null,
         mb('btn-load', 'load', '读取存档', '三个存档位 · 可导入', () => this.openSaves(true)),
         mb('btn-about', 'help', '玩法说明', '一分钟上手', () => this.openAbout()),
-        h('div', { class: 'credit' }, '一尾小石斑 作 · 图标 game-icons.net · 底图 Natural Earth'),
+        h('div', { class: 'credit' }, '一尾小石斑 作 · 战斗引擎 Phaser · 图标 game-icons.net · 底图 Natural Earth'),
       )));
+    const tl = gsap.timeline({ defaults: { clearProps: 'transform,filter' } });
+    tl.from('#title .ch', { opacity: 0, y: 40, scale: 1.4, filter: 'blur(12px)', duration: 0.9, stagger: 0.25, ease: 'power3.out' })
+      .from('#title .seal', { opacity: 0, scale: 2.4, rotate: -25, duration: 0.45, ease: 'back.out(2.5)' }, '-=0.2')
+      .from('#title .years, #title .tagline', { opacity: 0, y: 10, duration: 0.5, stagger: 0.12 }, '-=0.1')
+      .from('#title .menu', { opacity: 0, x: 60, duration: 0.5, ease: 'power3.out' }, 0.5)
+      .from('#title .mbtn', { opacity: 0, x: 40, duration: 0.4, stagger: 0.08, ease: 'power3.out' }, 0.7);
   }
 
   start(state: GameState, fresh: boolean, focus?: string) {
@@ -107,7 +125,8 @@ export class App {
     this.orders = [];
     this.seq = 0;
     this.reportTurn = state.turn - 1;
-    $('#title').classList.add('gone');
+    clearInterval(this.titleTimer);
+    gsap.to('#title', { opacity: 0, duration: 0.35, onComplete: () => { $('#title').classList.add('gone'); ($('#title') as HTMLElement).style.opacity = ''; } });
     this.map.view.state = state;
     this.map.view.selected = null;
     this.map.view.selectedArmy = null;
@@ -245,6 +264,7 @@ export class App {
   toast(text: string, icon = 'info') {
     const el = h('div', { class: 'hud' }, ic(icon), text);
     $('#toast').append(el);
+    gsap.from(el, { y: -16, opacity: 0, scale: 0.9, duration: 0.3, ease: 'back.out(2)' });
     setTimeout(() => el.remove(), 3300);
   }
 
@@ -266,16 +286,27 @@ export class App {
     const unread = s.reports.filter(r => r.turn === s.turn - 1 && r.urgent && (!r.faction || r.faction === s.player)).length;
     const ib = (id: string, icon: string, tip: string, onclick: () => void, extra?: { on?: boolean; badge?: number }) =>
       h('button', { class: 'ibtn' + (extra?.on ? ' on' : ''), id, 'data-tip': tip, 'aria-label': tip, onclick }, ic(icon), extra?.badge ? h('span', { class: 'badge' }, String(extra.badge)) : null);
-    const pill = (icon: string, val: string, label: string, tip: string) => h('div', { class: 'pill', 'data-tip': tip }, ic(icon), h('b', null, val), h('small', null, label));
+    const pill = (icon: string, val: string, label: string, tip: string, raw?: number) => {
+      const b = h('b', null, val);
+      const key = 'pill:' + icon;
+      const prev = this.lastPills[key];
+      if (raw !== undefined && prev !== undefined && prev !== raw) {
+        const o = { v: prev };
+        gsap.to(o, { v: raw, duration: 0.9, ease: 'power2.out', onUpdate: () => { b.textContent = icon === 'city' ? String(Math.round(o.v)) : wan(o.v); } });
+        gsap.fromTo(b, { color: raw > prev ? '#9fe08f' : '#ff9a8a' }, { color: '#f3e6c8', duration: 1.2 });
+      }
+      if (raw !== undefined) this.lastPills[key] = raw;
+      return h('div', { class: 'pill', 'data-tip': tip }, ic(icon), b, h('small', null, label));
+    };
     top.append(
       h('div', { class: 'emblem', title: me.name }, pol.mark || me.short),
       h('div', { class: 'datebox' },
         h('div', null, h('div', { class: 'era', id: 'date-label', title: dateLabel(pol, s.turn) }, `${eraYear(pol, s.turn)}${monthName(lm)}`), h('div', { class: 'yr' }, `${me.short} · 公元 ${lm.year}`), pips)),
       h('div', { class: 'res' },
-        pill('silver', wan(cap.silver - this.pendingSpend(me.capital, 'silver')), '两', `${nodeName(me.capital)}府库（银）`),
-        pill('grain', wan(cap.grain - this.pendingSpend(me.capital, 'grain')), '石', `${nodeName(me.capital)}仓粮`),
-        pill('city', String(own.length), '城', '直辖城池'),
-        pill('troops', wan(troops), '兵', '直辖兵力'),
+        pill('silver', wan(cap.silver - this.pendingSpend(me.capital, 'silver')), '两', `${nodeName(me.capital)}府库（银）`, cap.silver - this.pendingSpend(me.capital, 'silver')),
+        pill('grain', wan(cap.grain - this.pendingSpend(me.capital, 'grain')), '石', `${nodeName(me.capital)}仓粮`, cap.grain - this.pendingSpend(me.capital, 'grain')),
+        pill('city', String(own.length), '城', '直辖城池', own.length),
+        pill('troops', wan(troops), '兵', '直辖兵力', troops),
       ),
       h('div', { class: 'spacer' }),
       ib('btn-report', 'report', '军情（R）', () => this.toggleReport(), { badge: unread }),
@@ -285,7 +316,7 @@ export class App {
       ib('btn-battle', this.autoBattle ? 'auto' : 'battle', this.autoBattle ? '战斗：部将自动' : '战斗：亲自指挥', () => { this.autoBattle = !this.autoBattle; this.renderTop(); }, { on: !this.autoBattle }),
       ib('btn-sound', isMuted() ? 'mute' : 'sound', isMuted() ? '已静音' : '声音', () => { setMuted(!isMuted()); this.renderTop(); }),
       ib('btn-title', 'exit', '回到标题', () => this.confirmTitle()),
-      h('button', { class: 'endturn', id: 'btn-next', disabled: this.resolving || !!s.ended, onclick: () => void this.endTurn() },
+      h('button', { class: 'endturn' + (this.orders.length && !this.resolving ? ' ready' : ''), id: 'btn-next', disabled: this.resolving || !!s.ended, onclick: () => void this.endTurn() },
         ic(this.resolving ? 'hourglass' : 'next'), h('span', null, s.ended ? '本局结束' : this.resolving ? '行动中' : '结束本月'),
         this.orders.length ? h('span', { class: 'badge' }, String(this.orders.length)) : null),
     );
@@ -338,6 +369,12 @@ export class App {
 
   panelShell(color: string, title: string, sub: string, bigIcon: string, titleId: string): HTMLElement {
     const panel = clear($('#panel'));
+    const wasHidden = panel.classList.contains('hidden');
+    requestAnimationFrame(() => {
+      if (wasHidden) gsap.fromTo('#panel', { x: 50, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: 'power3.out' });
+      gsap.from('#panel .banner h2', { opacity: 0, x: -14, duration: 0.3, ease: 'power2.out' });
+      gsap.from('#panel .tile, #panel .act, #panel .unit, #panel .row', { opacity: 0, y: 8, duration: 0.25, stagger: 0.012, ease: 'power2.out' });
+    });
     panel.className = 'hud';
     panel.append(h('div', { class: 'banner', style: { background: `linear-gradient(135deg, ${color}, ${shade(color, -0.5)})` } },
       ic(bigIcon, 'ic bigicon'),
@@ -569,6 +606,8 @@ export class App {
     }
     m.append(dlg);
     m.onclick = e => { if (e.target === m && buttons.length) this.closeModal(); };
+    gsap.fromTo(dlg, { scale: 0.88, opacity: 0, y: 12 }, { scale: 1, opacity: 1, y: 0, duration: 0.3, ease: 'back.out(1.7)' });
+    gsap.from(dlg.querySelectorAll('.opt, .gopt, .lrow, .slot, .tile'), { opacity: 0, y: 10, duration: 0.25, stagger: 0.03, delay: 0.1 });
     return dlg;
   }
   closeModal() { $('#modal').classList.add('hidden'); clear($('#modal')); }
@@ -818,6 +857,8 @@ export class App {
     for (const r of shown) list.append(this.reportCard(r));
     if (t < 0) list.append(h('div', { class: 'card' }, h('div', { class: 'cic c-史事' }, ic('event')), h('div', { class: 'body' }, h('div', { class: 'hl' }, '北京失守的消息传到南京'), h('div', { class: 'meta' }, '结束本月后，这里列出各地变化'))));
     box.append(list);
+    gsap.from('#report .card', { opacity: 0, x: -24, duration: 0.3, stagger: 0.035, ease: 'power2.out' });
+    gsap.from('#report .cic', { scale: 0.3, duration: 0.4, stagger: 0.035, ease: 'back.out(2)' });
   }
 
   reportCard(r: ReportEntry): HTMLElement {
@@ -825,13 +866,13 @@ export class App {
     const cat: ReportCat = r.urgent && r.cat !== '史事' && r.cat !== '线索' && r.cat !== '易主' && r.cat !== '军报' ? '急报' : r.cat;
     const moreEl = h('div', { class: 'more hidden' }, more);
     const btns = h('div', { class: 'btns' });
-    if (r.node) btns.append(h('button', { class: 'mini locate', onclick: (e: Event) => { e.stopPropagation(); this.map.focus(r.node!, Math.max(this.map.cam.z, 2)); this.selectNode(r.node!); } }, ic('locate'), nodeName(r.node)));
+    if (r.node) btns.append(h('button', { class: 'mini locate', onclick: (e: Event) => { e.stopPropagation(); this.map.flyTo(r.node!, Math.max(this.map.cam.z, 2.2)); this.selectNode(r.node!); } }, ic('locate'), nodeName(r.node)));
     if (r.src?.kind === 'order' && r.src.ref) {
       const ref = r.src.ref;
       btns.append(h('button', { class: 'mini why', onclick: (e: Event) => {
         e.stopPropagation();
         const e2 = this.s!.ledger.find(l => l.src.ref === ref);
-        if (e2) { this.map.focus(e2.node); this.map.view.selected = e2.node; this.cityTab = 'ledger'; this.renderCity(e2.node); this.toast(`源自 ${shortDate(e2.src.turn ?? e2.turn)} 你的命令：${nodeName(e2.node)}${e2.text}`, 'why'); }
+        if (e2) { this.map.flyTo(e2.node, Math.max(this.map.cam.z, 2.2)); this.map.view.selected = e2.node; this.cityTab = 'ledger'; this.renderCity(e2.node); this.toast(`源自 ${shortDate(e2.src.turn ?? e2.turn)} 你的命令：${nodeName(e2.node)}${e2.text}`, 'why'); }
       } }, ic('why'), '为什么'));
     }
     let hist: HTMLElement | null = null;
@@ -868,6 +909,10 @@ export class App {
         h('button', { class: 'btn primary splash-go', id: 'splash-go', onclick: done }, ic('report'), '查看军情')));
       el.onclick = e => { if (e.target === el) done(); };
       $('#app').append(el);
+      gsap.from(el, { opacity: 0, duration: 0.3 });
+      gsap.from('#splash .m', { opacity: 0, scale: 1.6, letterSpacing: '0.6em', duration: 0.7, ease: 'power3.out' });
+      gsap.from('#splash .scard', { opacity: 0, y: 40, rotateY: -60, duration: 0.55, stagger: 0.14, delay: 0.25, ease: 'back.out(1.4)' });
+      gsap.from('#splash .splash-go', { opacity: 0, y: 14, duration: 0.4, delay: 0.7 });
     });
   }
 
@@ -924,6 +969,8 @@ export class App {
       m.append(h('div', { class: 'dialog hud', role: 'dialog' },
         h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic('event')), h('div', null, h('h2', null, c.title), h('small', null, '史事 · 朝廷决断'))),
         h('div', { class: 'db' }, h('div', { class: 'lead' }, c.text), opts)));
+      gsap.fromTo('#modal .dialog', { scale: 0.85, opacity: 0, rotateX: 20 }, { scale: 1, opacity: 1, rotateX: 0, duration: 0.45, ease: 'back.out(1.6)' });
+      gsap.from('#modal .opt', { opacity: 0, x: -30, duration: 0.35, stagger: 0.1, delay: 0.2, ease: 'power3.out' });
     });
   }
 

@@ -281,9 +281,9 @@ select, input[type=number] { font: inherit; background: #120e0a; color: var(--te
 #title { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; background: radial-gradient(ellipse at 50% 40%, rgba(40, 26, 14, 0.55), rgba(8, 5, 3, 0.92)); }
 #title.gone { display: none; }
 .title-in { display: grid; grid-template-columns: auto 340px; gap: 40px; align-items: center; }
-.logo { text-align: center; }
+.logo { text-align: center; position: relative; padding: 50px 90px; background: radial-gradient(ellipse at center, rgba(10,6,3,0.82) 0%, rgba(10,6,3,0.55) 45%, rgba(10,6,3,0) 72%); }
 .logo .t { font-family: var(--brush); font-size: 150px; line-height: 0.95; color: #f6e7c4; text-shadow: 0 6px 30px rgba(0, 0, 0, 0.9), 0 0 2px #000; letter-spacing: 0.05em; }
-.logo .t span { color: var(--red-2); }
+
 .logo .seal { display: inline-block; margin-top: 10px; padding: 6px 14px; border: 2px solid var(--red-2); color: var(--red-2); font-weight: 900; letter-spacing: 0.4em; border-radius: 4px; transform: rotate(-3deg); background: rgba(0, 0, 0, 0.35); }
 .logo .years { color: var(--dim); letter-spacing: 0.35em; margin-top: 14px; font-size: 15px; }
 .menu { display: flex; flex-direction: column; gap: 10px; padding: 18px; }
@@ -291,7 +291,7 @@ select, input[type=number] { font: inherit; background: #120e0a; color: var(--te
 .mbtn .ic { width: 34px; height: 34px; color: var(--gold-2); }
 .mbtn b { display: block; font-size: 17px; }
 .mbtn small { color: var(--dim); font-size: 12px; }
-.mbtn:hover, .mbtn:focus-visible { border-color: var(--gold); box-shadow: 0 0 14px rgba(217, 173, 91, 0.35); outline: none; transform: translateX(3px); }
+.mbtn:hover, .mbtn:focus-visible { border-color: var(--gold); box-shadow: 0 0 14px rgba(217, 173, 91, 0.35); outline: none; }
 .mbtn.primary { background: linear-gradient(180deg, #c23a2b, #6e170f); border-color: var(--gold); }
 .mbtn.primary .ic { color: #fff3d9; }
 .mbtn.primary small { color: #f3cbbf; }
@@ -343,3 +343,19 @@ select, input[type=number] { font: inherit; background: #120e0a; color: var(--te
 @media (max-width: 980px) {
   .res { display: none; }
 }
+
+/* 动效 */
+.endturn.ready { animation: glow 1.6s ease-in-out infinite; }
+@keyframes glow { 50% { box-shadow: 0 3px 0 #5a120b, 0 0 30px rgba(255,120,80,0.85); filter: brightness(1.12); } }
+.ibtn { transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; }
+.act, .mbtn, .opt, .gopt, .card, .unit { transition: box-shadow 0.15s, border-color 0.15s, background 0.15s; }
+.ibtn:hover { transform: translateY(-2px); }
+.act:active, .ibtn:active, .endturn:active, .btn:active { transform: translateY(1px) scale(0.97); }
+
+.embers { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.embers i { position: absolute; bottom: -10px; width: 4px; height: 4px; border-radius: 50%; background: radial-gradient(circle, #ffd08a, #ff6a2a 60%, transparent 70%); box-shadow: 0 0 8px #ff8a3a; animation: rise-ember linear infinite; opacity: 0; }
+@keyframes rise-ember { 0% { transform: translate(0, 0); opacity: 0; } 10% { opacity: 0.9; } 100% { transform: translate(60px, -105vh); opacity: 0; } }
+.logo .ch { display: inline-block; }
+.logo .ch.red { color: var(--red-2); }
+.logo .tagline { margin-top: 10px; color: var(--gold-2); letter-spacing: 0.3em; font-size: 15px; opacity: 0.9; }
+.dialog { transform-origin: 50% 40%; perspective: 800px; }

@@ -12,7 +12,7 @@ page.on('pageerror', e => errors.push(e.message));
 const shot = async (name) => { await page.waitForTimeout(350); await page.screenshot({ path: `screenshots/${name}.png` }); };
 await page.goto('http://127.0.0.1:8211/');
 await page.evaluate(() => { try { localStorage.clear(); localStorage.setItem('nanming:hint', '9'); } catch {} });
-await page.reload(); await page.waitForTimeout(1200);
+await page.reload(); await page.waitForTimeout(3500);
 await shot('00-title');
 await page.click('#btn-new'); await page.waitForTimeout(500);
 await page.evaluate(() => NM.selectNode('nanjing'));
