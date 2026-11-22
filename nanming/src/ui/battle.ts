@@ -9,7 +9,7 @@ import {
 import { h, $, clear, wan } from './dom';
 import { iconSvg } from './icons';
 import { beat, gong } from './audio';
-import { drawFlag } from '../render/map';
+import { drawFlag, iconPath } from '../render/map';
 import { POLITIES } from '../data/factions';
 import { makeRng } from '../core/rng';
 
@@ -119,14 +119,26 @@ export function playBattle(s: GameState, b0: BattleState, side: 'att' | 'def', f
       // 天气
       if (b.weather === 'rain') { g.strokeStyle = 'rgba(200,210,220,0.25)'; for (let k = 0; k < 140; k++) { const x = (rng.next() * W + performance.now() / 3) % W, y = (rng.next() * H + performance.now() / 2) % H; g.beginPath(); g.moveTo(x, y); g.lineTo(x - 3, y + 10); g.stroke(); } }
       if (b.weather === 'fog') { g.fillStyle = 'rgba(220,220,210,0.18)'; g.fillRect(0, 0, W, H); }
-      // 两侧标题
-      g.font = '700 16px "Noto Serif SC", serif'; g.textBaseline = 'top';
-      g.fillStyle = '#f3e9d2'; g.textAlign = 'left';
-      g.fillText(`${b.att.name} · ${b.att.commanderName}${side === 'att' ? '（我军）' : ''}`, 14, 10);
-      g.textAlign = 'right';
-      g.fillText(`${side === 'def' ? '（我军）' : ''}${b.def.commanderName} · ${b.def.name}`, W - 14, 10);
-      g.textAlign = 'center'; g.fillStyle = 'rgba(243,233,210,0.75)'; g.font = '500 13px "Noto Serif SC", serif';
-      g.fillText(`${b.nodeName}${b.kind === 'siege' ? '攻城战' : '野战'} · ${TERRAIN_NAME[b.terrain]} · ${WEATHER_NAME[b.weather]} · 第 ${b.round}/${b.maxRounds} 回合`, W / 2, 12);
+      // 顶部对阵牌
+      const plate = (x: number, align: 'left' | 'right', sd: 'att' | 'def') => {
+        const sideObj = b[sd];
+        const w = 300, h = 46;
+        const x0 = align === 'left' ? x : x - w;
+        g.fillStyle = 'rgba(15,10,6,0.78)'; g.fillRect(x0, 10, w, h);
+        g.fillStyle = colorOf(sideObj.faction); g.fillRect(align === 'left' ? x0 : x0 + w - 6, 10, 6, h);
+        g.textBaseline = 'middle'; g.textAlign = align;
+        const tx = align === 'left' ? x0 + 16 : x0 + w - 16;
+        g.fillStyle = '#f0cf86'; g.font = '700 17px "Noto Serif SC", serif';
+        g.fillText(`${sideObj.commanderName}${sd === side ? ' · 我军' : ''}`, tx, 26);
+        g.fillStyle = '#b8a17c'; g.font = '500 12px "Noto Serif SC", serif';
+        g.fillText(`${sideObj.name} · ${wan(sideTroops(sideObj))} 人`, tx, 44);
+      };
+      plate(14, 'left', 'att');
+      plate(W - 14, 'right', 'def');
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillStyle = 'rgba(15,10,6,0.7)'; g.fillRect(W / 2 - 150, 14, 300, 30);
+      g.fillStyle = '#f3e6c8'; g.font = '600 13.5px "Noto Serif SC", serif';
+      g.fillText(`${b.nodeName}${b.kind === 'siege' ? '攻城战' : '野战'} · ${TERRAIN_NAME[b.terrain]} · ${WEATHER_NAME[b.weather]} · ${b.round}/${b.maxRounds}`, W / 2, 29);
     }
 
     function drawWall(W: number, H: number, b: BattleState) {
@@ -169,21 +181,33 @@ export function playBattle(s: GameState, b0: BattleState, side: 'att' | 'def', f
       g.save();
       g.globalAlpha = Math.max(0, alpha);
       g.translate(baseX + dx + shake, y + dy);
-      // 兵阵：按兵力画人
-      const n = Math.max(3, Math.min(64, Math.round(Math.sqrt(troops) / 3.2)));
-      const cols = Math.ceil(Math.sqrt(n * 1.6)), rows = Math.ceil(n / cols);
-      for (let k = 0; k < n; k++) {
-        const c = k % cols, r = Math.floor(k / cols);
-        const px = -dir * c * 9 - (r % 2) * 4 * dir, py = (r - rows / 2) * 11;
-        g.fillStyle = col; g.fillRect(px - 2.5, py - 3, 5, 8);
-        g.fillStyle = '#e9d9b8'; g.beginPath(); g.arc(px, py - 5.5, 2.4, 0, Math.PI * 2); g.fill();
-        g.strokeStyle = 'rgba(20,15,10,0.85)'; g.lineWidth = 1;
-        g.beginPath(); g.moveTo(px + dir * 3, py + 5); g.lineTo(px + dir * 6, py - 10); g.stroke();
+      // 兵阵：按兵力与兵种画出阵列，每枚代表一队
+      const n = Math.max(3, Math.min(24, Math.round(Math.sqrt(troops) / 6)));
+      const cols = Math.min(8, Math.ceil(n / 3)), rows = Math.ceil(n / cols);
+      const kinds: string[] = [];
+      const mix = side.mix;
+      const order3 = [['cav', mix.cav], ['gun', mix.gun], ['inf', mix.inf + mix.navy]] as [string, number][];
+      for (const [k, v] of order3) for (let q = 0; q < Math.round(v * n); q++) kinds.push(k);
+      while (kinds.length < n) kinds.push('inf');
+      for (let q = 0; q < n; q++) {
+        const c = q % cols, r = Math.floor(q / cols);
+        const px = -dir * (c * 21 + (r % 2) * 10), py = (r - (rows - 1) / 2) * 22;
+        g.beginPath(); g.arc(px, py, 9.5, 0, Math.PI * 2);
+        g.fillStyle = col; g.fill();
+        g.lineWidth = 1.5; g.strokeStyle = 'rgba(255,240,210,0.75)'; g.stroke();
+        const icon = kinds[q] === 'cav' ? 'charge' : kinds[q] === 'gun' ? 'volley' : 'inf';
+        g.save();
+        g.translate(px, py);
+        if (dir < 0) g.scale(-1, 1);
+        g.translate(-7.5, -7.5); g.scale(15 / 512, 15 / 512);
+        g.fillStyle = '#fff6e0'; g.fill(iconPath(icon));
+        g.restore();
       }
+      const rowsH = rows * 11;
       // 军旗
       const pol = polOf(side.faction);
-      g.strokeStyle = '#1b130c'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(dir * 10, rows * 5); g.lineTo(dir * 10, -rows * 6 - 26); g.stroke();
-      drawFlag(g, dir * 10, -rows * 6 - 26, pol?.flag ?? 'rect', col, idx === 1 ? side.commanderName.slice(0, 1) : LANE_NAMES[b.kind][idx].slice(0, 1), 1.6, '#1b130c');
+      g.strokeStyle = '#1b130c'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(dir * 18, rowsH); g.lineTo(dir * 18, -rowsH - 26); g.stroke();
+      drawFlag(g, dir * 18, -rowsH - 26, pol?.flag ?? 'rect', col, idx === 1 ? side.commanderName.slice(0, 1) : LANE_NAMES[b.kind][idx].slice(0, 1), 1.6, '#1b130c');
       // 齐射烟与箭
       if ((order === 'volley' || order === 'bombard') && t > 0.15 && t < 0.75) {
         const a = (t - 0.15) / 0.6;
