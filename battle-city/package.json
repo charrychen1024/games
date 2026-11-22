@@ -1,0 +1,12 @@
+{
+  "name": "battle-city-90",
+  "version": "1.0.0",
+  "private": true,
+  "author": "一尾小石斑",
+  "description": "1990 坦克大战 / Battle City 复刻版，含关卡编辑器",
+  "scripts": {
+    "start": "node tools/serve.js 8099",
+    "verify": "node tools/validate-levels.js && node tools/verify.js",
+    "levels": "node tools/validate-levels.js"
+  }
+}

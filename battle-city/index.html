@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="author" content="一尾小石斑">
+<title>BATTLE CITY 90 · 坦克大战</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <div id="stage-wrap">
+    <canvas id="screen" width="768" height="672"></canvas>
+    <div id="boot">点击画面开始（启用音效）</div>
+  </div>
+
+  <div id="toolbar">
+    <span class="tb-group">
+      <button id="btn-fullscreen" title="全屏">⛶ 全屏</button>
+      <button id="btn-sound" title="音效开关">🔊 音效</button>
+      <button id="btn-scan" title="CRT 扫描线">▦ 扫描线</button>
+    </span>
+    <span class="tb-group">
+      <label>缩放
+        <select id="sel-scale">
+          <option value="0">自适应</option>
+          <option value="2">2x</option>
+          <option value="3" selected>3x</option>
+          <option value="4">4x</option>
+          <option value="5">5x</option>
+        </select>
+      </label>
+    </span>
+    <span class="tb-group" id="editor-tools" hidden>
+      <button id="btn-export">导出关卡 JSON</button>
+      <button id="btn-import">导入关卡 JSON</button>
+      <input type="file" id="file-import" accept=".json,application/json" hidden>
+    </span>
+    <span class="tb-group tb-status"><span id="status">READY</span></span>
+    <span class="tb-group tb-author">作者：一尾小石斑</span>
+  </div>
+
+  <details id="help" open>
+    <summary>操作说明 / 玩法（点击折叠）</summary>
+    <div class="help-grid">
+      <div>
+        <h4>玩家 1</h4>
+        <ul>
+          <li><b>W A S D</b> 移动</li>
+          <li><b>J</b> 或 <b>空格</b> 开炮</li>
+        </ul>
+        <h4>玩家 2（双人同屏）</h4>
+        <ul>
+          <li><b>↑ ← ↓ →</b> 移动</li>
+          <li><b>小键盘 0</b> / <b>右 Shift</b> / <b>/</b> 开炮</li>
+        </ul>
+      </div>
+      <div>
+        <h4>通用</h4>
+        <ul>
+          <li><b>Enter / 空格 / 鼠标左键</b> 确认</li>
+          <li><b>Esc</b> 返回上一层，<b>P / Esc</b> 游戏中暂停</li>
+          <li><b>鼠标</b> 可直接点菜单项</li>
+        </ul>
+      </div>
+      <div>
+        <h4>关卡编辑器（CONSTRUCTION）</h4>
+        <ul>
+          <li><b>鼠标左键</b> 涂地形，<b>右键</b> 擦除</li>
+          <li><b>方向键</b> 移动光标，<b>空格</b> 放置，<b>Tab</b> 切换地形</li>
+          <li><b>B</b> 笔刷 8px / 16px，<b>F</b> 填充整屏</li>
+          <li><b>S</b> 保存到槽位，<b>L</b> 读取，<b>N</b> 新建，<b>C</b> 清空</li>
+          <li><b>T</b> 立即试玩，<b>Esc</b> 退出</li>
+        </ul>
+      </div>
+      <div>
+        <h4>道具</h4>
+        <ul>
+          <li>★ 星：火力升级（4 级）</li>
+          <li>⛑ 头盔：10 秒无敌护盾</li>
+          <li>⏱ 时钟：冻结所有敌人</li>
+          <li>⛏ 铁锹：老巢变钢墙</li>
+          <li>💣 手雷：全歼场上敌人</li>
+          <li>🚙 坦克：加一条命</li>
+        </ul>
+      </div>
+    </div>
+  </details>
+</div>
+
+<script src="js/core.js"></script>
+<script src="js/font.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/input.js"></script>
+<script src="js/levels.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/battle.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "fengyan-sanguo",
+  "version": "8.2.0",
+  "private": true,
+  "author": "一尾小石斑",
+  "description": "烽烟录 · 三国：原创三国题材回合制 RPG（全八部三十四章 + 番外）",
+  "scripts": {
+    "start": "node tools/serve.js 8088",
+    "maps": "node tools/validate-maps.js",
+    "chapters": "node tools/chapter-select-test.js",
+    "test": "node tools/validate-maps.js && node tools/chapter-select-test.js && node tools/save-test.js && node tools/playtest.js && node tools/chapters-test.js && node tools/chapters2-test.js && node tools/chapters3-test.js && node tools/chapters4-test.js && node tools/chapters5-test.js && node tools/chapters6-test.js && node tools/chapters7-test.js && node tools/chapters8-test.js && node tools/extra-test.js",
+    "extra": "node tools/extra-test.js",
+    "balance": "node tools/chapters8-test.js --only-balance"
+  }
+}
