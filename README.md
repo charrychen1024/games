@@ -6,15 +6,20 @@
 
 这里放的是一个个独立的浏览器小游戏。每个游戏占一个文件夹，互不依赖，各自有自己的 README、启动脚本和测试。
 
-所有游戏都是纯 HTML + JavaScript：
+坦克大战和烽烟录是纯 HTML + JavaScript：
 - **不需要安装依赖**，也不需要构建。
 - **没有图片、音频素材**：画面和声音都由代码实时生成。
+
+南明规模较大，用 TypeScript 编写，用 Vite 构建：
+- 构建产物 `nanming/dist/` 已提交，在线和本地都能直接玩。
+- 画面与声音同样由代码生成，只用了一套开源图标（game-icons.net，CC BY 3.0）。
 
 ## 游戏列表
 
 | 文件夹 | 游戏 | 类型 | 简介 |
 |---|---|---|---|
 | [`battle-city/`](battle-city/README.md) · [在线玩](https://charrychen1024.github.io/games/battle-city/) | **BATTLE CITY 90 · 坦克大战** | 动作射击 | 红白机《坦克大战》的复刻：35 个关卡、双人合作、关卡编辑器、无尽模式 |
+| [`nanming/`](nanming/README.md) · [在线玩](https://charrychen1024.github.io/games/nanming/dist/) | **南明 · 甲申以后** | 历史地图策略 | 1644—1662 年的全国地图策略：经营城池、号令江北诸镇、三路战斗、史事与线索；当前为弘光朝廷十二回合试玩 |
 | [`sanguo/`](sanguo/README.md) · [在线玩](https://charrychen1024.github.io/games/sanguo/) | **烽烟录 · 三国** | 回合制 RPG | 原创三国题材日式 RPG：全八部三十四章，从桃园结义一直到三分归晋，故事完整；通关后解锁番外「桃园一梦」；可随时存档 |
 
 ## 怎么玩
@@ -24,9 +29,10 @@
 ```bash
 cd battle-city && ./play.sh     # 坦克大战，默认端口 8099
 cd sanguo && ./play.sh          # 烽烟录，默认端口 8088
+cd nanming && ./play.sh         # 南明，默认端口 8110（首次运行会自动安装依赖并构建）
 ```
 
-两个游戏的默认端口不同，可以同时开着。按 `Ctrl+C` 结束。
+各游戏的默认端口不同，可以同时开着。按 `Ctrl+C` 结束。
 
 需要的环境：
 - [Node.js](https://nodejs.org/)：只用来起本地服务器和跑测试。没有 Node 也能直接双击 `index.html` 玩，但 Safari 在 `file://` 下可能存不住存档。
@@ -47,6 +53,15 @@ Game/
 │   ├── css/  js/
 │   ├── tools/         本地服务器与测试脚本
 │   └── screenshots/
+├── nanming/           南明 · 甲申以后
+│   ├── README.md
+│   ├── index.html     开发入口（线上会跳到 dist/）
+│   ├── play.sh
+│   ├── package.json   npm test：规则与验收测试；npm run e2e：端到端测试
+│   ├── src/           core 规则 · data 数据 · render 地图 · ui 界面
+│   ├── dist/          构建产物（已提交）
+│   ├── tests/  tools/
+│   └── Docs/          制作要求与实现说明
 └── sanguo/            烽烟录 · 三国
     ├── README.md
     ├── index.html
