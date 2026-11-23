@@ -21,7 +21,8 @@ import { polityOf } from '../core/regime';
 import { canSea } from '../core/military';
 import type { PendingChoice } from '../core/events';
 
-const STANCE_NAME: Record<string, string> = { war: '交战', neutral: '未战', truce: '停战', alliance: '同盟', overlord: '上级', vassal: '下属', self: '本方' };
+/** 从玩家一方看对方：stance(玩家, 对方) 为 overlord 表示玩家是对方的上级，对方即“下属” */
+const STANCE_NAME: Record<string, string> = { war: '交战', neutral: '未战', truce: '停战', alliance: '同盟', overlord: '下属', vassal: '上级', self: '本方' };
 const FIELD_NAME: Record<string, string> = { grain: '仓粮', silver: '府库', pop: '人口', minxin: '民心', garrison: '驻军', wall: '城防', order: '吏治', agri: '农业', commerce: '商业', edu: '文教' };
 const FIELD_ICON: Record<string, string> = { grain: 'grain', silver: 'silver', pop: 'pop', minxin: 'minxin', garrison: 'troops', wall: 'wall', order: 'order', agri: 'agri', commerce: 'commerce', edu: 'edu' };
 const CAT_ICON: Record<ReportCat, string> = { 急报: 'urgent', 军报: 'war', 易主: 'capture', 交涉: 'envoy', 内政: 'admin', 人事: 'person', 史事: 'event', 线索: 'clue' };
@@ -958,7 +959,7 @@ export class App {
     for (const f of Object.values(s.factions)) {
       if (f.id === 'local' || f.defunct) continue;
       const cities = Object.values(s.cities).filter(c => c.controller === f.id).length;
-      const troops = Object.values(s.armies).filter(a => a.faction === f.id).reduce((n, a) => n + a.troops, 0);
+      const troops = Object.values(s.armies).filter(a => a.faction === f.id).reduce((n, a) => n + a.troops, 0) + Object.values(s.cities).filter(c => c.controller === f.id).reduce((n, c) => n + c.garrison, 0);
       const st = stance(s, s.player, f.id);
       const btn = f.id === s.player ? null : f.overlord === s.player ? h('button', { class: 'mini', onclick: () => { this.closeModal(); this.formReward(f.id); } }, ic('reward'), `服从 ${f.loyalty}`)
         : h('button', { class: 'mini', 'data-envoy': f.id, onclick: () => { this.closeModal(); this.formEnvoy(f.id); } }, ic('envoy'), '遣使');
@@ -1214,7 +1215,7 @@ export class App {
       const opts = h('div', { class: 'opts' });
       c.options.forEach((o, i) => opts.append(h('button', { class: 'opt', 'data-choice': i, onclick: () => { this.closeModal(); resolve(i); } }, h('span', { class: 'num' }, String(i + 1)), h('div', null, h('b', null, o.label), h('small', null, o.desc)))));
       m.append(h('div', { class: 'dialog hud', role: 'dialog' },
-        h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic('event')), h('div', null, h('h2', null, c.title), h('small', null, '史事 · 朝廷决断'))),
+        h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic('event')), h('div', null, h('h2', null, c.title), h('small', null, `史事 · ${this.s?.factions[this.s.player]?.name ?? ''}决断`))),
         h('div', { class: 'db' }, h('div', { class: 'lead' }, c.text), opts)));
       gsap.fromTo('#modal .dialog', { scale: 0.85, opacity: 0, rotateX: 20 }, { scale: 1, opacity: 1, rotateX: 0, duration: 0.45, ease: 'back.out(1.6)' });
       gsap.from('#modal .opt', { opacity: 0, x: -30, duration: 0.35, stagger: 0.1, delay: 0.2, ease: 'power3.out' });
