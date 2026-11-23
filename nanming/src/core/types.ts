@@ -117,6 +117,9 @@ export interface City {
   trade?: number;
   /** 考据不确定标注 */
   uncertain?: string;
+  /** 本月已募兵数（recruitTurn 为所记月份，跨月自动作废） */
+  recruitTurn?: number;
+  recruitN?: number;
 }
 
 /* ---------- 军队与围城 ---------- */

@@ -51,6 +51,12 @@ export function yangzhouSiegeState(seed = 1645): GameState {
   s.armies.a_zuo.location = 'jiujiang'; delete s.factions.zuoliangyu.overlord; setStance(s, 'zuoliangyu', 'hongguang', 'war');
   s.cities.jiujiang.controller = 'zuoliangyu'; s.cities.jiujiang.governor = undefined; s.chars.yuanjixian.location = 'anqing';
   s.flags.zuo_rebel = turnOf(1645, 3);
+  // 左良玉四月初病死九江，左梦庚继统：人物、势力、军队与军报一致
+  s.chars.zuoliangyu.status = 'dead';
+  s.factions.zuoliangyu.leader = 'zuomenggeng';
+  s.factions.zuoliangyu.name = '左梦庚部';
+  s.armies.a_zuo.commander = 'zuomenggeng'; s.armies.a_zuo.name = '左部大营';
+  s.chars.zuomenggeng.location = 'jiujiang';
   // 清军：多铎主力围扬州，准塔在淮安城外
   const dd = s.armies.a_duoduo; dd.location = 'yangzhou'; dd.troops = 68000; dd.morale = 80; dd.supply = 'sizhou'; dd.order = { kind: 'siege', target: 'yangzhou', assault: true };
   s.chars.duoduo.location = 'yangzhou';
@@ -62,6 +68,8 @@ export function yangzhouSiegeState(seed = 1645): GameState {
   s.armies.a_ajige.location = 'xian'; s.armies.a_ajige.supply = 'xian';
   s.armies.a_wu.location = 'xian'; s.armies.a_wu.supply = 'xian';
   s.sieges.yangzhou = { node: 'yangzhou', attacker: 'qing', armies: ['a_duoduo', 'a_kong'], startTurn: s.turn - 1, months: 1 };
+  s.flags.sieged_yangzhou = s.turn - 1;
+  for (const id of ['xuzhou', 'sizhou', 'guide', 'suizhou', 'kaifeng']) s.flags['lost_how_' + id] = '陷城';
   s.events = ['xs_jiashen', 'xs_tifa1', 'ss_dushi', 'ss_gaojie_yz', 'xs_shandong', 'ss_mashiying', 'ss_zheng_feng', 'ss_chongqing', 'xs_shun_west', 'ss_letter', 'xs_fushe', 'xs_haimao', 'ss_tuqiao', 'ss_chengdu',
     'xs_huaiyang', 'xs_liuzeqing', 'ss_qing_south', 'ss_daxi', 'xs_xuanshunv', 'ss_tongguan', 'ss_gaojie_killed', 'xs_sanan', 'ss_zuo_east', 'ss_duoduo_huai'].map(id => ({ id, turn: 0, variant: 'history' as const }));
   s.reports.push({ turn: s.turn - 1, cat: '急报', urgent: true, node: 'yangzhou', text: '清豫亲王多铎兵临扬州城下，督师史可法闭城固守。守军 2.4 万，城防 78。', src: { kind: 'siege', ref: 'yangzhou' } });

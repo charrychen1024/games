@@ -36,15 +36,22 @@
 
 ## 开发
 
-设计依据见 [`Docs/南明游戏制作要求.md`](Docs/南明游戏制作要求.md)（v0.2），实现对照见 [`Docs/实现说明.md`](Docs/实现说明.md)。
+设计依据见 [`Docs/南明游戏制作要求.md`](Docs/南明游戏制作要求.md)（v0.3），实现对照见 [`Docs/实现说明.md`](Docs/实现说明.md)，其中有对[独立审查](Docs/十二回合试玩独立审查-2026-11-23.md)的逐项处理记录。
 
 ```bash
 npm install
 npm run dev        # 开发服务器
 npm test           # 规则核心测试（vitest，含制作要求第六节的验收）
 npm run build      # 类型检查 + 构建到 dist/（构建产物提交到仓库，供 GitHub Pages 使用）
-npm run e2e        # 端到端测试：用浏览器真实操作走完十二个月（需本机 Playwright）
+npm run e2e        # 端到端测试：用浏览器真实操作走完十二个月，截图写入 test-results/
 npx tsx tools/sim.ts 12 1644   # 无界面模拟，打印每月军情，用于调平衡
+npx tsx tools/compare.ts 30    # 成对局面：同一组种子比较放任、增援、补给、交涉四种策略
+```
+
+浏览器测试需要 Playwright。`tools/pw.mjs` 依次尝试环境变量 `PLAYWRIGHT_CORE`、项目依赖 `playwright-core`、本机 Homebrew 安装，都没有时可以这样装：
+
+```bash
+npm i -D playwright-core && npx playwright-core install chromium
 ```
 
 ```

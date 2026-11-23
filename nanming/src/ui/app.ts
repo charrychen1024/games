@@ -12,7 +12,7 @@ import { POLITIES } from '../data/factions';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName } from '../core/state';
 import { POLICY_NAME, POLICY_HINT, monthlyIncome, upkeepOf, RECRUIT_SILVER } from '../core/economy';
-import { describeOrder, validateOrder, maxRecruit, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
+import { describeOrder, validateOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { trialState, yangzhouSiegeState } from '../data/presets';
 import { canSea } from '../core/military';
@@ -88,7 +88,7 @@ export class App {
     this.map.view.state = trialState(1);
     this.map.view.selected = null;
     this.map.focus('wuchang', 1.1);
-    for (const id of ['#panel', '#report', '#hint']) $(id).classList.add('hidden');
+    for (const id of ['#panel', '#report', '#hint', '#legend']) $(id).classList.add('hidden');
     clear($('#orders'));
     // 背景地图缓缓巡游
     const tour = ['nanjing', 'yangzhou', 'beijing', 'xian', 'chengdu', 'wuchang', 'fuzhou'];
@@ -134,8 +134,10 @@ export class App {
     this.renderAll();
     if (focus) this.selectNode(focus);
     if (fresh && this.hintStep < 4) { this.hintStep = 0; this.showHint(); }
-    else if (state.reports.some(r => r.turn === state.turn - 1)) this.openReport();
-    if (fresh) saveTo(this.kv, 'auto', state, this.saveLabel(state));
+    else if (state.reports.some(r => r.turn === state.turn - (state.ended ? 0 : 1))) { this.reportTurn = state.turn - (state.ended ? 0 : 1); this.openReport(); }
+    if (fresh) this.autoSave();
+    // 读到已结束的局势：重新打开结局面板，按结局允许的操作继续
+    if (state.ended) this.showEnd();
   }
 
   /* ================= 地图交互 ================= */
@@ -312,6 +314,7 @@ export class App {
       ib('btn-report', 'report', '军情（R）', () => this.toggleReport(), { badge: unread }),
       ib('btn-factions', 'factions', '天下诸家', () => this.openFactions()),
       ib('btn-chars', 'chars', '人物', () => this.openChars()),
+      ib('btn-legend', 'map', '图例', () => this.toggleLegend(), { on: !$('#legend').classList.contains('hidden') }),
       ib('btn-save', 'save', '存档', () => this.openSaves(false)),
       ib('btn-battle', this.autoBattle ? 'auto' : 'battle', this.autoBattle ? '战斗：部将自动' : '战斗：亲自指挥', () => { this.autoBattle = !this.autoBattle; this.renderTop(); }, { on: !this.autoBattle }),
       ib('btn-sound', isMuted() ? 'mute' : 'sound', isMuted() ? '已静音' : '声音', () => { setMuted(!isMuted()); this.renderTop(); }),
@@ -635,8 +638,9 @@ export class App {
 
   formRecruit(node: string) {
     const s = this.s!, c = s.cities[node];
-    const max = Math.min(maxRecruit(c), Math.floor((c.silver - this.pendingSpend(node, 'silver')) / RECRUIT_SILVER / 100) * 100);
-    if (max < 100) { this.toast(`${nodeName(node)}本月募不到兵`, 'close'); return; }
+    const left = recruitLeft(s, node);
+    const max = Math.min(left, Math.floor((c.silver - this.pendingSpend(node, 'silver')) / RECRUIT_SILVER / 100) * 100);
+    if (max < 100) { this.toast(left < 100 ? `${nodeName(node)}本月名额已满` : `${nodeName(node)}府库不足，募不到兵`, 'close'); return; }
     const input = h('input', { type: 'range', min: 100, max, step: 100, value: Math.min(max, 1000), id: 'recruit-n' }) as HTMLInputElement;
     const big = h('div', { class: 'big-num' });
     const costs = h('div', { class: 'costs' });
@@ -651,7 +655,7 @@ export class App {
         h('span', { class: 'cost good' }, ic('troops'), `驻军 +${fmt(n)}`));
     };
     input.oninput = upd; upd();
-    this.modal('recruit', '募兵', `${nodeName(node)} · 本月上限 ${fmt(maxRecruit(c))}`, [big, h('div', { class: 'field' }, input), costs],
+    this.modal('recruit', '募兵', `${nodeName(node)} · 本月剩余 ${fmt(left)} / 上限 ${fmt(maxRecruit(c))}`, [big, h('div', { class: 'field' }, input), costs],
       [this.cancelBtn(), { label: '募兵', icon: 'ok', primary: true, id: 'recruit-ok', onclick: () => { this.addOrder({ id: this.newOrderId(), kind: 'recruit', node, troops: +input.value }); } }]);
   }
 
@@ -662,7 +666,14 @@ export class App {
     const toSel = h('select', { id: 'tr-to' }, ...targets.map(c => h('option', { value: c.id, selected: c.id === to }, `${nodeName(c.id)} · ${s.factions[c.controller].short}`))) as HTMLSelectElement;
     const grain = h('input', { type: 'number', min: 0, step: 1000, value: 10000, id: 'tr-grain', style: { width: '130px' } }) as HTMLInputElement;
     const silver = h('input', { type: 'number', min: 0, step: 1000, value: 0, id: 'tr-silver', style: { width: '130px' } }) as HTMLInputElement;
-    this.modal('transfer', '调拨钱粮', '本月送达', [
+    const status = h('div', { class: 'route-status', id: 'tr-status' });
+    const updStatus = () => {
+      const why = supplyBlock(s, s.player, fromSel.value, toSel.value);
+      clear(status).append(ic(why ? 'close' : 'ok'), why ?? '粮道畅通，本月送达');
+      status.className = 'route-status ' + (why ? 'bad' : 'good');
+    };
+    fromSel.onchange = updStatus; toSel.onchange = updStatus; updStatus();
+    this.modal('transfer', '调拨钱粮', '沿驿路运送 · 被围之城送不进', [status,
       h('div', { class: 'field' }, h('label', null, ic('city'), '自'), fromSel), h('div', { class: 'field' }, h('label', null, ic('target'), '往'), toSel),
       h('div', { class: 'field' }, h('label', null, ic('grain'), '粮'), grain, h('span', { class: 'note' }, '石')), h('div', { class: 'field' }, h('label', null, ic('silver'), '银'), silver, h('span', { class: 'note' }, '两')),
       h('div', { class: 'note' }, '拨给下属能提高服从。'),
@@ -686,9 +697,11 @@ export class App {
   }
 
   formAppoint(node: string) {
-    const list = this.freeChars().sort((a, b) => b.ab.zheng - a.ab.zheng);
+    const s = this.s!;
+    const list = this.freeChars().filter(c => s.cities[node].governor !== c.id).sort((a, b) => b.ab.zheng - a.ab.zheng);
     if (!list.length) { this.toast('无人可用', 'close'); return; }
-    this.modal('appoint', '任命主官', `${nodeName(node)} · 政务越高收入越多`, [this.charPicker(list, 'zheng', id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'appoint', node, char: id }); })], [this.cancelBtn()]);
+    const postOf = (id: string) => Object.values(s.cities).find(c => c.governor === id)?.id;
+    this.modal('appoint', '任命主官', `${nodeName(node)} · 政务越高收入越多 · 现任他城主官者调任`, [this.charPicker(list, 'zheng', id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'appoint', node, char: id }); }, c => { const p = postOf(c.id); return `政 ${c.ab.zheng}${p ? ` · 调离${nodeName(p)}` : ''}`; })], [this.cancelBtn()]);
   }
 
   formPersuade(node: string) {
@@ -948,7 +961,7 @@ export class App {
     this.orders = [];
     this.map.view.state = this.s;
     this.resolving = false;
-    saveTo(this.kv, 'auto', this.s, this.saveLabel(this.s));
+    this.autoSave();
     this.reportTurn = this.s.turn - (this.s.ended ? 0 : 1);
     this.renderAll();
     const urgent = this.s.reports.some(x => x.turn === this.reportTurn && x.urgent && (!x.faction || x.faction === this.s!.player));
@@ -988,11 +1001,41 @@ export class App {
         this.tile('siege', '扬州', s.cities.yangzhou.controller === s.player ? (s.sieges.yangzhou ? '被围' : '在手') : '已失'),
         this.tile('city', '南京', s.cities.nanjing.controller === s.player ? '无恙' : '已失'),
         this.tile('troops', '直辖兵', wan(troops))),
-      h('div', { class: 'note' }, '可继续推进；史事只编到乙酉四月。'),
+      h('div', { class: 'note' }, kind === 'trial_end' ? '可继续推进；史事只编到乙酉四月。' : kind === 'fallen' ? '本局已覆亡，可读取更早的存档重来。' : '本局已终，可回看军情或读取存档。'),
     ], [
       { label: '回到标题', icon: 'exit', onclick: () => this.showTitle() },
-      { label: '继续推进', icon: 'next', primary: true, id: 'end-continue', onclick: () => { delete s.ended; s.turnLimit = undefined; s.turn++; this.renderAll(); } },
+      ...(kind !== 'trial_end' ? [] : [{ label: '继续推进', icon: 'next', primary: true, id: 'end-continue', onclick: () => {
+        if (this.s !== s || !s.ended) return; // 只能前进一次
+        delete s.ended; s.turnLimit = undefined; s.turn++;
+        this.autoSave();
+        this.renderAll();
+      } }]),
     ]);
+  }
+
+  /* ================= 图例 ================= */
+  toggleLegend(force?: boolean) {
+    const el = $('#legend');
+    const show = force ?? el.classList.contains('hidden');
+    el.classList.toggle('hidden', !show);
+    if (show) {
+      const sw = (cls: string) => h('i', { class: 'sw ' + cls });
+      const row = (sample: HTMLElement, b: string, t: string) => h('div', { class: 'lg-row' }, sample, h('div', null, h('b', null, b), h('small', null, t)));
+      clear(el).append(
+        h('div', { class: 'lg-h' }, ic('map'), h('b', null, '图例'), h('button', { class: 'x', 'aria-label': '关闭', onclick: () => this.toggleLegend(false) }, ic('close'))),
+        row(sw('emb'), '城池', '底座颜色 = 实际控制者；旗上字 = 所奉政权'),
+        row(sw('tint'), '控制范围示意', '按离城远近自动划分，不是考据过的府县辖境'),
+        row(sw('solid'), '实线', '不同政权之间'),
+        row(sw('dash'), '虚线', '同一政权下，不同军镇或官府之间'),
+        row(sw('q'), '归属待考', '开局归属尚无定论，点城可看考据说明'),
+        row(sw('siege'), '被围', '城外有敌军围困，钱粮送不进也运不出'),
+        row(sw('road'), '驿路', '陆路行军与运粮'),
+        row(sw('sea'), '海路', '有水师方可通行'),
+        h('div', { class: 'note' }, '海岸、山川、河道依据真实地理数据；疆界只是示意。'),
+      );
+      gsap.from(el, { opacity: 0, y: -10, duration: 0.25 });
+    }
+    if (this.s) this.renderTop();
   }
 
   /* ================= 存读档 ================= */
@@ -1018,10 +1061,24 @@ export class App {
   saveSlot(slot: Slot) {
     if (this.resolving) return;
     if (this.orders.length) this.toast('本月未结束的命令不会存入', 'info');
-    saveTo(this.kv, slot, this.s!, this.saveLabel(this.s!));
+    if (!saveTo(this.kv, slot, this.s!, this.saveLabel(this.s!))) { this.saveFailed(`存档 ${slot}`); return; }
     this.toast(`已存入存档 ${slot}`, 'save');
     this.closeModal();
     this.openSaves(false);
+  }
+  autoSave() {
+    if (!this.s) return;
+    if (!saveTo(this.kv, 'auto', this.s, this.saveLabel(this.s))) this.saveFailed('自动存档');
+  }
+  /** 写入失败：旧档保留，提示本次未保存，给出导出文件的入口 */
+  saveFailed(what: string) {
+    const el = h('div', { class: 'hud warn', id: 'save-fail', style: { pointerEvents: 'auto' } }, ic('close'),
+      `${what}未能保存（浏览器存储已满或被禁用），原有存档未改动。`,
+      h('button', { class: 'mini', id: 'save-fail-export', onclick: () => { this.exportSave(); el.remove(); } }, ic('transfer'), '导出为文件'),
+      h('button', { class: 'mini', onclick: () => el.remove() }, '知道了'));
+    $('#save-fail')?.remove();
+    $('#toast').append(el);
+    gsap.from(el, { y: -16, opacity: 0, duration: 0.3 });
   }
   exportSave() {
     const blob = new Blob([serialize(this.s!, this.saveLabel(this.s!))], { type: 'application/json' });

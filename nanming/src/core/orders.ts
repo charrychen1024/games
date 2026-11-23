@@ -4,7 +4,7 @@ import { bump, report, nodeName, factionName, charName, troopsText, friendly, to
 import { setArmyOrder, capture } from './military';
 import { RECRUIT_SILVER, POLICY_NAME } from './economy';
 import { rngFor } from './rng';
-import { shortestPath } from '../data/geography';
+import { shortestPath, neighbors } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
   policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', reinforce: '增兵',
@@ -51,12 +51,13 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       if (!to || !friendly(s, f, to.controller)) return '只能调往己方或友方城池';
       if (o.grain < 0 || o.silver < 0 || (!o.grain && !o.silver)) return '数目不对';
       if (o.grain > s.cities[o.from].grain || o.silver > s.cities[o.from].silver) return '库存不足';
-      return null;
+      return supplyBlock(s, f, o.from, o.to);
     }
     case 'recruit': {
       const c = s.cities[o.node];
       if (!own(o.node)) return '只能在自己的城募兵';
-      if (o.troops <= 0 || o.troops > maxRecruit(c)) return `本城本月最多募 ${maxRecruit(c)} 人`;
+      const left = recruitLeft(s, o.node);
+      if (o.troops <= 0 || o.troops > left) return `本城本月最多再募 ${left} 人`;
       if (c.silver < o.troops * RECRUIT_SILVER) return '府库不足';
       return null;
     }
@@ -105,6 +106,36 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
   }
 }
 
+/** 本月还能募多少（按月初人口与民心定上限，同月多道命令累计） */
+export function recruitLeft(s: GameState, node: string): number {
+  const c = s.cities[node];
+  const used = c.recruitTurn === s.turn ? c.recruitN ?? 0 : 0;
+  return Math.max(0, maxRecruit(c) - used);
+}
+
+/**
+ * 粮道：钱粮沿道路运送，被围之城送不进也运不出；途中必须经过非敌方城池。
+ * 返回阻断原因，畅通返回 null。
+ */
+export function supplyBlock(s: GameState, f: string, from: string, to: string): string | null {
+  if (s.sieges[to]) return `${nodeName(to)}被围，粮道不通`;
+  if (s.sieges[from]) return `${nodeName(from)}被围，运不出城`;
+  const seen = new Set([from]);
+  const queue = [from];
+  while (queue.length) {
+    const u = queue.shift()!;
+    for (const { to: v } of neighbors(u)) {
+      if (seen.has(v)) continue;
+      if (v === to) return null;
+      seen.add(v);
+      const c = s.cities[v];
+      if (!c || s.sieges[v] || hostile(s, f, c.controller)) continue;
+      queue.push(v);
+    }
+  }
+  return `去${nodeName(to)}的路被敌方隔断`;
+}
+
 export const maxRecruit = (c: { pop: number; minxin: number }) => Math.max(0, Math.round(c.pop * 10000 * 0.004 * (0.5 + c.minxin / 100) / 100) * 100);
 
 /** 执行一道命令（已在月初校验）。交涉类只建立任务，下月抵达。 */
@@ -124,9 +155,12 @@ export function applyOrder(s: GameState, f: string, o: Order) {
     case 'appoint': {
       const c = s.cities[o.node];
       const prev = c.governor;
+      // 一人只任一城：调任即卸旧职
+      const old = Object.values(s.cities).find(x => x.id !== o.node && x.governor === o.char);
+      if (old) old.governor = undefined;
       c.governor = o.char;
       s.chars[o.char].location = o.node;
-      if (isPlayer) report(s, { cat: '人事', node: o.node, text: `${describeOrder(s, o)}${prev && prev !== o.char ? `，接替${charName(s, prev)}` : ''}。`, src });
+      if (isPlayer) report(s, { cat: '人事', node: o.node, text: `${describeOrder(s, o)}${old ? `，卸去${nodeName(old.id)}主官` : ''}${prev && prev !== o.char ? `，接替${charName(s, prev)}` : ''}。`, src });
       break;
     }
     case 'transfer': {
@@ -141,10 +175,11 @@ export function applyOrder(s: GameState, f: string, o: Order) {
     case 'recruit': {
       const c = s.cities[o.node];
       bump(s, o.node, 'silver', -o.troops * RECRUIT_SILVER, `募兵 ${o.troops} 人`, src);
+      if (c.recruitTurn !== s.turn) { c.recruitTurn = s.turn; c.recruitN = 0; }
+      c.recruitN = (c.recruitN ?? 0) + o.troops;
       bump(s, o.node, 'garrison', o.troops, `募兵 ${o.troops} 人`, src);
       bump(s, o.node, 'pop', -o.troops / 10000, `募兵 ${o.troops} 人`, src);
       bump(s, o.node, 'minxin', -Math.round(o.troops / 1500 * 10) / 10, `募兵 ${o.troops} 人`, src);
-      void c;
       if (isPlayer) report(s, { cat: '内政', node: o.node, text: `${describeOrder(s, o)}。每月多耗口粮 ${Math.round(o.troops * 0.3)} 石、饷银 ${Math.round(o.troops * 0.6)} 两。`, src });
       break;
     }

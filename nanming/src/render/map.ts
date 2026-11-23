@@ -10,7 +10,7 @@ import reliefUrl from '../assets/relief.png?url';
 import { POLITIES } from '../data/factions';
 import { project, WORLD_W, WORLD_H, worldToScreen, screenToWorld, type Camera } from './projection';
 import { makeRng } from '../core/rng';
-import { routeBetween } from '../data/geography';
+import { routeBetween, neighbors } from '../data/geography';
 import land from '../data/geo-land.json';
 import { ICONS } from '../ui/icons';
 import { emblem, flagAnchor, drawWavingFlag, type EmblemType } from './emblems';
@@ -463,8 +463,21 @@ export class MapRenderer {
     }
   }
 
+  /** 选中城池或军队时的“相关之处”：本城、相邻各城、军队所在与去向。其余淡化，避免淮扬一带挤成一团。 */
+  focusSet(s: GameState): Set<string> | null {
+    const sel = this.view.selected, sa = this.view.selectedArmy ? s.armies[this.view.selectedArmy] : null;
+    if (!sel && !sa) return null;
+    const out = new Set<string>();
+    const add = (id: string) => { out.add(id); for (const n of neighbors(id)) out.add(n.to); };
+    if (sel) add(sel);
+    if (sa) { add(sa.location); for (const p of sa.path) out.add(p); }
+    if (this.view.targeting?.path) for (const p of this.view.targeting.path) out.add(p);
+    return out;
+  }
+
   drawNodes(g: CanvasRenderingContext2D, s: GameState, time: number) {
     const z = this.cam.z;
+    const focus = this.focusSet(s);
     const k = Math.max(0.7, Math.min(1.3, 1.25 / Math.sqrt(z)));
     const order = NODES.filter(n => n.kind !== 'outland').sort((a, b) => a.lat === b.lat ? 0 : b.lat - a.lat); // 自北而南，近者压远者
     for (const n of order) {
@@ -478,12 +491,16 @@ export class MapRenderer {
       const w = EMBLEM_W[type] * k * (z < 1 ? 0.8 : 1);
       const isSel = this.view.selected === n.id, isHover = this.view.hover === n.id;
       const mine = topOfSafe(s, c.controller) === s.player;
+      const dim = !!focus && !focus.has(n.id) && z < 2.6;
+      g.save();
+      if (dim) g.globalAlpha = 0.38;
       // 落地光环：实控者颜色
       g.save();
       g.beginPath(); g.ellipse(x, y + 1, w * 0.52, w * 0.17, 0, 0, Math.PI * 2);
       g.fillStyle = col; g.globalAlpha = 0.85; g.fill();
       g.globalAlpha = 1; g.lineWidth = (mine ? 1.6 : 1) * k; g.strokeStyle = mine ? '#f0cf86' : 'rgba(30,20,10,0.7)'; g.stroke();
       g.restore();
+      if (dim) g.globalAlpha = 0.38;
       if (isSel || isHover) {
         const pulse = isSel ? 2 + Math.sin(time / 260) * 2 : 0;
         g.strokeStyle = isSel ? 'rgba(255,214,120,0.95)' : 'rgba(255,240,200,0.7)'; g.lineWidth = 2;
@@ -498,6 +515,14 @@ export class MapRenderer {
         const [ax, ay] = flagAnchor(type);
         drawWavingFlag(g, x - w / 2 + ax * w / 100, top + ay * w / 100, col, pol?.mark ?? '', time / 1000 + x * 0.01, pol?.flag ?? 'rect', w / 44);
       }
+      // 归属待考：小问号章
+      if (c.uncertain && (z >= 1.2 || !dim)) {
+        const bx = x + w * 0.42, by = top + w * 0.5, r = 5.5 * k;
+        g.beginPath(); g.arc(bx, by, r, 0, Math.PI * 2);
+        g.fillStyle = '#efe2c6'; g.fill(); g.lineWidth = 1.2; g.strokeStyle = '#5a3a1a'; g.stroke();
+        g.fillStyle = '#5a3a1a'; g.font = `700 ${Math.round(8 * k)}px "Noto Serif SC", serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText('?', bx, by + 0.5);
+      }
       // 城防环（放大后）
       if (z >= 2.4 && (type !== 'ferry')) {
         const r = w * 0.56;
@@ -506,6 +531,7 @@ export class MapRenderer {
         g.strokeStyle = c.wall > 60 ? '#9fd18f' : c.wall > 30 ? '#e8a447' : '#e0503f';
         g.beginPath(); g.ellipse(x, y + 1, r, r * 0.33, 0, Math.PI / 2, Math.PI / 2 + Math.PI * 2 * c.wall / 100); g.stroke();
       }
+      g.restore();
     }
   }
 
@@ -515,6 +541,7 @@ export class MapRenderer {
     for (const a of Object.values(s.armies)) { if (!visibleArmy(s, a)) continue; const key = a.progress > 0 ? a.id : a.location; (byNode[key] ??= []).push(a); }
     const z = this.cam.z;
     const scale = Math.max(0.7, Math.min(1.3, 1.2 / Math.sqrt(z)));
+    const focus = this.focusSet(s);
     for (const list of Object.values(byNode)) {
       list.sort((a, b) => a.id.localeCompare(b.id));
       list.forEach((a, i) => {
@@ -529,6 +556,7 @@ export class MapRenderer {
         const sel = this.view.selectedArmy === a.id;
         const mine = topOfSafe(s, a.faction) === s.player;
         g.save();
+        if (focus && !sel && !focus.has(a.location) && !a.path.some(p => focus.has(p)) && z < 2.6) g.globalAlpha = 0.35;
         g.translate(x, y); g.scale(scale, scale);
         if (sel) { g.fillStyle = 'rgba(255,214,120,0.55)'; g.beginPath(); g.arc(0, 0, 15, 0, Math.PI * 2); g.fill(); }
         // 旗杆与小旗（所奉政权）
@@ -591,10 +619,20 @@ export class MapRenderer {
     }
     // 城名（按重要性排序，避免重叠）
     const placed: [number, number, number, number][] = [];
-    const prio = (id: string) => (this.view.selected === id ? 0 : this.view.hover === id ? 1 : NODE[id].major ? 2 : NODE[id].detail ? 3 : 4);
+    // 军旗（圆章 + 兵力牌）先占位，城名绕开
+    for (const hit of this.armyHits) {
+      const [ax, ay] = worldToScreen(this.cam, this.w, this.h, hit.x, hit.y);
+      const r = hit.r * this.cam.z;
+      placed.push([ax - r * 1.1, ay - r * 1.6, r * 2.2, r * 3.4]);
+    }
+    const focus = this.focusSet(s);
+    const prio = (id: string) => (this.view.selected === id ? 0 : this.view.hover === id ? 1 : focus?.has(id) ? 2 : NODE[id].major ? (focus ? 4 : 2) : NODE[id].detail ? 3 : 5);
     const order = NODES.filter(n => n.kind !== 'outland').sort((a, b) => prio(a.id) - prio(b.id));
     for (const n of order) {
-      const show = n.major || (z >= 1.25 && n.detail) || z >= 1.9 || this.view.selected === n.id || this.view.hover === n.id;
+      let show = n.major || (z >= 1.25 && n.detail) || z >= 1.9 || this.view.selected === n.id || this.view.hover === n.id;
+      // 有选中时：相关之处照常，其余次要城名放大后再出
+      if (focus && !focus.has(n.id) && !n.major && z < 2.6 && this.view.hover !== n.id) show = false;
+      if (focus?.has(n.id) && z >= 1.0) show = true;
       if (!show) continue;
       const [x, y] = nodePt(n.id);
       const [sx, sy] = worldToScreen(this.cam, this.w, this.h, x, y);
@@ -610,10 +648,16 @@ export class MapRenderer {
       const below = sy + EMBLEM_W[emblemTypeOf(s, n.id)] * kk * 0.2 * z + size * 0.75;
       const cands: [number, number][] = [[sx - tw / 2, below], [sx + gap + 6, sy - 4], [sx - gap - 6 - tw, sy - 4], [sx - tw / 2, sy - 34 * Math.min(2, z) * 0.6]];
       let tx = cands[0][0], ty = cands[0][1], ok = false;
+      const hits = (rect: number[]) => placed.filter(r => r[0] < rect[0] + rect[2] && rect[0] < r[0] + r[2] && r[1] < rect[1] + rect[3] && rect[1] < r[1] + r[3]).length;
+      let best: [number, number, number] | null = null;
       for (const [cx, cy] of cands) {
         const rect: [number, number, number, number] = [cx - 2, cy - size / 2 - 1, tw + 4, th + 2];
-        if (prio(n.id) <= 1 || !placed.some(r => r[0] < rect[0] + rect[2] && rect[0] < r[0] + r[2] && r[1] < rect[1] + rect[3] && rect[1] < r[1] + r[3])) { tx = cx; ty = cy; placed.push(rect); ok = true; break; }
+        const k = hits(rect);
+        if (k === 0 || prio(n.id) <= 1) { tx = cx; ty = cy; placed.push(rect); ok = true; break; }
+        if (!best || k < best[2]) best = [cx, cy, k];
       }
+      // 选中城及其相邻城：实在没有空位，也放在重叠最少处，不隐藏
+      if (!ok && best && (prio(n.id) <= 2 || n.major)) { tx = best[0]; ty = best[1]; placed.push([tx - 2, ty - size / 2 - 1, tw + 4, th + 2]); ok = true; }
       if (!ok) continue;
       const pw = g.measureText(label).width + 12;
       g.fillStyle = big ? 'rgba(20,13,8,0.86)' : 'rgba(20,13,8,0.72)';

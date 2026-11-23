@@ -5,7 +5,7 @@ import type { GameState } from '../core/types';
 import { turnOf } from '../core/calendar';
 import { adjustAtt, adjustLoyalty, bump, setStance, hostile, report, armiesOf } from '../core/state';
 import { setArmyOrder, captureChar, succession } from '../core/military';
-import { shortestPath } from './geography';
+import { shortestPath, NODE } from './geography';
 
 const T = (y: number, m: number) => turnOf(y, m);
 const alive = (s: GameState, id: string) => s.chars[id]?.status === 'active';
@@ -195,7 +195,8 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'ss_tuqiao', kind: 'shishi', title: '土桥之役', from: 3, to: 5, node: 'yizhen',
-    cond: s => alive(s, 'gaojie') && alive(s, 'huangdegong') && !!s.armies.a_gao && !!s.armies.a_huang,
+    // 两部须同在江北、相去不过两站，才谈得上争防地
+    cond: s => alive(s, 'gaojie') && alive(s, 'huangdegong') && !!s.armies.a_gao && !!s.armies.a_huang && near(s.armies.a_gao.location, s.armies.a_huang.location, 2),
     text: () => '高杰与黄得功争夺防地，高杰部在仪真土桥伏击黄得功，黄部死伤甚众。两镇几成仇敌。',
     history: '甲申九月，高杰伏兵土桥袭黄得功，史可法居间调停，两镇积怨难解。',
     source: '《明史·黄得功传》；' + SRC_GU + '第三章',
@@ -300,11 +301,23 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'ss_yangzhou', kind: 'shishi', title: '扬州之战', from: 11, to: 11, node: 'yangzhou',
-    cond: s => ctrl(s, 'yangzhou') === 'qing' && s.flags.lost_yangzhou !== undefined,
-    altered: s => !!s.sieges.yangzhou && hostile(s, s.sieges.yangzhou.attacker, 'hongguang'),
-    text: (s, v) => v === 'history'
-      ? `扬州城破。${s.chars.shikefa?.status === 'active' ? '' : '督师史可法被执，不屈而死。'}清军入城后连日屠戮，死者无数，史称“扬州十日”。消息传开，江南州县或望风而降，或决意死守。`
-      : '清军围扬州。督师史可法誓与城共存亡，城中军民登陴固守。',
+    // 史实分支只认强攻陷城；献城、围而未下、解围都按本局实情改写；清军从未到扬州则不发生
+    cond: s => ctrl(s, 'yangzhou') === 'qing' && s.flags.lost_how_yangzhou === '陷城',
+    altered: s => yzState(s) !== 'none',
+    text: (s, v) => {
+      const shi = s.chars.shikefa;
+      if (v === 'history') {
+        const taken = shi && shi.status !== 'active' && String(s.flags.lost_caught_yangzhou ?? '').split(',').includes('shikefa');
+        const away = shi && shi.status === 'active' && shi.faction !== 'qing' ? `督师史可法时在${placeName(shi.location)}，不在城中。` : '';
+        return `扬州城破。${taken ? '督师史可法被执，不屈而死。' : away}清军入城后连日屠戮，死者无数，史称“扬州十日”。消息传开，江南州县或望风而降，或决意死守。`;
+      }
+      switch (yzState(s)) {
+        case 'surrendered': return `扬州守将开城降清，${shi?.faction === 'qing' ? '史可法随城改投清朝，' : ''}城中免于兵燹。清军不战而得江北重镇，江南为之震动。`;
+        case 'besieged': return '清军围扬州。督师史可法誓与城共存亡，城中军民登陴固守。';
+        case 'relieved': return `清军围扬州未下，终于解围而去。${ctrl(s, 'yangzhou') === 'qing' ? '' : '扬州犹在明军之手，'}江北人心稍定。`;
+        default: return '';
+      }
+    },
     history: '乙酉四月二十五日扬州城破，史可法殉国；清军屠城十日。五月清军渡江，南京开城投降，弘光帝被俘。',
     source: '王秀楚《扬州十日记》；《明史·史可法传》；' + SRC_GU + '第五章',
     effect: (s, v) => {
@@ -312,13 +325,39 @@ export const EVENTS: EventDef[] = [
         for (const id of ['zhaozhilong', 'qianqianyi', 'mashiying', 'liuliangzuo', 'liuzeqing']) adjustAtt(s, id, 'surrender', 12, '扬州屠城，惧祸');
         for (const id of ['zhengsen', 'huangdegong', 'zhangguowei', 'hetengjiao', 'qushisi']) adjustAtt(s, id, 'hawk', 12, '闻扬州屠城');
         for (const id of ['suzhou', 'changzhou', 'songjiang', 'hangzhou', 'shaoxing']) bump(s, id, 'minxin', -5, '扬州屠城，人心惶恐', { kind: 'event', ref: 'ss_yangzhou' });
+        if (s.chars.shikefa?.status === 'captured' && String(s.flags.lost_caught_yangzhou ?? '').split(',').includes('shikefa')) s.chars.shikefa.status = 'dead';
       } else {
-        adjustAtt(s, 'shikefa', 'hawk', 10, '誓守扬州');
-        bump(s, 'yangzhou', 'minxin', 6, '督师誓守，军民同心', { kind: 'event', ref: 'ss_yangzhou' });
+        const st = yzState(s);
+        if (st === 'surrendered') {
+          for (const id of ['zhaozhilong', 'qianqianyi', 'liuliangzuo', 'liuzeqing']) adjustAtt(s, id, 'surrender', 6, '扬州开城降清');
+          for (const id of ['huangdegong', 'zhangguowei']) adjustAtt(s, id, 'hawk', 4, '耻扬州不战而降');
+        } else if (st === 'besieged') {
+          adjustAtt(s, 'shikefa', 'hawk', 10, '誓守扬州');
+          bump(s, 'yangzhou', 'minxin', 6, '督师誓守，军民同心', { kind: 'event', ref: 'ss_yangzhou' });
+        } else if (st === 'relieved') {
+          bump(s, 'yangzhou', 'minxin', 8, '扬州解围', { kind: 'event', ref: 'ss_yangzhou' });
+          for (const id of ['huangdegong', 'zhengsen', 'shikefa']) adjustAtt(s, id, 'hawk', 5, '扬州解围');
+          for (const id of ['liuliangzuo', 'liuzeqing', 'zhaozhilong']) adjustAtt(s, id, 'surrender', -5, '清军受挫于扬州');
+        }
       }
     },
   },
 ];
+
+/** 本局扬州的实际处境 */
+function yzState(s: GameState): 'surrendered' | 'besieged' | 'relieved' | 'none' {
+  const how = s.flags.lost_how_yangzhou;
+  if (ctrl(s, 'yangzhou') === 'qing' && how && how !== '陷城') return 'surrendered';
+  if (s.sieges.yangzhou && hostile(s, s.sieges.yangzhou.attacker, 'hongguang')) return 'besieged';
+  if (s.flags.sieged_yangzhou !== undefined && ctrl(s, 'yangzhou') !== 'qing') return 'relieved';
+  return 'none';
+}
+function near(a: string, b: string, steps: number): boolean {
+  if (a === b) return true;
+  const p = shortestPath(a, b, false);
+  return !!p && p.length <= steps;
+}
+function placeName(id: string): string { return NODE[id]?.name ?? id; }
 
 /** 某势力在某城附近是否有军队（供调试用） */
 export function nearby(s: GameState, faction: string, node: string): boolean {

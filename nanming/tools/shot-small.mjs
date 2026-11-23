@@ -1,7 +1,5 @@
 import { serve } from './serve.mjs';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const pw = require('/opt/homebrew/lib/node_modules/agent-browser/node_modules/playwright-core');
+import pw from './pw.mjs';
 const server = await serve(8213);
 const browser = await pw.chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });

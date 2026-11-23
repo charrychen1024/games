@@ -1,9 +1,11 @@
 /* 南明 · 端到端测试：node tools/e2e.mjs（先 npm run build）
  * 用真实鼠标操作走一遍试玩：点城、下令、号令下属、推进十二个月、处理战斗与史事抉择、存读档、样稿局面的手动守城。 */
 import { serve } from './serve.mjs';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const pw = require('/opt/homebrew/lib/node_modules/agent-browser/node_modules/playwright-core');
+import pw from './pw.mjs';
+import fs from 'node:fs';
+// 运行截图写入独立结果目录（不进仓库）
+const OUT = process.env.E2E_OUT ?? 'test-results';
+fs.mkdirSync(OUT, { recursive: true });
 const PORT = 8212;
 let pass = 0, fail = 0;
 const check = (name, ok, detail) => { if (ok) { pass++; console.log('  ✓ ' + name); } else { fail++; console.log('  ✗ ' + name + (detail ? '  [' + detail + ']' : '')); } };
@@ -133,8 +135,27 @@ try {
   const endDate = await page.getAttribute('#date-label', 'title');
   check('最后一月为乙酉四月', endDate.includes('四月') && endDate.includes('1645'), endDate);
 
-  console.log('存档与读档');
+  console.log('结局恢复（审查 03）');
+  await page.reload();
+  await wait(900);
+  check('结局时刷新，标题页有“继续游戏”', await visible('#btn-continue'));
+  await page.click('#btn-continue');
+  await wait(600);
+  check('继续游戏后重新打开试玩结局', (await text('#modal')).includes('试玩结束'), (await text('#modal')).slice(0, 60));
+  check('结局面板可“继续推进”', await visible('#end-continue'));
   await page.click('#end-continue');
+  await wait(300);
+  const after13 = await page.evaluate(() => ({ turn: NM.s.turn, ended: !!NM.s.ended }));
+  check('继续推进进入第十三个月', after13.turn === 12 && !after13.ended, JSON.stringify(after13));
+  check('结束本月按钮可用', await page.locator('#btn-next').isEnabled());
+  await page.reload();
+  await wait(900);
+  await page.click('#btn-continue');
+  await wait(600);
+  const again = await page.evaluate(() => NM.s.turn);
+  check('再次刷新不重复前进、也不再弹结局', again === 12 && !(await text('#modal')).includes('试玩结束'), `turn=${again}`);
+
+  console.log('存档与读档');
   await wait(200);
   await page.click('#btn-save');
   await page.click('[data-save="1"]');
@@ -148,6 +169,30 @@ try {
   await wait(500);
   check('读档后日期一致', (await text('#date-label')) === saved, `${saved} vs ${await text('#date-label')}`);
 
+  console.log('存档写入失败（审查 02）');
+  const old1 = await page.evaluate(() => localStorage.getItem('nanming:slot:1'));
+  await page.evaluate(() => { window.__setItem = Storage.prototype.setItem; Storage.prototype.setItem = function () { throw new DOMException('quota', 'QuotaExceededError'); }; });
+  await page.click('#btn-save');
+  await page.click('[data-save="1"]');
+  await wait(300);
+  check('写入失败时提示未保存', (await text('#save-fail')).includes('未能保存'), await text('#toast'));
+  check('失败提示给出导出入口', await visible('#save-fail-export'));
+  check('没有误报“已存入”', !(await text('#toast')).includes('已存入'));
+  const now1 = await page.evaluate(() => localStorage.getItem('nanming:slot:1'));
+  check('写入失败时旧档原样保留', now1 === old1);
+  await page.click('[data-save="2"]');
+  await wait(200);
+  check('空槽写入失败也不出现存档', !(await page.evaluate(() => localStorage.getItem('nanming:slot:2'))));
+  await page.evaluate(() => { Storage.prototype.setItem = window.__setItem; });
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { document.querySelector('#save-fail')?.remove(); NM.closeModal(); });
+
+  console.log('图例（审查 08）');
+  await page.click('#btn-legend');
+  await wait(200);
+  check('图例说明色块只是控制范围示意', (await text('#legend')).includes('控制范围示意'));
+  await page.click('#btn-legend');
+
   console.log('地图样稿：扬州被围');
   await page.click('#btn-title');
   await page.click('#title-ok');
@@ -157,7 +202,7 @@ try {
   check('样稿直接打开扬州详情', (await text('#city-name')).includes('扬州'));
   check('详情说明谁在城外围城', (await text('#siege-box')).includes('多铎'), await text('#siege-box'));
   check('详情说明实控者', (await text('#city-controller')).includes('弘光朝廷'));
-  await page.screenshot({ path: 'screenshots/02-siege.png' });
+  await page.screenshot({ path: `${OUT}/02-siege.png` });
   const sm = await nextMonth(true);
   check('扬州攻城战进入战斗画面并完成', sm.battles >= 1, JSON.stringify(sm));
   const rep = await text('#report-entries');
@@ -170,7 +215,7 @@ try {
 } catch (e) {
   fail++;
   console.log('  ✗ 测试异常：' + e.message);
-  await page.screenshot({ path: 'screenshots/e2e-fail.png' }).catch(() => {});
+  await page.screenshot({ path: `${OUT}/e2e-fail.png` }).catch(() => {});
 }
 check('全程没有页面错误', errors.length === 0, errors.slice(0, 3).join(' | '));
 console.log(`\n通过 ${pass}，失败 ${fail}`);

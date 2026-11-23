@@ -301,6 +301,9 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
       if (k > 0) { occupiers[0].troops -= k; bump(s, node, 'garrison', k, `${occupiers[0].name}分兵驻守`, src); }
       if (occupiers[0].faction !== newCtrl) c.controller = occupiers[0].faction;
     }
+    // 记下城中被执者，史事据此叙述（被俘者随即押往敌方治所）
+    const caught = Object.values(s.chars).filter(ch => ch.status === 'active' && ch.faction === old && (ch.id === gov?.id || ch.location === node)).map(ch => ch.id);
+    s.flags['lost_caught_' + node] = caught.join(',');
     if (gov && gov.faction === old) captureChar(s, gov.id, newCtrl, `守${nodeName(node)}，城破`);
   } else {
     bump(s, node, 'minxin', -5, how === '献城' ? '易帜' : '归附', src);
@@ -331,6 +334,7 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
   // 原守城军队若仍在城中，按败军处理
   for (const a of armiesAt(s, node)) if (hostile(s, a.faction, newCtrl)) retreat(s, a, true);
   s.flags['lost_' + node] = s.turn;
+  s.flags['lost_how_' + node] = how;
   if (c.controller === old) {
     report(s, { cat: '易主', urgent: true, node, text: `${nodeName(node)}守将${gov?.name ?? ''}率${factionName(s, old)}开城，正式归附${factionName(s, newCtrl)}。城仍由${factionName(s, old)}实控，改奉${s.factions[old].polity === 'qing' ? '清' : factionName(s, topOf(s, newCtrl))}。`, src });
     s.flags['lost_' + node] = s.turn;
@@ -384,6 +388,7 @@ export function updateSieges(s: GameState): string[] {
     if (city.garrison <= 0) { capture(s, node, here[0].faction, '陷城', here[0].commander); continue; }
     if (!existing) {
       s.sieges[node] = { node, attacker: here[0].faction, armies: here.map(a => a.id), startTurn: s.turn, months: 0 };
+      s.flags['sieged_' + node] = s.turn;
       const inv = friendly(s, city.controller, s.player) || friendly(s, here[0].faction, s.player);
       const mineDirect = city.controller === s.player || here[0].faction === s.player;
       report(s, { cat: '军报', node, urgent: mineDirect, faction: inv ? undefined : here[0].faction,

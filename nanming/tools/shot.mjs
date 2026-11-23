@@ -1,8 +1,6 @@
 /* 截图：node tools/shot.mjs —— 生成 screenshots/ 下的几张图（先 npm run build） */
 import { serve } from './serve.mjs';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const pw = require('/opt/homebrew/lib/node_modules/agent-browser/node_modules/playwright-core');
+import pw from './pw.mjs';
 const W = Number(process.env.W ?? 1440), H = Number(process.env.H ?? 900);
 const server = await serve(8211);
 const browser = await pw.chromium.launch();
