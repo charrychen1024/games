@@ -7,13 +7,14 @@ import { autoResolve } from './battle';
 import { applyOrder, resolveMissions } from './orders';
 import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects } from './military';
 import { runEconomy } from './economy';
-import { aiOrders, aiFixSupply, aiDefections, aiRaiseArmies, aiAttrition } from './ai';
+import { aiOrders, aiFixSupply, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy } from './ai';
 import { dueEvents, fireEvent, choiceFor, applyChoice, type EventDef, type PendingChoice } from './events';
 import { EVENTS } from '../data/events';
 import { pruneLedger, topOf, report, friendly, citiesOf, armiesOf } from './state';
 import { TOTAL_TURNS, dateLabel } from './calendar';
 import { VICTORY_AREAS, NODE } from '../data/geography';
-import { POLITIES } from '../data/factions';
+import { runTalent } from './talent';
+import { pendingSuccessions, successionOptions, applySuccession, autoSuccession, courtOf, transferCourt, polityOf } from './regime';
 
 export type Interrupt =
   | { type: 'battle'; battle: BattleState; side: 'att' | 'def' }
@@ -42,6 +43,7 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   const delayed = s.delayed; s.delayed = [];
   for (const o of delayed) applyOrder(s, s.player, o.kind === 'command' ? { ...o, silver: 0 } : o);
   for (const o of playerOrders) applyOrder(s, s.player, o);
+  aiDiplomacy(s);
   aiRaiseArmies(s);
   aiAttrition(s);
   aiFixSupply(s);
@@ -100,14 +102,33 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
     }
   }
 
+  // 人才出仕
+  runTalent(s);
+
+  // 继统：君主被俘或身故的势力议定监国、另立、迎回或权臣主事
+  for (const f of pendingSuccessions(s)) {
+    const opts = successionOptions(s, f);
+    if (!opts.length) { delete s.flags['need_succession_' + f]; continue; }
+    if (f === s.player) {
+      const why = String(s.flags['need_succession_' + f]);
+      const ans = yield { type: 'choice', choice: { eventId: 'succession', title: '议立新君', text: `${why}。国不可一日无主，群臣议定继统之事。`, options: opts.map(o => ({ label: o.label, desc: o.desc })) } };
+      const idx = ans?.type === 'choice' ? Math.max(0, Math.min(opts.length - 1, ans.index)) : 0;
+      applySuccession(s, f, opts[idx]);
+    } else autoSuccession(s, f);
+  }
+
   // 八、结算与收尾
   for (const f of Object.values(s.factions)) {
-    if (f.defunct || f.id === 'local') continue;
+    if (f.defunct || f.id === 'local' || f.id === 'helan') continue;
     if (!citiesOf(s, f.id).length && !armiesOf(s, f.id).length) {
       f.defunct = true;
       report(s, { cat: '急报', urgent: f.id === s.player, text: `${f.name}已无城池军队，退出天下之争。` });
+      // 下属随之失主：改为自立
+      for (const v of Object.values(s.factions)) if (v.overlord === f.id) { delete v.overlord; delete v.loyalty; }
     }
   }
+  // 明室正统转移
+  if (s.flags.ming_court && !courtOf(s)) transferCourt(s);
   checkEnd(s);
   pruneLedger(s);
   if (!s.ended) s.turn++;
@@ -128,7 +149,7 @@ function checkEnd(s: GameState) {
   const u = unificationProgress(s);
   if (u.held === u.total && u.rivals.length === 0) { s.ended = { kind: 'unified', text: `${p.name}统一天下。` }; return; }
   if (s.turnLimit !== undefined && s.turn + 1 >= s.turnLimit) {
-    s.ended = { kind: 'trial_end', text: `试玩结束：${dateLabel(POLITIES[p.polity], s.turn)}。` };
+    s.ended = { kind: 'trial_end', text: `试玩结束：${dateLabel(polityOf(s, p.polity), s.turn)}。` };
     return;
   }
   if (s.turn + 1 >= TOTAL_TURNS) s.ended = { kind: 'undecided', text: '剧本期满，天下未定。' };

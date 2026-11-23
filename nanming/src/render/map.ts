@@ -54,6 +54,26 @@ export interface MapView {
   targeting: { army: string; path: string[] | null } | null;
   /** 本月待发的行军命令（用于画预定路线） */
   planned: { army: string; path: string[] }[];
+  /** 月末回放：军队从上月位置走到本月位置 */
+  anim?: { from: Record<string, Pt>; t0: number; dur: number } | null;
+}
+type Rect = [number, number, number, number];
+interface NodeSlot { id: string; sx: number; sy: number; w: number; tier: 'full' | 'small' | 'dot'; label: Rect | null; fsize: number; big: boolean }
+interface ArmyStack { armies: string[]; sx: number; sy: number; ax: number; ay: number; moving: boolean }
+export interface Fx { kind: 'capture' | 'battle' | 'stamp' | 'float' | 'ripple'; node?: string; text?: string; color?: string; dy?: number; t0: number; dur: number }
+const MAX_Z = 6;
+/** 城郭标志的屏幕宽度（像素） */
+const EMBLEM_PX: Record<EmblemType, number> = { capital: 50, region: 42, major: 42, city: 34, port: 34, ferry: 28, pass: 32 };
+const easeInOut = (t: number) => t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+/** 朱印：方章里一个字 */
+function stamp(g: CanvasRenderingContext2D, ch: string, color: string, k: number) {
+  g.save(); g.scale(k, k);
+  roundRect(g, -11, -11, 22, 22, 3);
+  g.fillStyle = color; g.fill();
+  g.strokeStyle = 'rgba(255,240,210,0.9)'; g.lineWidth = 1.2; g.stroke();
+  g.fillStyle = '#fff6e2'; g.font = '700 14px "Ma Shan Zheng", "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(ch, 0, 1);
+  g.restore();
 }
 
 type Pt = [number, number];
@@ -68,7 +88,7 @@ export class MapRenderer {
   cells: Record<string, Pt[]> = {};
   edges: { a: string; b: string; pts: Pt[] }[] = [];
   view: MapView = { state: null, selected: null, selectedArmy: null, hover: null, targeting: null, planned: [] };
-  armyHits: { id: string; x: number; y: number; r: number }[] = [];
+  armyHits: { id: string; x: number; y: number; r: number; stack: string[] }[] = [];
   dpr = 1;
   w = 0;
   h = 0;
@@ -253,17 +273,10 @@ export class MapRenderer {
     g.drawImage(this.base, 0, 0, WORLD_W, WORLD_H);
     if (s) this.drawTerritory(g, s);
     this.drawWater(g);
-    if (s) {
-      this.drawRoutes(g, s, time);
-      this.drawSieges(g, s, time);
-      this.drawNodes(g, s, time);
-      this.drawSiegeSmoke(g, s, time);
-      this.drawArmies(g, s, time);
-      this.drawSiegeSeals(g, s);
-    }
+    if (s) this.drawRoutes(g, s, time);
     this.drawCloudShadows(g, time);
     g.restore();
-    if (s) this.drawLabels(g, s);
+    if (s) this.drawScreen(g, s, time);
   }
 
   drawTerritory(g: CanvasRenderingContext2D, s: GameState) {
@@ -356,8 +369,10 @@ export class MapRenderer {
     g.setLineDash([]);
   }
 
+  routeLabels: [number, number, string][] = [];
   drawRoutes(g: CanvasRenderingContext2D, s: GameState, time: number) {
     const z = this.cam.z;
+    this.routeLabels = [];
     const sel = this.view.selected;
     if (z >= 1.9 || sel) {
       for (const r of ROUTES) {
@@ -366,16 +381,13 @@ export class MapRenderer {
         const hi = r.a === sel || r.b === sel;
         if (hi || r.kind !== 'land') {
           g.strokeStyle = r.kind === 'land' ? 'rgba(255,226,150,0.85)' : 'rgba(170,225,240,0.7)';
-          g.lineWidth = hi ? 1.4 : 0.9;
-          g.setLineDash(r.kind === 'land' ? [] : [4, 3]);
+          g.lineWidth = (hi ? 2.6 : 1.3) / z;
+          g.setLineDash(r.kind === 'land' ? [] : [6 / z, 5 / z]);
           g.beginPath(); g.moveTo(q[0], q[1]); g.quadraticCurveTo(q[2], q[3], q[4], q[5]); g.stroke();
         }
-        if (z >= 2.6) {
-          g.setLineDash([]);
+        if (hi) {
           const mx = 0.25 * q[0] + 0.5 * q[2] + 0.25 * q[4], my = 0.25 * q[1] + 0.5 * q[3] + 0.25 * q[5];
-          g.font = '600 6px "Noto Serif SC", serif'; g.textAlign = 'center';
-          g.lineWidth = 2; g.strokeStyle = 'rgba(20,14,8,0.75)'; g.strokeText(`${r.days}日`, mx, my - 1.5);
-          g.fillStyle = '#f3e4bf'; g.fillText(`${r.days}日`, mx, my - 1.5);
+          this.routeLabels.push([mx, my, `${r.days}日`]);
         }
       }
       g.setLineDash([]);
@@ -387,58 +399,23 @@ export class MapRenderer {
       if (pts.length < 2) return;
       const mine = a.faction === s.player;
       g.strokeStyle = planned ? 'rgba(181,52,42,0.95)' : mine ? 'rgba(181,52,42,0.75)' : 'rgba(30,25,20,0.6)';
-      g.lineWidth = planned ? 2.2 : 1.6;
-      g.setLineDash([6, 4]); g.lineDashOffset = dash;
+      const zz = this.cam.z;
+      g.lineWidth = (planned ? 3.4 : 2.4) / zz;
+      g.setLineDash([9 / zz, 6 / zz]); g.lineDashOffset = dash / zz;
       g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke();
       g.setLineDash([]);
       const [x1, y1] = pts[pts.length - 2], [x2, y2] = pts[pts.length - 1];
-      arrowHead(g, x1, y1, x2, y2, g.strokeStyle as string);
+      arrowHead(g, x1, y1, x2, y2, g.strokeStyle as string, 13 / zz);
     };
     for (const a of Object.values(s.armies)) if (a.path.length && (visibleArmy(s, a))) drawPath(a, a.path, false);
     for (const p of this.view.planned) { const a = s.armies[p.army]; if (a) drawPath(a, p.path, true); }
     if (this.view.targeting?.path) { const a = s.armies[this.view.targeting.army]; if (a) drawPath(a, this.view.targeting.path, true); }
   }
 
-  drawSieges(g: CanvasRenderingContext2D, s: GameState, time: number) {
-    for (const sg of Object.values(s.sieges)) {
-      const [x, y] = nodePt(sg.node);
-      const r = 22;
-      const pulse = 0.5 + 0.5 * Math.sin(time / 300);
-      g.save();
-      g.translate(x, y);
-      // 红光
-      const grd = g.createRadialGradient(0, 0, r * 0.4, 0, 0, r + 10);
-      grd.addColorStop(0, 'rgba(224,80,63,0)'); grd.addColorStop(0.7, `rgba(224,80,63,${0.18 + pulse * 0.2})`); grd.addColorStop(1, 'rgba(224,80,63,0)');
-      g.fillStyle = grd; g.beginPath(); g.arc(0, 0, r + 10, 0, Math.PI * 2); g.fill();
-      // 刺圈
-      g.rotate(time / 5000);
-      g.strokeStyle = s.factions[sg.attacker]?.color ?? '#333';
-      g.lineWidth = 2.6;
-      for (let k = 0; k < 16; k++) {
-        const a = k * Math.PI / 8;
-        g.beginPath(); g.moveTo(Math.cos(a) * r, Math.sin(a) * r); g.lineTo(Math.cos(a) * (r + 6), Math.sin(a) * (r + 6)); g.stroke();
-      }
-      g.strokeStyle = '#e0503f'; g.lineWidth = 1.6; g.setLineDash([3, 3]);
-      g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.stroke();
-      g.restore();
-    }
-  }
-  /** 被围之城：烽烟与火光（画在城郭之上） */
-  drawSiegeSmoke(g: CanvasRenderingContext2D, s: GameState, time: number) {
-    for (const sg of Object.values(s.sieges)) {
-      const [x, y] = nodePt(sg.node);
-      for (let k = 0; k < 7; k++) {
-        const p = ((time / 2600 + k / 7) % 1);
-        const px = x - 4 + Math.sin(k * 2.1 + p * 3) * 4 + p * 10, py = y - 14 - p * 34;
-        g.fillStyle = `rgba(60,55,50,${0.45 * (1 - p)})`;
-        g.beginPath(); g.arc(px, py, 3 + p * 7, 0, Math.PI * 2); g.fill();
-      }
-      const fl = 0.6 + 0.4 * Math.sin(time / 90);
-      const gr = g.createRadialGradient(x - 3, y - 9, 0, x - 3, y - 9, 8);
-      gr.addColorStop(0, `rgba(255,200,90,${0.9 * fl})`); gr.addColorStop(1, 'rgba(255,90,20,0)');
-      g.fillStyle = gr; g.beginPath(); g.arc(x - 3, y - 9, 8, 0, Math.PI * 2); g.fill();
-    }
-  }
+  /* ================= 屏幕层：城池、军队、名字按“有空位才画全”的原则摆放 =================
+   * 城池标志与城名用固定的屏幕大小，不随缩放一起变大；放大后城与城自然拉开。
+   * 每帧按重要性依次摆放：放得下就画完整城郭与城名，放不下退成小城郭，再放不下只画一个势力色圆点。
+   * 同城的军队合成一面军旗，旗上注明支数。 */
   /** 云影：缓缓掠过 */
   drawCloudShadows(g: CanvasRenderingContext2D, time: number) {
     for (let k = 0; k < 5; k++) {
@@ -448,22 +425,7 @@ export class MapRenderer {
       g.fillStyle = gr; g.beginPath(); g.ellipse(x, y, 260, 130, 0, 0, Math.PI * 2); g.fill();
     }
   }
-  drawSiegeSeals(g: CanvasRenderingContext2D, s: GameState) {
-    for (const sg of Object.values(s.sieges)) {
-      const [x, y] = nodePt(sg.node);
-      const sx = x - 22, sy = y - 24;
-      g.save();
-      g.translate(sx, sy); g.rotate(-0.12);
-      roundRect(g, -8, -8, 16, 16, 3);
-      g.fillStyle = '#c8352a'; g.fill();
-      g.strokeStyle = '#f0cf86'; g.lineWidth = 1.2; g.stroke();
-      g.fillStyle = '#fff3d9'; g.font = '700 11px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillText('围', 0, 0.5);
-      g.restore();
-    }
-  }
-
-  /** 选中城池或军队时的“相关之处”：本城、相邻各城、军队所在与去向。其余淡化，避免淮扬一带挤成一团。 */
+  /** 选中城池或军队时的“相关之处”：本城、相邻各城、军队所在与去向。其余淡化。 */
   focusSet(s: GameState): Set<string> | null {
     const sel = this.view.selected, sa = this.view.selectedArmy ? s.armies[this.view.selectedArmy] : null;
     if (!sel && !sa) return null;
@@ -474,119 +436,240 @@ export class MapRenderer {
     if (this.view.targeting?.path) for (const p of this.view.targeting.path) out.add(p);
     return out;
   }
-
-  drawNodes(g: CanvasRenderingContext2D, s: GameState, time: number) {
-    const z = this.cam.z;
-    const focus = this.focusSet(s);
-    const k = Math.max(0.7, Math.min(1.3, 1.25 / Math.sqrt(z)));
-    const order = NODES.filter(n => n.kind !== 'outland').sort((a, b) => a.lat === b.lat ? 0 : b.lat - a.lat); // 自北而南，近者压远者
-    for (const n of order) {
-      const c = s.cities[n.id];
-      if (!c) continue;
-      const type = emblemTypeOf(s, n.id);
-      if (z < 1.0 && !n.major && type !== 'region' && type !== 'capital') continue;
-      const [x, y] = nodePt(n.id);
-      const f = s.factions[c.controller];
-      const col = f?.color ?? '#999';
-      const w = EMBLEM_W[type] * k * (z < 1 ? 0.8 : 1);
-      const isSel = this.view.selected === n.id, isHover = this.view.hover === n.id;
-      const mine = topOfSafe(s, c.controller) === s.player;
-      const dim = !!focus && !focus.has(n.id) && z < 2.6;
-      g.save();
-      if (dim) g.globalAlpha = 0.38;
-      // 落地光环：实控者颜色
-      g.save();
-      g.beginPath(); g.ellipse(x, y + 1, w * 0.52, w * 0.17, 0, 0, Math.PI * 2);
-      g.fillStyle = col; g.globalAlpha = 0.85; g.fill();
-      g.globalAlpha = 1; g.lineWidth = (mine ? 1.6 : 1) * k; g.strokeStyle = mine ? '#f0cf86' : 'rgba(30,20,10,0.7)'; g.stroke();
-      g.restore();
-      if (dim) g.globalAlpha = 0.38;
-      if (isSel || isHover) {
-        const pulse = isSel ? 2 + Math.sin(time / 260) * 2 : 0;
-        g.strokeStyle = isSel ? 'rgba(255,214,120,0.95)' : 'rgba(255,240,200,0.7)'; g.lineWidth = 2;
-        g.beginPath(); g.ellipse(x, y + 1, w * 0.62 + pulse, w * 0.22 + pulse * 0.4, 0, 0, Math.PI * 2); g.stroke();
-      }
-      // 城郭插画
-      const top = y - w * 0.92;
-      g.drawImage(emblem(type), x - w / 2, top, w, w);
-      // 旗：实控者颜色，旗书所奉政权
-      if (z >= 0.9 || n.major) {
-        const pol = POLITIES[f?.polity ?? 'none'];
-        const [ax, ay] = flagAnchor(type);
-        drawWavingFlag(g, x - w / 2 + ax * w / 100, top + ay * w / 100, col, pol?.mark ?? '', time / 1000 + x * 0.01, pol?.flag ?? 'rect', w / 44);
-      }
-      // 归属待考：小问号章
-      if (c.uncertain && (z >= 1.2 || !dim)) {
-        const bx = x + w * 0.42, by = top + w * 0.5, r = 5.5 * k;
-        g.beginPath(); g.arc(bx, by, r, 0, Math.PI * 2);
-        g.fillStyle = '#efe2c6'; g.fill(); g.lineWidth = 1.2; g.strokeStyle = '#5a3a1a'; g.stroke();
-        g.fillStyle = '#5a3a1a'; g.font = `700 ${Math.round(8 * k)}px "Noto Serif SC", serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-        g.fillText('?', bx, by + 0.5);
-      }
-      // 城防环（放大后）
-      if (z >= 2.4 && (type !== 'ferry')) {
-        const r = w * 0.56;
-        g.strokeStyle = 'rgba(0,0,0,0.4)'; g.lineWidth = 2.2;
-        g.beginPath(); g.ellipse(x, y + 1, r, r * 0.33, 0, 0, Math.PI * 2); g.stroke();
-        g.strokeStyle = c.wall > 60 ? '#9fd18f' : c.wall > 30 ? '#e8a447' : '#e0503f';
-        g.beginPath(); g.ellipse(x, y + 1, r, r * 0.33, 0, Math.PI / 2, Math.PI / 2 + Math.PI * 2 * c.wall / 100); g.stroke();
-      }
-      g.restore();
-    }
-  }
-
-  drawArmies(g: CanvasRenderingContext2D, s: GameState, _time: number) {
-    this.armyHits = [];
-    const byNode: Record<string, Army[]> = {};
-    for (const a of Object.values(s.armies)) { if (!visibleArmy(s, a)) continue; const key = a.progress > 0 ? a.id : a.location; (byNode[key] ??= []).push(a); }
-    const z = this.cam.z;
-    const scale = Math.max(0.7, Math.min(1.3, 1.2 / Math.sqrt(z)));
-    const focus = this.focusSet(s);
-    for (const list of Object.values(byNode)) {
-      list.sort((a, b) => a.id.localeCompare(b.id));
-      list.forEach((a, i) => {
-        const [bx, by] = armyPt(a);
-        const ang = -Math.PI / 2 - 0.85 + i * 0.85;
-        const off = a.progress > 0 ? 0 : (s.sieges[a.location] ? 40 : 32) * scale;
-        const x = bx + Math.cos(ang) * off * (1 + i * 0.12), y = by + Math.sin(ang) * off * 0.85 - 2;
-        const f = s.factions[a.faction];
-        const pol = POLITIES[f?.polity ?? 'none'];
-        const cmd = s.chars[a.commander];
-        const mark = (cmd?.name ?? f?.short ?? '?').slice(0, 1);
-        const sel = this.view.selectedArmy === a.id;
-        const mine = topOfSafe(s, a.faction) === s.player;
-        g.save();
-        if (focus && !sel && !focus.has(a.location) && !a.path.some(p => focus.has(p)) && z < 2.6) g.globalAlpha = 0.35;
-        g.translate(x, y); g.scale(scale, scale);
-        if (sel) { g.fillStyle = 'rgba(255,214,120,0.55)'; g.beginPath(); g.arc(0, 0, 15, 0, Math.PI * 2); g.fill(); }
-        // 旗杆与小旗（所奉政权）
-        g.strokeStyle = '#1b130c'; g.lineWidth = 1.3;
-        g.beginPath(); g.moveTo(7, -4); g.lineTo(7, -20); g.stroke();
-        drawFlag(g, 7, -20, pol?.flag ?? 'rect', '#f3e9d2', pol?.mark ?? '', 0.7, '#1b130c');
-        // 圆章：主将姓氏
-        g.shadowColor = 'rgba(0,0,0,0.6)'; g.shadowBlur = 5; g.shadowOffsetY = 2;
-        g.beginPath(); g.arc(0, 0, 10.5, 0, Math.PI * 2);
-        g.fillStyle = f?.color ?? '#888'; g.fill();
-        g.shadowColor = 'transparent';
-        g.lineWidth = 2; g.strokeStyle = mine ? '#f0cf86' : '#e8d9b4'; g.stroke();
-        g.fillStyle = '#fff8e6'; g.font = '700 12px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-        g.fillText(mark, 0, 0.5);
-        // 兵力牌
-        const t = this.knownArmy(s, a) ? fmtTroops(a.troops) : roughT(a.troops);
-        g.font = '700 8.5px "Noto Serif SC", serif';
-        const tw = g.measureText(t).width + 6;
-        roundRect(g, -tw / 2, 11, tw, 10, 3);
-        g.fillStyle = 'rgba(15,10,6,0.85)'; g.fill();
-        g.fillStyle = a.morale > 50 ? '#f0cf86' : a.morale > 25 ? '#e8a447' : '#ff8f7f';
-        g.fillText(t, 0, 16.5);
-        g.restore();
-        this.armyHits.push({ id: a.id, x, y, r: 13 * scale });
-      });
-    }
-  }
   knownArmy(s: GameState, a: Army) { const t = topOfSafe(s, a.faction); return t === s.player || a.faction === s.player; }
 
-  drawLabels(g: CanvasRenderingContext2D, s: GameState) {
+  layout: Map<string, NodeSlot> = new Map();
+  stacks: ArmyStack[] = [];
+
+  nodePriority(s: GameState, id: string, focus: Set<string> | null): number {
+    const n = NODE[id], c = s.cities[id];
+    if (this.view.selected === id || this.view.hover === id) return 0;
+    if (this.view.targeting?.path?.includes(id)) return 1;
+    const cap = c && s.factions[c.controller]?.capital === id && c.controller !== 'local';
+    let p = cap ? 2 : s.sieges[id] ? 2.5 : n.major ? 3 : n.kind === 'city' ? 5 : n.kind === 'region' ? 4.5 : n.kind === 'port' ? 6 : 7;
+    if (focus?.has(id)) p -= 1.5;
+    if (c && topOfSafe(s, c.controller) === s.player && p > 3) p -= 0.5;
+    return p - Math.min(0.4, (c?.pop ?? 0) / 400);
+  }
+
+  computeLayout(s: GameState) {
+    const z = this.cam.z;
+    const focus = this.focusSet(s);
+    const zk = Math.max(0.78, Math.min(1.25, 0.8 + (z - 1) * 0.16));
+    const placed: Rect[] = [];
+    const hit = (r: Rect) => placed.some(q => q[0] < r[0] + r[2] && r[0] < q[0] + q[2] && q[1] < r[1] + r[3] && r[1] < q[1] + q[3]);
+    const out = new Map<string, NodeSlot>();
+    const ids = NODES.filter(n => n.kind !== 'outland' && s.cities[n.id]).map(n => n.id);
+    const prio = new Map(ids.map(id => [id, this.nodePriority(s, id, focus)]));
+    ids.sort((a, b) => prio.get(a)! - prio.get(b)!);
+    // 都城、要城先摆；再让军旗占位（固定在城的右上方）；其余城池在空处摆放
+    this.buildStacks(s);
+    const g = this.ctx;
+    let stacksPlaced = false;
+    for (const id of ids) {
+      if (!stacksPlaced && prio.get(id)! > 3) { stacksPlaced = true; for (const st of this.stacks) placed.push([st.sx - 13, st.sy - 26, 26, 42]); }
+      const [wx, wy] = nodePt(id);
+      const [sx, sy] = worldToScreen(this.cam, this.w, this.h, wx, wy);
+      if (sx < -80 || sy < -80 || sx > this.w + 80 || sy > this.h + 120) continue;
+      const n = NODE[id], type = emblemTypeOf(s, id);
+      const pr = prio.get(id)!;
+      const must = pr <= 1;
+      const big = n.major || type === 'capital';
+      const fsize = big ? 14 : 12.5;
+      g.font = `${big ? 700 : 500} ${fsize}px "Noto Serif SC", serif`;
+      const lw = g.measureText(n.name).width + 14, lh = fsize + 7 + (z >= 2.6 ? 15 : 0);
+      let slot: NodeSlot | null = null;
+      for (const tier of ['full', 'small'] as const) {
+        const w = EMBLEM_PX[type] * zk * (tier === 'small' ? 0.62 : 1);
+        const em: Rect = [sx - w * 0.42, sy - w * 0.85, w * 0.84, w * 0.95];
+        // 城名：先放在城下，放不下试右、左
+        const cands: Rect[] = [[sx - lw / 2, sy + w * 0.12, lw, lh], [sx + w * 0.42 + 2, sy - w * 0.4 - lh / 2, lw, lh], [sx - w * 0.42 - 2 - lw, sy - w * 0.4 - lh / 2, lw, lh]];
+        if (!must && hit(em)) continue;
+        const lab = cands.find(r => !hit(r)) ?? (must || pr <= 2.5 ? cands[0] : null);
+        if (!lab && tier === 'full') continue;
+        placed.push(em);
+        if (lab) placed.push(lab);
+        slot = { id, sx, sy, w, tier, label: lab, fsize, big };
+        break;
+      }
+      if (!slot) {
+        const dot: Rect = [sx - 5, sy - 5, 10, 10];
+        // 小点也尽量带名字（放大时）
+        const lab: Rect = [sx - lw / 2, sy + 6, lw, lh];
+        const showName = z >= 2.2 && !hit(lab);
+        placed.push(dot);
+        if (showName) placed.push(lab);
+        slot = { id, sx, sy, w: 9, tier: 'dot', label: showName ? lab : null, fsize: 11.5, big: false };
+      }
+      out.set(id, slot);
+    }
+    this.layout = out;
+  }
+
+  buildStacks(s: GameState) {
+    const groups = new Map<string, Army[]>();
+    for (const a of Object.values(s.armies)) {
+      const key = a.progress > 0 && a.path.length ? 'm:' + a.id : 'n:' + a.location;
+      (groups.get(key) ?? groups.set(key, []).get(key)!).push(a);
+    }
+    const out: ArmyStack[] = [];
+    const anim = this.view.anim;
+    const k = anim ? easeInOut(Math.min(1, (this.lastTime - anim.t0) / anim.dur)) : 1;
+    for (const [key, list] of groups) {
+      // 同城：本方在前，兵多在前
+      list.sort((a, b) => Number(topOfSafe(s, b.faction) === s.player) - Number(topOfSafe(s, a.faction) === s.player) || b.troops - a.troops || a.id.localeCompare(b.id));
+      // 同城而敌对的军队分成两面旗
+      const sides: Army[][] = [];
+      for (const a of list) { const side = sides.find(x => topOfSafe(s, x[0].faction) === topOfSafe(s, a.faction)); if (side) side.push(a); else sides.push([a]); }
+      sides.forEach((arm, i) => {
+        let [wx, wy] = armyPt(arm[0]);
+        if (anim && k < 1) { const f = anim.from[arm[0].id]; if (f) { wx = f[0] + (wx - f[0]) * k; wy = f[1] + (wy - f[1]) * k; } }
+        const [sx, sy] = worldToScreen(this.cam, this.w, this.h, wx, wy);
+        const moving = key.startsWith('m:');
+        const ox = moving ? 0 : 20 + i * 26, oy = moving ? -4 : -24;
+        out.push({ armies: arm.map(a => a.id), sx: sx + ox, sy: sy + oy, ax: sx, ay: sy, moving });
+      });
+    }
+    this.stacks = out;
+  }
+
+  drawScreen(g: CanvasRenderingContext2D, s: GameState, time: number) {
+    this.computeLayout(s);
+    const focus = this.focusSet(s);
+    const z = this.cam.z;
+    const slots = [...this.layout.values()].sort((a, b) => a.sy - b.sy);
+    // 被围之城：红光与刺圈（在城下）
+    for (const sg of Object.values(s.sieges)) {
+      const sl = this.layout.get(sg.node); if (!sl) continue;
+      const r = Math.max(16, sl.w * 0.55), pulse = 0.5 + 0.5 * Math.sin(time / 300);
+      g.save(); g.translate(sl.sx, sl.sy - sl.w * 0.25);
+      const grd = g.createRadialGradient(0, 0, r * 0.3, 0, 0, r + 12);
+      grd.addColorStop(0, 'rgba(224,80,63,0)'); grd.addColorStop(0.7, `rgba(224,80,63,${0.2 + pulse * 0.25})`); grd.addColorStop(1, 'rgba(224,80,63,0)');
+      g.fillStyle = grd; g.beginPath(); g.arc(0, 0, r + 12, 0, Math.PI * 2); g.fill();
+      g.rotate(time / 5000);
+      g.strokeStyle = s.factions[sg.attacker]?.color ?? '#333'; g.lineWidth = 2.4;
+      for (let k = 0; k < 16; k++) { const a = k * Math.PI / 8; g.beginPath(); g.moveTo(Math.cos(a) * r, Math.sin(a) * r * 0.6); g.lineTo(Math.cos(a) * (r + 6), Math.sin(a) * (r + 6) * 0.6); g.stroke(); }
+      g.restore();
+    }
+    // 城池
+    for (const sl of slots) {
+      const c = s.cities[sl.id], n = NODE[sl.id];
+      const f = s.factions[c.controller];
+      const col = f?.color ?? '#999';
+      const mine = topOfSafe(s, c.controller) === s.player;
+      const isSel = this.view.selected === sl.id, isHover = this.view.hover === sl.id;
+      const dim = !!focus && !focus.has(sl.id) && !isHover;
+      g.save();
+      if (dim) g.globalAlpha = 0.45;
+      if (sl.tier === 'dot') {
+        g.beginPath(); g.arc(sl.sx, sl.sy, 4.5, 0, Math.PI * 2);
+        g.fillStyle = col; g.fill();
+        g.lineWidth = 1.5; g.strokeStyle = mine ? '#f0cf86' : 'rgba(255,245,220,0.85)'; g.stroke();
+        if (isSel || isHover) { g.strokeStyle = 'rgba(255,214,120,0.95)'; g.lineWidth = 2; g.beginPath(); g.arc(sl.sx, sl.sy, 8 + (isSel ? Math.sin(time / 260) * 1.5 : 0), 0, Math.PI * 2); g.stroke(); }
+      } else {
+        const w = sl.w, type = emblemTypeOf(s, sl.id);
+        // 落地色盘
+        g.beginPath(); g.ellipse(sl.sx, sl.sy, w * 0.5, w * 0.16, 0, 0, Math.PI * 2);
+        g.fillStyle = col; g.globalAlpha *= 0.9; g.fill(); g.globalAlpha = dim ? 0.45 : 1;
+        g.lineWidth = mine ? 1.8 : 1; g.strokeStyle = mine ? '#f0cf86' : 'rgba(30,20,10,0.75)'; g.stroke();
+        if (isSel || isHover) {
+          const pulse = isSel ? 2 + Math.sin(time / 260) * 2 : 0;
+          g.strokeStyle = isSel ? 'rgba(255,214,120,0.95)' : 'rgba(255,240,200,0.7)'; g.lineWidth = 2;
+          g.beginPath(); g.ellipse(sl.sx, sl.sy, w * 0.6 + pulse, w * 0.21 + pulse * 0.4, 0, 0, Math.PI * 2); g.stroke();
+        }
+        const top = sl.sy - w * 0.92;
+        g.drawImage(emblem(type), sl.sx - w / 2, top, w, w);
+        if (sl.tier === 'full' && (z >= 1.3 || n.major || type === 'capital')) {
+          const pol = POLITIES[f?.polity ?? 'none'];
+          const [ax, ay] = flagAnchor(type);
+          drawWavingFlag(g, sl.sx - w / 2 + ax * w / 100, top + ay * w / 100, col, pol?.mark ?? '', time / 1000 + sl.sx * 0.01, pol?.flag ?? 'rect', w / 52);
+        }
+        if (c.uncertain && sl.tier === 'full') {
+          const bx = sl.sx + w * 0.4, by = top + w * 0.5;
+          g.beginPath(); g.arc(bx, by, 5.5, 0, Math.PI * 2);
+          g.fillStyle = '#efe2c6'; g.fill(); g.lineWidth = 1.2; g.strokeStyle = '#5a3a1a'; g.stroke();
+          g.fillStyle = '#5a3a1a'; g.font = '700 8px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('?', bx, by + 0.5);
+        }
+        if (z >= 2.4 && sl.tier === 'full' && type !== 'ferry') {
+          const r = w * 0.55;
+          g.strokeStyle = 'rgba(0,0,0,0.45)'; g.lineWidth = 2.4;
+          g.beginPath(); g.ellipse(sl.sx, sl.sy, r, r * 0.32, 0, 0, Math.PI * 2); g.stroke();
+          g.strokeStyle = c.wall > 60 ? '#9fd18f' : c.wall > 30 ? '#e8a447' : '#e0503f';
+          g.beginPath(); g.ellipse(sl.sx, sl.sy, r, r * 0.32, 0, Math.PI / 2, Math.PI / 2 + Math.PI * 2 * c.wall / 100); g.stroke();
+        }
+      }
+      g.restore();
+    }
+    // 烽烟与“围”字章
+    for (const sg of Object.values(s.sieges)) {
+      const sl = this.layout.get(sg.node); if (!sl) continue;
+      const x = sl.sx, y = sl.sy - sl.w * 0.5;
+      for (let k = 0; k < 7; k++) {
+        const p = ((time / 2600 + k / 7) % 1);
+        g.fillStyle = `rgba(60,55,50,${0.45 * (1 - p)})`;
+        g.beginPath(); g.arc(x - 4 + Math.sin(k * 2.1 + p * 3) * 4 + p * 10, y - 6 - p * 34, 3 + p * 7, 0, Math.PI * 2); g.fill();
+      }
+      const fl = 0.6 + 0.4 * Math.sin(time / 90);
+      const gr = g.createRadialGradient(x - 3, y, 0, x - 3, y, 9);
+      gr.addColorStop(0, `rgba(255,200,90,${0.9 * fl})`); gr.addColorStop(1, 'rgba(255,90,20,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(x - 3, y, 9, 0, Math.PI * 2); g.fill();
+      g.save(); g.translate(sl.sx - Math.max(14, sl.w * 0.5), sl.sy - Math.max(18, sl.w * 0.8)); g.rotate(-0.12);
+      roundRect(g, -9, -9, 18, 18, 3); g.fillStyle = '#c8352a'; g.fill(); g.strokeStyle = '#f0cf86'; g.lineWidth = 1.2; g.stroke();
+      g.fillStyle = '#fff3d9'; g.font = '700 12px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('围', 0, 0.5);
+      g.restore();
+    }
+    this.drawStacks(g, s, focus);
+    this.drawNames(g, s, focus);
+    this.drawFx(g, s, time);
+  }
+
+  drawStacks(g: CanvasRenderingContext2D, s: GameState, focus: Set<string> | null) {
+    this.armyHits = [];
+    for (const st of this.stacks) {
+      const a = s.armies[st.armies[0]];
+      const f = s.factions[a.faction];
+      const pol = POLITIES[f?.polity ?? 'none'];
+      const mark = (s.chars[a.commander]?.name ?? f?.short ?? '?').slice(0, 1);
+      const sel = st.armies.includes(this.view.selectedArmy ?? '');
+      const mine = topOfSafe(s, a.faction) === s.player;
+      const total = st.armies.reduce((n, id) => n + s.armies[id].troops, 0);
+      g.save();
+      if (focus && !sel && !focus.has(a.location) && !a.path.some(p => focus.has(p))) g.globalAlpha = 0.4;
+      // 牵引线：旗到城
+      if (!st.moving) { g.strokeStyle = 'rgba(20,14,8,0.55)'; g.lineWidth = 1; g.beginPath(); g.moveTo(st.ax, st.ay - 4); g.lineTo(st.sx - 4, st.sy + 6); g.stroke(); }
+      g.translate(st.sx, st.sy);
+      if (st.moving) g.translate(0, Math.sin(this.lastTime / 180 + st.sx) * 1.2);
+      if (sel) { g.fillStyle = 'rgba(255,214,120,0.5)'; g.beginPath(); g.arc(0, 0, 16, 0, Math.PI * 2); g.fill(); }
+      // 叠放的后几面
+      for (let k = Math.min(2, st.armies.length - 1); k >= 1; k--) {
+        g.beginPath(); g.arc(k * 3, -k * 3, 11, 0, Math.PI * 2);
+        g.fillStyle = s.factions[s.armies[st.armies[k]].faction]?.color ?? '#888'; g.fill();
+        g.lineWidth = 1.5; g.strokeStyle = 'rgba(232,217,180,0.8)'; g.stroke();
+      }
+      g.strokeStyle = '#1b130c'; g.lineWidth = 1.3;
+      g.beginPath(); g.moveTo(7, -4); g.lineTo(7, -20); g.stroke();
+      drawFlag(g, 7, -20, pol?.flag ?? 'rect', '#f3e9d2', pol?.mark ?? '', 0.7, '#1b130c');
+      g.shadowColor = 'rgba(0,0,0,0.6)'; g.shadowBlur = 5; g.shadowOffsetY = 2;
+      g.beginPath(); g.arc(0, 0, 11, 0, Math.PI * 2);
+      g.fillStyle = f?.color ?? '#888'; g.fill();
+      g.shadowColor = 'transparent';
+      g.lineWidth = 2; g.strokeStyle = mine ? '#f0cf86' : '#e8d9b4'; g.stroke();
+      g.fillStyle = '#fff8e6'; g.font = '700 12.5px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(mark, 0, 0.5);
+      const t = (this.knownArmy(s, a) ? fmtTroops(total) : roughT(total)) + (st.armies.length > 1 ? ` ·${st.armies.length}` : '');
+      g.font = '700 9px "Noto Serif SC", serif';
+      const tw = g.measureText(t).width + 8;
+      roundRect(g, -tw / 2, 12, tw, 11, 3);
+      g.fillStyle = 'rgba(15,10,6,0.88)'; g.fill();
+      g.fillStyle = a.morale > 50 ? '#f0cf86' : a.morale > 25 ? '#e8a447' : '#ff8f7f';
+      g.fillText(t, 0, 18);
+      g.restore();
+      const [wx, wy] = screenToWorld(this.cam, this.w, this.h, st.sx, st.sy);
+      for (const id of st.armies) this.armyHits.push({ id, x: wx, y: wy, r: 14 / this.cam.z, stack: st.armies });
+    }
+  }
+
+  drawNames(g: CanvasRenderingContext2D, s: GameState, _focus: Set<string> | null) {
     const z = this.cam.z;
     g.save();
     g.textBaseline = 'middle';
@@ -596,20 +679,19 @@ export class MapRenderer {
       for (const c of Object.values(s.cities)) { if (c.controller === 'local') continue; (groups[c.controller] ??= []).push(nodePt(c.id)); }
       for (const [f, pts] of Object.entries(groups)) {
         const fac = s.factions[f];
-        if (!fac || pts.length < 2) continue;
+        if (!fac || pts.length < 3) continue;
         const cx = pts.reduce((n, p) => n + p[0], 0) / pts.length, cy = pts.reduce((n, p) => n + p[1], 0) / pts.length;
         const [sx, sy] = worldToScreen(this.cam, this.w, this.h, cx, cy);
-        g.font = `600 ${Math.round(15 + Math.min(14, pts.length))}px "Ma Shan Zheng", "Noto Serif SC", serif`;
+        g.font = `600 ${Math.round(16 + Math.min(16, pts.length * 0.6))}px "Ma Shan Zheng", "Noto Serif SC", serif`;
         g.textAlign = 'center';
         g.lineWidth = 3; g.lineJoin = 'round'; g.strokeStyle = 'rgba(20,12,6,0.55)';
-        g.strokeText(fac.name, sx, sy + 22);
-        g.fillStyle = 'rgba(255,240,210,0.78)';
-        g.fillText(fac.name, sx, sy + 22);
+        g.strokeText(fac.name, sx, sy + 26);
+        g.fillStyle = 'rgba(255,240,210,0.72)';
+        g.fillText(fac.name, sx, sy + 26);
       }
     }
-    // 河名
     if (z >= 0.9) {
-      g.font = `italic 500 ${Math.round(11 + z * 1.5)}px "Noto Serif SC", serif`;
+      g.font = `italic 500 ${Math.round(11 + Math.min(4, z * 1.2))}px "Noto Serif SC", serif`;
       g.textAlign = 'center'; g.lineWidth = 3; g.lineJoin = 'round';
       for (const r of RIVERS) if (r.label) {
         const [sx, sy] = worldToScreen(this.cam, this.w, this.h, ...P(r.label[0], r.label[1]));
@@ -617,88 +699,136 @@ export class MapRenderer {
         g.fillStyle = '#cfe9f2'; g.fillText(r.name, sx, sy);
       }
     }
-    // 城名（按重要性排序，避免重叠）
-    const placed: [number, number, number, number][] = [];
-    // 军旗（圆章 + 兵力牌）先占位，城名绕开
-    for (const hit of this.armyHits) {
-      const [ax, ay] = worldToScreen(this.cam, this.w, this.h, hit.x, hit.y);
-      const r = hit.r * this.cam.z;
-      placed.push([ax - r * 1.1, ay - r * 1.6, r * 2.2, r * 3.4]);
+    // 选中城的路程（几日）
+    g.font = '700 11px "Noto Serif SC", serif'; g.textAlign = 'center';
+    for (const [wx, wy, t] of this.routeLabels) {
+      const [sx, sy] = worldToScreen(this.cam, this.w, this.h, wx, wy);
+      const tw = g.measureText(t).width + 10;
+      g.fillStyle = 'rgba(70,48,20,0.92)'; roundRect(g, sx - tw / 2, sy - 8, tw, 16, 8); g.fill();
+      g.strokeStyle = 'rgba(240,207,134,0.8)'; g.lineWidth = 1; g.stroke();
+      g.fillStyle = '#fbe9bf'; g.fillText(t, sx, sy + 0.5);
     }
-    const focus = this.focusSet(s);
-    const prio = (id: string) => (this.view.selected === id ? 0 : this.view.hover === id ? 1 : focus?.has(id) ? 2 : NODE[id].major ? (focus ? 4 : 2) : NODE[id].detail ? 3 : 5);
-    const order = NODES.filter(n => n.kind !== 'outland').sort((a, b) => prio(a.id) - prio(b.id));
-    for (const n of order) {
-      let show = n.major || (z >= 1.25 && n.detail) || z >= 1.9 || this.view.selected === n.id || this.view.hover === n.id;
-      // 有选中时：相关之处照常，其余次要城名放大后再出
-      if (focus && !focus.has(n.id) && !n.major && z < 2.6 && this.view.hover !== n.id) show = false;
-      if (focus?.has(n.id) && z >= 1.0) show = true;
-      if (!show) continue;
-      const [x, y] = nodePt(n.id);
-      const [sx, sy] = worldToScreen(this.cam, this.w, this.h, x, y);
-      if (sx < -40 || sy < -20 || sx > this.w + 40 || sy > this.h + 20) continue;
-      const big = n.major;
-      const size = Math.round((big ? 14 : 12) + Math.min(4, (z - 1) * 2));
-      g.font = `${big ? 700 : 500} ${size}px "Noto Serif SC", "Songti SC", serif`;
-      g.textAlign = 'left';
-      const label = n.name;
-      const tw = label.length * size, th = size + (z >= 2.6 ? size : 0);
-      const gap = 13;
-      const kk = Math.max(0.7, Math.min(1.3, 1.25 / Math.sqrt(z)));
-      const below = sy + EMBLEM_W[emblemTypeOf(s, n.id)] * kk * 0.2 * z + size * 0.75;
-      const cands: [number, number][] = [[sx - tw / 2, below], [sx + gap + 6, sy - 4], [sx - gap - 6 - tw, sy - 4], [sx - tw / 2, sy - 34 * Math.min(2, z) * 0.6]];
-      let tx = cands[0][0], ty = cands[0][1], ok = false;
-      const hits = (rect: number[]) => placed.filter(r => r[0] < rect[0] + rect[2] && rect[0] < r[0] + r[2] && r[1] < rect[1] + rect[3] && rect[1] < r[1] + r[3]).length;
-      let best: [number, number, number] | null = null;
-      for (const [cx, cy] of cands) {
-        const rect: [number, number, number, number] = [cx - 2, cy - size / 2 - 1, tw + 4, th + 2];
-        const k = hits(rect);
-        if (k === 0 || prio(n.id) <= 1) { tx = cx; ty = cy; placed.push(rect); ok = true; break; }
-        if (!best || k < best[2]) best = [cx, cy, k];
-      }
-      // 选中城及其相邻城：实在没有空位，也放在重叠最少处，不隐藏
-      if (!ok && best && (prio(n.id) <= 2 || n.major)) { tx = best[0]; ty = best[1]; placed.push([tx - 2, ty - size / 2 - 1, tw + 4, th + 2]); ok = true; }
-      if (!ok) continue;
-      const pw = g.measureText(label).width + 12;
-      g.fillStyle = big ? 'rgba(20,13,8,0.86)' : 'rgba(20,13,8,0.72)';
-      roundRect(g, tx - 7, ty - size / 2 - 3, pw, size + 6, 4); g.fill();
-      if (big) { g.strokeStyle = 'rgba(217,173,91,0.75)'; g.lineWidth = 1; g.stroke(); }
-      g.fillStyle = s.factions[s.cities[n.id].controller]?.color ?? '#888';
-      roundRect(g, tx - 7, ty - size / 2 - 3, 4, size + 6, 2); g.fill();
-      g.fillStyle = big ? '#f6e3b4' : '#efe2c6'; g.fillText(label, tx, ty + 0.5);
-      // 放大后：驻军
-      if (z >= 2.6) {
-        const c = s.cities[n.id];
-        const own = c.controller === s.player || topOfSafe(s, c.controller) === s.player;
+    g.textAlign = 'left';
+    for (const sl of this.layout.values()) {
+      if (!sl.label) continue;
+      const n = NODE[sl.id], c = s.cities[sl.id];
+      const [lx, ly, lw, lh] = sl.label;
+      const dim = !!_focus && !_focus.has(sl.id) && this.view.hover !== sl.id;
+      g.globalAlpha = dim ? 0.55 : 1;
+      g.font = `${sl.big ? 700 : 500} ${sl.fsize}px "Noto Serif SC", serif`;
+      g.fillStyle = sl.big ? 'rgba(20,13,8,0.88)' : 'rgba(20,13,8,0.74)';
+      const lh0 = z >= 2.6 && sl.tier !== 'dot' ? lh - 15 : lh;
+      roundRect(g, lx, ly, lw, lh0, 4); g.fill();
+      if (sl.big) { g.strokeStyle = 'rgba(217,173,91,0.75)'; g.lineWidth = 1; g.stroke(); }
+      g.fillStyle = s.factions[c.controller]?.color ?? '#888';
+      roundRect(g, lx, ly, 4, lh0, 2); g.fill();
+      g.fillStyle = sl.big ? '#f6e3b4' : '#efe2c6';
+      g.fillText(n.name, lx + 8, ly + lh0 / 2 + 0.5);
+      if (z >= 2.6 && sl.tier !== 'dot') {
+        const own = topOfSafe(s, c.controller) === s.player;
         const txt = own ? `驻 ${fmtTroops(c.garrison)}` : `驻 ${roughT(c.garrison)}`;
-        g.font = `500 ${size - 3}px "Noto Serif SC", serif`;
-        g.fillStyle = 'rgba(20,13,8,0.6)';
-        roundRect(g, tx - 4, ty + size - (size - 3) / 2 - 1, g.measureText(txt).width + 8, size - 1, 3); g.fill();
-        g.fillStyle = '#e8d9b4';
-        g.fillText(txt, tx, ty + size);
+        g.font = '500 10.5px "Noto Serif SC", serif';
+        const tw = g.measureText(txt).width + 8;
+        g.fillStyle = 'rgba(20,13,8,0.62)'; roundRect(g, lx + 4, ly + lh0 + 1, tw, 14, 3); g.fill();
+        g.fillStyle = '#e8d9b4'; g.fillText(txt, lx + 8, ly + lh0 + 8.5);
       }
     }
+    g.globalAlpha = 1;
     g.restore();
+  }
+
+  /* ---------- 动效：易主、交战、号令落印、数字飘字 ---------- */
+  fx: Fx[] = [];
+  addFx(f: Omit<Fx, 't0'> & { delay?: number }) { this.fx.push({ ...f, t0: this.lastTime + (f.delay ?? 0) }); }
+  drawFx(g: CanvasRenderingContext2D, _s: GameState, time: number) {
+    this.fx = this.fx.filter(f => time - f.t0 < f.dur);
+    for (const f of this.fx) {
+      const p = (time - f.t0) / f.dur;
+      if (p < 0) continue;
+      const sl = f.node ? this.layout.get(f.node) : null;
+      const [wx, wy] = f.node ? nodePt(f.node) : [0, 0];
+      const [sx, sy] = sl ? [sl.sx, sl.sy - sl.w * 0.4] : worldToScreen(this.cam, this.w, this.h, wx, wy);
+      g.save();
+      g.translate(sx, sy);
+      switch (f.kind) {
+        case 'capture': {
+          // 两圈势力色冲击波 + 旗面翻转
+          for (const k of [0, 0.25]) {
+            const q = Math.max(0, Math.min(1, (p - k) / 0.6));
+            if (q <= 0 || q >= 1) continue;
+            g.strokeStyle = f.color ?? '#fff'; g.globalAlpha = 1 - q; g.lineWidth = 5 * (1 - q) + 1;
+            g.beginPath(); g.ellipse(0, 6, 12 + q * 70, (12 + q * 70) * 0.45, 0, 0, Math.PI * 2); g.stroke();
+          }
+          const q = Math.min(1, p / 0.35);
+          g.globalAlpha = p > 0.75 ? (1 - p) / 0.25 : 1;
+          g.scale(1, Math.abs(Math.cos((1 - q) * Math.PI)) || 0.05);
+          stamp(g, f.text ?? '易', f.color ?? '#c8352a', 1.2 + (1 - q) * 0.8);
+          break;
+        }
+        case 'battle': {
+          const q = Math.min(1, p / 0.25);
+          g.globalAlpha = p > 0.7 ? (1 - p) / 0.3 : 1;
+          const gr = g.createRadialGradient(0, 0, 0, 0, 0, 40);
+          gr.addColorStop(0, `rgba(255,220,140,${0.8 * (1 - p)})`); gr.addColorStop(1, 'rgba(255,120,40,0)');
+          g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 40, 0, Math.PI * 2); g.fill();
+          g.rotate((1 - q) * 0.8);
+          g.scale(0.6 + q * 0.6, 0.6 + q * 0.6);
+          drawIcon(g, 'battle', 0, 0, 34, '#fff1d0');
+          for (let k = 0; k < 8; k++) {
+            const a = k * Math.PI / 4 + p;
+            g.strokeStyle = `rgba(255,210,120,${1 - p})`; g.lineWidth = 2;
+            g.beginPath(); g.moveTo(Math.cos(a) * (20 + p * 20), Math.sin(a) * (20 + p * 20)); g.lineTo(Math.cos(a) * (28 + p * 34), Math.sin(a) * (28 + p * 34)); g.stroke();
+          }
+          break;
+        }
+        case 'stamp': {
+          const q = Math.min(1, p / 0.18);
+          g.globalAlpha = p > 0.7 ? (1 - p) / 0.3 : 1;
+          g.rotate(-0.15);
+          stamp(g, f.text ?? '令', f.color ?? '#c8352a', 2.6 - q * 1.6);
+          if (q >= 1) { g.strokeStyle = `rgba(200,53,42,${0.6 * (1 - p)})`; g.lineWidth = 2; g.beginPath(); g.arc(0, 0, 18 + (p - 0.18) * 60, 0, Math.PI * 2); g.stroke(); }
+          break;
+        }
+        case 'float': {
+          g.globalAlpha = p < 0.15 ? p / 0.15 : p > 0.7 ? (1 - p) / 0.3 : 1;
+          g.font = '900 14px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+          const y = -18 - p * 34 + (f.dy ?? 0);
+          g.lineWidth = 3.5; g.strokeStyle = 'rgba(12,8,4,0.85)'; g.lineJoin = 'round'; g.strokeText(f.text ?? '', 0, y);
+          g.fillStyle = f.color ?? '#f0cf86'; g.fillText(f.text ?? '', 0, y);
+          break;
+        }
+        case 'ripple': {
+          g.strokeStyle = f.color ?? '#f0cf86'; g.globalAlpha = 1 - p; g.lineWidth = 2.5;
+          g.beginPath(); g.ellipse(0, 8, 10 + p * 40, (10 + p * 40) * 0.45, 0, 0, Math.PI * 2); g.stroke();
+          break;
+        }
+      }
+      g.restore();
+    }
   }
 
   /* ---------- 交互 ---------- */
   pick(sx: number, sy: number): { kind: 'army' | 'node'; id: string } | null {
     const [wx, wy] = screenToWorld(this.cam, this.w, this.h, sx, sy);
-    for (const h of [...this.armyHits].reverse()) if (Math.hypot(wx - h.x, wy - h.y) < h.r) return { kind: 'army', id: h.id };
-    let best: string | null = null, bd = Infinity;
-    for (const n of NODES) {
-      if (n.kind === 'outland') continue;
-      const [x, y] = nodePt(n.id);
-      const d = Math.hypot(wx - x, wy - y) * this.cam.z;
-      if (d < bd) { bd = d; best = n.id; }
+    for (const h of [...this.armyHits].reverse()) if (Math.hypot(wx - h.x, wy - h.y) < h.r) {
+      // 叠放的军旗：再点一次换下一支
+      const cur = this.view.selectedArmy;
+      if (cur && h.stack.includes(cur)) return { kind: 'army', id: h.stack[(h.stack.indexOf(cur) + 1) % h.stack.length] };
+      return { kind: 'army', id: h.stack[0] };
     }
-    return best && bd < 18 ? { kind: 'node', id: best } : null;
+    // 先看画出来的城郭（上层优先），再找最近的小点
+    const slots = [...this.layout.values()].filter(sl => sl.tier !== 'dot').sort((a, b) => b.sy - a.sy);
+    for (const sl of slots) if (sx > sl.sx - sl.w * 0.42 && sx < sl.sx + sl.w * 0.42 && sy > sl.sy - sl.w * 0.85 && sy < sl.sy + sl.w * 0.2) return { kind: 'node', id: sl.id };
+    for (const sl of this.layout.values()) if (sl.label && sx > sl.label[0] && sx < sl.label[0] + sl.label[2] && sy > sl.label[1] && sy < sl.label[1] + sl.label[3]) return { kind: 'node', id: sl.id };
+    let best: string | null = null, bd = Infinity;
+    for (const sl of this.layout.values()) { const d = Math.hypot(sx - sl.sx, sy - sl.sy); if (d < bd) { bd = d; best = sl.id; } }
+    return best && bd < 14 ? { kind: 'node', id: best } : null;
   }
 
   zoomAt(sx: number, sy: number, factor: number) {
     this.target = null;
     const [wx, wy] = screenToWorld(this.cam, this.w, this.h, sx, sy);
-    const z = Math.max(this.minZoom(), Math.min(4, this.cam.z * factor));
+    const z = Math.max(this.minZoom(), Math.min(MAX_Z, this.cam.z * factor));
     this.cam.z = z;
     const [nx, ny] = screenToWorld(this.cam, this.w, this.h, sx, sy);
     this.cam.x += wx - nx; this.cam.y += wy - ny;
@@ -715,7 +845,7 @@ export class MapRenderer {
   /** 平滑飞到某城 */
   flyTo(id: string, z?: number) {
     const [x, y] = nodePt(id);
-    this.target = { x, y, z: Math.max(this.minZoom(), Math.min(4, z ?? this.cam.z)) };
+    this.target = { x, y, z: Math.max(this.minZoom(), Math.min(MAX_Z, z ?? this.cam.z)) };
   }
   focus(id: string, z?: number) {
     this.target = null;
@@ -737,7 +867,6 @@ export function emblemTypeOf(s: GameState, id: string): EmblemType {
   if (n.kind === 'pass') return 'pass';
   return n.major ? 'major' : 'city';
 }
-const EMBLEM_W: Record<EmblemType, number> = { capital: 50, region: 42, major: 40, city: 32, port: 34, ferry: 28, pass: 34 };
 export function nodePt(id: string): Pt { const n = NODE[id]; return P(n.lon, n.lat); }
 export function armyPt(a: Army): Pt {
   if (a.progress > 0 && a.path.length) {
@@ -835,13 +964,13 @@ export function drawFlag(g: CanvasRenderingContext2D, x: number, y: number, shap
   g.restore();
 }
 
-function arrowHead(g: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, color: string) {
+function arrowHead(g: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, color: string, k = 7) {
   const a = Math.atan2(y2 - y1, x2 - x1);
   g.fillStyle = color;
   g.beginPath();
   g.moveTo(x2, y2);
-  g.lineTo(x2 - Math.cos(a - 0.4) * 7, y2 - Math.sin(a - 0.4) * 7);
-  g.lineTo(x2 - Math.cos(a + 0.4) * 7, y2 - Math.sin(a + 0.4) * 7);
+  g.lineTo(x2 - Math.cos(a - 0.4) * k, y2 - Math.sin(a - 0.4) * k);
+  g.lineTo(x2 - Math.cos(a + 0.4) * k, y2 - Math.sin(a + 0.4) * k);
   g.closePath(); g.fill();
 }
 

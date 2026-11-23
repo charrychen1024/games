@@ -1,0 +1,180 @@
+/* 政权更替：君主被俘或身故时的继统，明室正统在各势力间转移，势力分裂。
+ * 名号更替只改政权一层（年号），不重建势力。 */
+import type { Era, Faction, GameState, Polity } from './types';
+import { POLITIES } from '../data/factions';
+import { lunarOf } from './calendar';
+import { adjustAtt, adjustLoyalty, citiesOf, friendly, hostile, nodeName, report, factionName } from './state';
+import { distanceKm, NODE } from '../data/geography';
+import { rngFor } from './rng';
+
+/** 带本局年号记录的政权 */
+export function polityOf(s: GameState, pid: string): Polity {
+  const base = POLITIES[pid] ?? POLITIES.none;
+  const eras = s.eras?.[pid];
+  return eras ? { ...base, eras } : base;
+}
+
+export function pushEra(s: GameState, pid: string, name: string) {
+  s.eras ??= {};
+  const cur = (s.eras[pid] ?? POLITIES[pid]?.eras ?? []).filter(e => e.fromTurn <= s.turn);
+  const e: Era = { name, firstYear: lunarOf(s.turn).year, fromTurn: s.turn };
+  s.eras[pid] = [...cur, e];
+}
+
+/** 明室正统所在的势力 */
+export const courtOf = (s: GameState): string | undefined => {
+  const c = s.flags.ming_court;
+  return typeof c === 'string' && s.factions[c] && !s.factions[c].defunct ? c : undefined;
+};
+
+export function isRuler(s: GameState, f: string): boolean {
+  return !!s.factions[f] && f === s.flags.ming_court;
+}
+
+/** 可拥立的宗室：在世、未被执，身处不与本方敌对之地 */
+export function royalCandidates(s: GameState, f: string) {
+  return Object.values(s.chars).filter(c => c.royal && c.status === 'active' && c.id !== s.factions[f]?.leader
+    && !hostile(s, f, s.cities[c.location]?.controller ?? f) && (s.factions[c.faction]?.polity === 'ming' || c.faction === f))
+    .sort((a, b) => b.royal!.claim - a.royal!.claim || b.ab.wang - a.ab.wang);
+}
+
+export interface SuccessionOpt { kind: 'enthrone' | 'regent' | 'ransom' | 'minister'; char: string; label: string; desc: string }
+
+/** 继统方案：说明支持者与代价 */
+export function successionOptions(s: GameState, f: string): SuccessionOpt[] {
+  const fac = s.factions[f];
+  const old = s.chars[String(s.flags['old_ruler_' + f] ?? '')];
+  const out: SuccessionOpt[] = [];
+  const hawks = Object.values(s.chars).filter(c => c.faction === f && c.status === 'active' && c.att.hawk > 40).map(c => c.name).slice(0, 3);
+  const doves = Object.values(s.chars).filter(c => c.faction === f && c.status === 'active' && c.att.hawk < 0).map(c => c.name).slice(0, 3);
+  const royals = f === courtOf(s) ? royalCandidates(s, f) : [];
+  for (const r of royals.slice(0, 2)) {
+    out.push({ kind: 'enthrone', char: r.id, label: `拥立${r.name}即位，改元${r.royal!.era.replace(/^监国/, '')}`, desc: `支持：${hawks.join('、') || '主战诸臣'}。代价：${old && old.status === 'captured' ? `旧君${old.name}从此再难迎回；` : ''}各镇须重新归心（服从 −5）。` });
+  }
+  if (royals[0] && old?.status === 'captured') out.push({ kind: 'regent', char: royals[0].id, label: `请${royals[0].name}监国，待迎旧君`, desc: `支持：${doves.join('、') || '持重诸臣'}。代价：名分未定，号令稍弱（服从 −8）。` });
+  if (old?.status === 'captured') {
+    const cap = s.cities[fac.capital];
+    out.push({ kind: 'ransom', char: old.id, label: `遣使议赎，迎回${old.name}`, desc: `需银 15 万两（府库现有 ${Math.round((cap?.silver ?? 0) / 10000)} 万）。对方未必肯放，成败下月见分晓；其间由重臣主事。` });
+  }
+  const minister = Object.values(s.chars).filter(c => c.faction === f && c.status === 'active' && !c.royal).sort((a, b) => b.ab.wang - a.ab.wang)[0];
+  if (minister) out.push({ kind: 'minister', char: minister.id, label: `由${minister.name}主事`, desc: `不立新君。号令出自权臣，下属服从 −12，${minister.name}威望日重。` });
+  return out;
+}
+
+/** 执行继统方案 */
+export function applySuccession(s: GameState, f: string, opt: SuccessionOpt): string {
+  const fac = s.factions[f];
+  const c = s.chars[opt.char];
+  delete s.flags['need_succession_' + f];
+  const vassals = Object.values(s.factions).filter(x => x.overlord === f);
+  switch (opt.kind) {
+    case 'enthrone': {
+      fac.leader = c.id;
+      c.faction = f;
+      c.title = c.royal!.era.startsWith('监国') ? '监国' : `${c.royal!.era}帝`;
+      if (s.cities[c.location]?.controller === f) fac.capital = c.location;
+      pushEra(s, fac.polity, c.royal!.era);
+      if (fac.polity === 'ming') fac.name = `${c.royal!.era.replace(/^监国/, '')}朝廷`;
+      for (const v of vassals) adjustLoyalty(s, v.id, -5, `新君${c.name}即位`);
+      report(s, { cat: '人事', urgent: f === s.player, node: fac.capital, text: `${c.name}即位于${nodeName(fac.capital)}，改元${c.royal!.era}。${factionName(s, f)}号令天下。` });
+      return `${c.name}即位，改元${c.royal!.era}。`;
+    }
+    case 'regent': {
+      fac.leader = c.id;
+      c.faction = f;
+      c.title = '监国';
+      for (const v of vassals) adjustLoyalty(s, v.id, -8, `${c.name}监国，名分未定`);
+      report(s, { cat: '人事', urgent: f === s.player, text: `${c.name}监国，待迎旧君。` });
+      return `${c.name}监国。`;
+    }
+    case 'ransom': {
+      const cap = s.cities[fac.capital];
+      if (!cap || cap.silver < 150000) return '府库不足，议赎未成。';
+      cap.silver -= 150000;
+      s.ledger.push({ turn: s.turn, node: cap.id, field: 'silver', delta: -150000, text: `议赎${c.name}`, src: { kind: 'order', ref: 'ransom:' + f } });
+      const keeper = Object.values(s.factions).find(x => x.capital === c.location) ?? null;
+      const ok = !keeper || keeper.id !== 'qing' || rngFor(s.seed, 'ransom', f, s.turn).chance(0.35);
+      const minister = Object.values(s.chars).filter(x => x.faction === f && x.status === 'active' && !x.royal).sort((a, b) => b.ab.wang - a.ab.wang)[0];
+      if (ok) {
+        c.status = 'active'; c.location = fac.capital; fac.leader = c.id;
+        report(s, { cat: '人事', urgent: true, text: `使臣携银十五万两议赎，${c.name}获释还朝。` });
+        return `${c.name}还朝。`;
+      }
+      if (minister) fac.leader = minister.id;
+      report(s, { cat: '人事', urgent: true, text: `${keeper ? keeper.name : '对方'}收银而不放人，${c.name}仍被扣押。${minister ? minister.name + '暂摄国事。' : ''}` });
+      return '议赎未成。';
+    }
+    case 'minister': {
+      fac.leader = c.id;
+      for (const v of vassals) adjustLoyalty(s, v.id, -12, `${c.name}以权臣主事`);
+      adjustAtt(s, c.id, 'loyalty', 5, '主持国事');
+      report(s, { cat: '人事', urgent: f === s.player, text: `${factionName(s, f)}不立新君，由${c.name}主事。` });
+      return `${c.name}主事。`;
+    }
+  }
+}
+
+/** 电脑一方的继统：有宗室则拥立，否则权臣主事 */
+export function autoSuccession(s: GameState, f: string) {
+  const opts = successionOptions(s, f);
+  const pick = opts.find(o => o.kind === 'enthrone') ?? opts.find(o => o.kind === 'minister');
+  if (pick) applySuccession(s, f, pick);
+  else delete s.flags['need_succession_' + f];
+}
+
+/** 明室正统转移：朝廷覆亡后，奉明而城最多的势力继承正统，并拥立宗室 */
+export function transferCourt(s: GameState): string | null {
+  if (courtOf(s)) return null;
+  const old = s.flags.ming_court;
+  const cands = Object.values(s.factions).filter(f => !f.defunct && f.polity === 'ming' && f.id !== 'local' && (!f.overlord || s.factions[f.overlord]?.defunct || f.overlord === old))
+    .map(f => ({ f, n: citiesOf(s, f.id).length })).filter(x => x.n > 0).sort((a, b) => b.n - a.n || Number(b.f.id === 'mingprov') - Number(a.f.id === 'mingprov'));
+  const heir = cands[0]?.f;
+  if (!heir) { s.flags.ming_court = ''; return null; }
+  s.flags.ming_court = heir.id;
+  delete heir.overlord;
+  delete heir.loyalty;
+  // 原奉旧朝者改奉新朝
+  for (const f of Object.values(s.factions)) if (f.id !== heir.id && !f.defunct && f.polity === 'ming' && (f.overlord === old || !f.overlord) && f.id !== s.player) { f.overlord = heir.id; f.loyalty = f.loyalty ?? 55; }
+  // 拥立宗室：就近迎来
+  const royal = Object.values(s.chars).filter(c => c.royal && c.status === 'active' && !hostile(s, heir.id, s.cities[c.location]?.controller ?? heir.id))
+    .sort((a, b) => b.royal!.claim - a.royal!.claim || distanceKm(NODE[a.location], NODE[heir.capital]) - distanceKm(NODE[b.location], NODE[heir.capital]))[0];
+  if (royal) {
+    const where = citiesOf(s, heir.id).some(c => c.id === royal.location) ? royal.location : heir.capital;
+    royal.location = where;
+    s.flags['old_ruler_' + heir.id] = heir.leader;
+    applySuccession(s, heir.id, { kind: 'enthrone', char: royal.id, label: '', desc: '' });
+  } else {
+    report(s, { cat: '人事', urgent: heir.id === s.player, text: `${heir.name}继承明室号令，然宗室无人可立。` });
+  }
+  return heir.id;
+}
+
+/** 势力分裂：把部分城池、军队、人物分给新势力 */
+export function splitFaction(s: GameState, from: string, spec: { id: string; name: string; short: string; color: string; leader: string; cities: string[]; armies: string[]; chars: string[]; polity?: string; overlord?: string; capital?: string; doctrine: string }): Faction {
+  const src = s.factions[from];
+  const nf: Faction = { id: spec.id, name: spec.name, short: spec.short, color: spec.color, polity: spec.polity ?? src.polity, leader: spec.leader,
+    capital: spec.capital ?? spec.cities[0] ?? src.capital, playable: true, doctrine: spec.doctrine };
+  if (spec.overlord) { nf.overlord = spec.overlord; nf.loyalty = 60; }
+  s.factions[nf.id] = nf;
+  for (const id of spec.cities) if (s.cities[id]) s.cities[id].controller = nf.id;
+  for (const id of spec.armies) if (s.armies[id]) s.armies[id].faction = nf.id;
+  for (const id of spec.chars) if (s.chars[id]) s.chars[id].faction = nf.id;
+  // 与原势力的敌友：沿用原势力对外关系
+  for (const [k, r] of Object.entries(s.relations)) {
+    const [a, b] = k.split('|');
+    if (a === from || b === from) { const other = a === from ? b : a; if (other !== nf.id) s.relations[[nf.id, other].sort().join('|')] = { ...r }; }
+  }
+  for (const sg of Object.values(s.sieges)) if (spec.armies.some(a => sg.armies.includes(a)) && sg.attacker === from) sg.attacker = nf.id;
+  if (src.capital && s.cities[src.capital]?.controller !== from) {
+    const rest = citiesOf(s, from).sort((a, b) => b.pop - a.pop);
+    if (rest[0]) src.capital = rest[0].id;
+  }
+  return nf;
+}
+
+/** 本月需要继统的势力（由 military.succession 记下） */
+export function pendingSuccessions(s: GameState): string[] {
+  return Object.keys(s.flags).filter(k => k.startsWith('need_succession_') && s.flags[k]).map(k => k.slice('need_succession_'.length)).filter(f => s.factions[f] && !s.factions[f].defunct);
+}
+
+export function friendlyToCourt(s: GameState, f: string): boolean { const c = courtOf(s); return !!c && friendly(s, c, f); }

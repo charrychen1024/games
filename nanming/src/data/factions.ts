@@ -7,9 +7,10 @@ export const POLITIES: Record<string, Polity> = {
     { name: '崇祯', firstYear: 1628, fromTurn: 0 },
     { name: '弘光', firstYear: 1645, fromTurn: turnOf(1645, 1) },
   ] },
-  qing: { id: 'qing', name: '清', mark: '清', flag: 'banner', eras: [{ name: '顺治', firstYear: 1644, fromTurn: 0 }] },
+  qing: { id: 'qing', name: '清', mark: '清', flag: 'banner', eras: [{ name: '顺治', firstYear: 1644, fromTurn: 0 }, { name: '康熙', firstYear: 1662, fromTurn: turnOf(1662, 1) }] },
   shun: { id: 'shun', name: '大顺', mark: '顺', flag: 'swallow', eras: [{ name: '永昌', firstYear: 1644, fromTurn: 0 }] },
   xi: { id: 'xi', name: '大西', mark: '西', flag: 'rect', eras: [{ name: '大顺', firstYear: 1644, fromTurn: turnOf(1644, 11) }] },
+  helan: { id: 'helan', name: '荷兰', mark: '荷', flag: 'rect', eras: [] },
   none: { id: 'none', name: '无所奉', mark: '', flag: 'rect', eras: [] },
 };
 
@@ -36,6 +37,8 @@ export const FACTIONS: Faction[] = [
     doctrine: '退守关中，择地站稳。' },
   { id: 'xi', name: '张献忠部', short: '西', color: '#8a6a24', polity: 'xi', leader: 'zhangxianzhong', capital: 'kuizhou', playable: true,
     doctrine: '溯江入蜀，取重庆、成都，建大西。' },
+  { id: 'helan', name: '荷兰东印度公司', short: '荷', color: '#c76a1c', polity: 'helan', leader: '', capital: 'dayuan', playable: false,
+    doctrine: '据台湾大员，经营东亚贸易，不与陆上之争。' },
   { id: 'local', name: '地方豪强', short: '地', color: '#9a9283', polity: 'none', leader: '', capital: 'jinan', playable: false,
     doctrine: '大顺官吏被逐后，由地方士绅、团练自守。' },
 ];

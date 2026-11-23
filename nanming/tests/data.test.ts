@@ -19,9 +19,11 @@ describe('开局数据完整', () => {
       seen.add(k);
     }
   });
-  it('细做节点三四十个以上，且全图连通（不走海路也能互达）', () => {
-    expect(playable.filter(n => n.detail).length).toBeGreaterThanOrEqual(35);
-    for (const n of playable) expect(shortestPath('nanjing', n.id, false), n.id).not.toBeNull();
+  it('全国细做：城池一百二十处以上，每个计入统一的地区至少四处；海岛之外不走海路也能互达', () => {
+    expect(playable.filter(n => n.detail).length).toBeGreaterThanOrEqual(120);
+    for (const a of VICTORY_AREAS) expect(playable.filter(n => n.area === a).length, a).toBeGreaterThanOrEqual(4);
+    const islands = ['zhoushan', 'dayuan', 'qiongzhou'];
+    for (const n of playable) expect(shortestPath('nanjing', n.id, islands.includes(n.id)), n.id).not.toBeNull();
   });
   it('每个可争夺节点都有城池记录，控制者是已知势力', () => {
     for (const n of playable) {
@@ -29,12 +31,12 @@ describe('开局数据完整', () => {
       expect(c, n.id).toBeTruthy();
       expect(s.factions[c.controller], n.id).toBeTruthy();
       if (c.governor) expect(s.chars[c.governor], c.governor).toBeTruthy();
-      expect(VICTORY_AREAS.includes(n.area) || n.area === '辽东', n.id).toBe(true);
+      expect(VICTORY_AREAS.includes(n.area) || n.area === '辽东' || n.area === '台湾', n.id).toBe(true);
     }
   });
   it('人物、军队、势力的引用都存在', () => {
     for (const c of Object.values(s.chars)) {
-      expect(s.factions[c.faction], c.id).toBeTruthy();
+      if (c.status !== 'offstage' || c.faction) expect(s.factions[c.faction], c.id).toBeTruthy();
       expect(NODE[c.location], c.id).toBeTruthy();
     }
     for (const a of Object.values(s.armies)) {

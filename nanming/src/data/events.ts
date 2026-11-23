@@ -6,6 +6,7 @@ import { turnOf } from '../core/calendar';
 import { adjustAtt, adjustLoyalty, bump, setStance, hostile, report, armiesOf } from '../core/state';
 import { setArmyOrder, captureChar, succession } from '../core/military';
 import { shortestPath, NODE } from './geography';
+import { LATE_EVENTS } from './events-late';
 
 const T = (y: number, m: number) => turnOf(y, m);
 const alive = (s: GameState, id: string) => s.chars[id]?.status === 'active';
@@ -342,6 +343,7 @@ export const EVENTS: EventDef[] = [
       }
     },
   },
+  ...LATE_EVENTS,
 ];
 
 /** 本局扬州的实际处境 */

@@ -3,6 +3,7 @@ import type { GameState, Order, NodeId, ArmyOrder, Policy, ReportEntry, LedgerEn
 import { MapRenderer, nodePt } from '../render/map';
 import { h, $, clear, fmt, wan, signed } from './dom';
 import { iconSvg } from './icons';
+import { gameSelect, stepper, closeSelects, type SelOpt } from './widgets';
 import gsap from 'gsap';
 import { playBattle } from './battle';
 import { chime, alarm, click, isMuted, setMuted } from './audio';
@@ -613,7 +614,7 @@ export class App {
     gsap.from(dlg.querySelectorAll('.opt, .gopt, .lrow, .slot, .tile'), { opacity: 0, y: 10, duration: 0.25, stagger: 0.03, delay: 0.1 });
     return dlg;
   }
-  closeModal() { $('#modal').classList.add('hidden'); clear($('#modal')); }
+  closeModal() { closeSelects(); $('#modal').classList.add('hidden'); clear($('#modal')); }
   cancelBtn() { return { label: '取消', icon: 'close', onclick: () => {} }; }
 
   gauge(score: number, factors: string[], label: string, marks = ['抗命', '打折扣', '拖延', '照办']): HTMLElement {
@@ -661,23 +662,33 @@ export class App {
 
   formTransfer(from: string, to?: string) {
     const s = this.s!;
-    const targets = Object.values(s.cities).filter(c => c.id !== from && friendly(s, s.player, c.controller)).sort((a, b) => (NODE[a.id].area + a.id).localeCompare(NODE[b.id].area + b.id));
-    const fromSel = h('select', { id: 'tr-from' }, ...Object.values(s.cities).filter(c => c.controller === s.player).map(c => h('option', { value: c.id, selected: c.id === from }, `${nodeName(c.id)}  粮${wan(c.grain)} 银${wan(c.silver)}`))) as HTMLSelectElement;
-    const toSel = h('select', { id: 'tr-to' }, ...targets.map(c => h('option', { value: c.id, selected: c.id === to }, `${nodeName(c.id)} · ${s.factions[c.controller].short}`))) as HTMLSelectElement;
-    const grain = h('input', { type: 'number', min: 0, step: 1000, value: 10000, id: 'tr-grain', style: { width: '130px' } }) as HTMLInputElement;
-    const silver = h('input', { type: 'number', min: 0, step: 1000, value: 0, id: 'tr-silver', style: { width: '130px' } }) as HTMLInputElement;
+    const own = Object.values(s.cities).filter(c => c.controller === s.player);
+    const targetsOf = (f: string) => Object.values(s.cities).filter(c => c.id !== f && friendly(s, s.player, c.controller))
+      .map(c => ({ c, p: shortestPath(f, c.id, false) }))
+      .sort((a, b) => (a.p ? pathDays(f, a.p) : 999) - (b.p ? pathDays(f, b.p) : 999));
+    const avail = (id: string, k: 'grain' | 'silver') => Math.max(0, s.cities[id][k] - this.pendingSpend(id, k));
+    const toOpts = (f: string): SelOpt[] => targetsOf(f).map(({ c, p }) => ({ value: c.id, label: nodeName(c.id), color: s.factions[c.controller].color,
+      sub: s.factions[c.controller].short + (p ? ` · ${pathDays(f, p)} 日` : ''), tag: s.sieges[c.id] ? '被围' : undefined }));
     const status = h('div', { class: 'route-status', id: 'tr-status' });
+    const grain = stepper('tr-grain', 10000, { step: 1000, max: avail(from, 'grain'), unit: '石', presets: [0, 5000, 10000, 50000] });
+    const silver = stepper('tr-silver', 0, { step: 1000, max: avail(from, 'silver'), unit: '两', presets: [0, 5000, 10000, 50000] });
+    const toSel = gameSelect('tr-to', toOpts(from), to ?? '', () => updStatus());
+    const fromSel = gameSelect('tr-from', own.map(c => ({ value: c.id, label: nodeName(c.id), sub: `粮 ${wan(c.grain)} · 银 ${wan(c.silver)}`, color: s.factions[c.controller].color })), from, v => {
+      toSel.setOptions(toOpts(v)); grain.setMax(avail(v, 'grain')); silver.setMax(avail(v, 'silver')); updStatus();
+    });
     const updStatus = () => {
       const why = supplyBlock(s, s.player, fromSel.value, toSel.value);
       clear(status).append(ic(why ? 'close' : 'ok'), why ?? '粮道畅通，本月送达');
       status.className = 'route-status ' + (why ? 'bad' : 'good');
     };
-    fromSel.onchange = updStatus; toSel.onchange = updStatus; updStatus();
-    this.modal('transfer', '调拨钱粮', '沿驿路运送 · 被围之城送不进', [status,
-      h('div', { class: 'field' }, h('label', null, ic('city'), '自'), fromSel), h('div', { class: 'field' }, h('label', null, ic('target'), '往'), toSel),
-      h('div', { class: 'field' }, h('label', null, ic('grain'), '粮'), grain, h('span', { class: 'note' }, '石')), h('div', { class: 'field' }, h('label', null, ic('silver'), '银'), silver, h('span', { class: 'note' }, '两')),
-      h('div', { class: 'note' }, '拨给下属能提高服从。'),
-    ], [this.cancelBtn(), { label: '调拨', icon: 'ok', primary: true, id: 'tr-ok', onclick: () => this.addOrder({ id: this.newOrderId(), kind: 'transfer', from: fromSel.value, to: toSel.value, grain: Math.max(0, +grain.value || 0), silver: Math.max(0, +silver.value || 0) }) }]);
+    updStatus();
+    this.modal('transfer', '调拨钱粮', '沿驿路运送 · 被围之城送不进', [
+      h('div', { class: 'tr-route' }, fromSel, h('div', { class: 'tr-arrow' }, ic('transfer')), toSel), status,
+      h('div', { class: 'tr-amt' }, h('div', null, h('label', null, ic('grain'), '粮'), grain), h('div', null, h('label', null, ic('silver'), '银'), silver)),
+    ], [this.cancelBtn(), { label: '调拨', icon: 'ok', primary: true, id: 'tr-ok', onclick: () => {
+      if (!grain.value && !silver.value) { this.toast('粮、银至少调一样', 'close'); return false; }
+      return this.addOrder({ id: this.newOrderId(), kind: 'transfer', from: fromSel.value, to: toSel.value, grain: grain.value, silver: silver.value }) ? undefined : false;
+    } }]);
   }
 
   freeChars(): Character[] {

@@ -1,5 +1,6 @@
 /* 军事：行军（逐日推进）、遭遇、野战与攻城的战局构造、战后处置、易主。
  * 规则：野战失利只让城市失去屏障，只有陷城、献城、正式归附才改变控制权。 */
+import { isRuler } from './regime';
 import type { Army, ArmyOrder, GameState, NodeId } from './types';
 import { NODE, routeBetween, shortestPath, neighbors } from '../data/geography';
 import { armiesAt, friendly, hostile, report, nodeName, factionName, charName, troopsText, bump, newId, topOf, adjustAtt } from './state';
@@ -63,6 +64,13 @@ export function moveArmies(s: GameState): Contact[] {
       if (a.order.attack && city && hostile(s, a.faction, city.controller)) a.order = { kind: 'siege', target: a.location, assault: true };
       else if (a.location === a.order.target) a.order = { kind: 'hold' };
     }
+  }
+  // 同处一地的敌对军队（都未移动）也要交战
+  const byNode = new Map<string, Army[]>();
+  for (const a of Object.values(s.armies)) if (a.progress === 0) (byNode.get(a.location) ?? byNode.set(a.location, []).get(a.location)!).push(a);
+  for (const [node, list] of byNode) {
+    if (contacts.has(node)) continue;
+    if (list.some((a, i) => list.some((b, j) => j > i && hostile(s, a.faction, b.faction)))) contacts.set(node, { node, arrivals: {} });
   }
   for (const c of contacts.values()) for (const a of armiesAt(s, c.node)) if (c.arrivals[a.id] === undefined) c.arrivals[a.id] = arrivedDay[a.id] ?? 0;
   return [...contacts.values()];
@@ -266,13 +274,17 @@ export function handover(s: GameState, a: Army) {
 
 export function succession(s: GameState, faction: string, why: string) {
   const f = s.factions[faction];
-  const cands = Object.values(s.chars).filter(c => c.faction === faction && c.status === 'active').sort((x, y) => y.ab.wang - x.ab.wang);
-  if (!cands.length) { f.defunct = true; return; }
-  const next = cands[0];
+  const old = f.leader;
+  const cands = Object.values(s.chars).filter(c => c.faction === faction && c.status === 'active' && !c.royal).sort((x, y) => y.ab.wang - x.ab.wang);
+  const royals = Object.values(s.chars).some(c => c.faction === faction && c.status === 'active' && c.royal);
+  if (!cands.length && !royals) { f.defunct = true; return; }
+  // 君主出事：先由重臣暂摄，月末议定继统（监国、另立、迎回或权臣主事）
+  if (isRuler(s, faction)) { s.flags['need_succession_' + faction] = why; s.flags['old_ruler_' + faction] = old; }
+  const next = cands[0] ?? Object.values(s.chars).find(c => c.faction === faction && c.status === 'active');
+  if (!next) { f.defunct = true; return; }
   f.leader = next.id;
-  report(s, { cat: '人事', urgent: faction === s.player, text: `${why}，${f.name}由${next.name}主事。` });
+  report(s, { cat: '人事', urgent: faction === s.player, text: `${why}，${f.name}${isRuler(s, faction) ? '暂由' + next.name + '摄事，待议继统' : '由' + next.name + '主事'}。` });
 }
-
 export function disband(s: GameState, a: Army) {
   const near = [a.location, ...neighbors(a.location).map(n => n.to)].find(id => s.cities[id] && friendly(s, a.faction, s.cities[id].controller));
   if (near && a.troops > 0) bump(s, near, 'garrison', a.troops, `${a.name}残部并入`, { kind: 'battle', ref: a.id });

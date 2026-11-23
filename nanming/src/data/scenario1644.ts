@@ -55,26 +55,102 @@ const CITY_ROWS: Record<string, Row> = {
   kaifeng: ['local', 15, 25, 20, 30, 40, 2000, 10000, 3000, 35, 30],
   beijing: ['qing', 100, 50, 70, 80, 95, 30000, 200000, 100000, 40, 50, 'hongchengchou'],
   tianjin: ['qing', 20, 40, 60, 30, 60, 5000, 50000, 20000, 45, 45],
-  daming: ['local', 120, 50, 40, 40, 40, 5000, 80000, 20000, 40, 35],
-  jinan: ['local', 200, 50, 45, 55, 50, 8000, 100000, 30000, 42, 35],
-  taiyuan: ['shun', 150, 45, 45, 45, 70, 15000, 80000, 30000, 40, 40],
-  xian: ['shun', 150, 45, 45, 45, 80, 20000, 100000, 40000, 50, 45, 'niujinxing'],
+  daming: ['local', 60, 50, 40, 40, 45, 3000, 50000, 12000, 40, 35],
+  jinan: ['local', 80, 55, 50, 60, 65, 5000, 70000, 25000, 42, 35],
+  taiyuan: ['shun', 70, 45, 50, 45, 75, 10000, 60000, 25000, 40, 40],
+  xian: ['shun', 90, 50, 50, 50, 85, 20000, 100000, 40000, 50, 45, 'niujinxing'],
   tongguan: ['shun', 2, 20, 10, 10, 95, 15000, 30000, 5000, 50, 45],
   hanzhong: ['shun', 40, 55, 30, 30, 60, 5000, 30000, 8000, 45, 40],
-  lanzhou: ['shun', 60, 35, 30, 25, 55, 5000, 30000, 8000, 45, 40],
-  luoyang: ['shun', 60, 35, 30, 40, 55, 4000, 20000, 6000, 40, 35],
-  nanyang: ['local', 50, 40, 30, 30, 50, 3000, 20000, 5000, 40, 35],
-  chengdu: ['mingprov', 200, 75, 55, 60, 70, 15000, 150000, 60000, 50, 45],
-  chongqing: ['mingprov', 80, 60, 45, 40, 70, 10000, 60000, 20000, 50, 45, 'zengying'],
+  lanzhou: ['shun', 35, 35, 30, 25, 60, 4000, 25000, 6000, 45, 40],
+  luoyang: ['shun', 40, 35, 30, 40, 55, 4000, 20000, 6000, 40, 35],
+  nanyang: ['local', 40, 40, 30, 30, 50, 3000, 20000, 5000, 40, 35],
+  chengdu: ['mingprov', 110, 75, 55, 60, 75, 12000, 120000, 50000, 50, 45],
+  chongqing: ['mingprov', 60, 60, 50, 40, 75, 8000, 50000, 20000, 50, 45, 'zengying'],
   kuizhou: ['xi', 30, 40, 30, 25, 50, 3000, 20000, 5000, 35, 30],
-  changsha: ['mingprov', 200, 65, 45, 50, 55, 10000, 120000, 40000, 55, 50, 'hetengjiao'],
-  ganzhou: ['mingprov', 80, 55, 45, 40, 60, 6000, 50000, 15000, 55, 50],
-  guangzhou: ['mingprov', 250, 65, 80, 55, 65, 15000, 150000, 100000, 58, 50, undefined, 1.5],
-  guilin: ['mingprov', 120, 55, 40, 40, 60, 8000, 60000, 20000, 58, 52, 'qushisi'],
-  guiyang: ['mingprov', 60, 40, 25, 25, 55, 5000, 30000, 8000, 52, 48],
-  kunming: ['mingprov', 150, 55, 40, 45, 65, 15000, 80000, 30000, 58, 52, 'mutianbo'],
+  changsha: ['mingprov', 80, 70, 50, 55, 60, 8000, 90000, 30000, 55, 50, 'hetengjiao'],
+  ganzhou: ['mingprov', 50, 55, 50, 45, 70, 6000, 45000, 15000, 55, 50, 'yangtinglin'],
+  guangzhou: ['mingprov', 120, 65, 85, 60, 70, 12000, 120000, 90000, 58, 50, 'chenbangyan', 1.5],
+  guilin: ['mingprov', 50, 55, 40, 45, 70, 6000, 45000, 15000, 58, 52, 'qushisi'],
+  guiyang: ['mingprov', 25, 40, 25, 25, 60, 4000, 25000, 6000, 52, 48],
+  kunming: ['mingprov', 60, 60, 45, 45, 70, 10000, 70000, 25000, 58, 52, 'mutianbo'],
   shanhai: ['qing', 2, 20, 10, 10, 95, 10000, 30000, 5000, 50, 50],
   shengjing: ['qing', 60, 40, 30, 20, 70, 10000, 80000, 30000, 60, 55],
+  // ---- 全国 ----
+  baoding: ['qing', 45, 50, 40, 45, 70, 5000, 40000, 12000, 42, 45],
+  zhending: ['local', 50, 50, 35, 40, 65, 3000, 35000, 8000, 42, 38],
+  hejian: ['local', 45, 50, 40, 40, 55, 2500, 35000, 10000, 42, 38],
+  shunde: ['local', 30, 50, 35, 35, 50, 2000, 25000, 6000, 42, 38],
+  yongping: ['qing', 25, 40, 30, 30, 70, 4000, 30000, 8000, 45, 45],
+  xuanfu: ['qing', 15, 30, 25, 20, 85, 6000, 25000, 6000, 45, 45],
+  dengzhou: ['local', 30, 45, 55, 45, 70, 3000, 25000, 10000, 45, 40, undefined, 0.5],
+  laizhou: ['local', 35, 50, 40, 45, 55, 2000, 30000, 8000, 45, 40],
+  qingzhou: ['local', 55, 55, 45, 50, 60, 3000, 45000, 12000, 42, 38],
+  yanzhou: ['local', 60, 55, 50, 70, 65, 3000, 50000, 15000, 42, 38],
+  dongchang: ['local', 40, 50, 50, 45, 55, 2000, 35000, 10000, 42, 38],
+  linqing: ['local', 25, 40, 75, 40, 55, 2000, 30000, 20000, 45, 40],
+  datong: ['qing', 25, 30, 30, 25, 90, 12000, 40000, 10000, 40, 40],
+  pingyang: ['shun', 60, 50, 45, 45, 60, 5000, 40000, 12000, 40, 38],
+  luan: ['shun', 40, 45, 45, 40, 60, 4000, 30000, 10000, 40, 38],
+  yanan: ['shun', 25, 35, 25, 25, 60, 5000, 20000, 5000, 52, 42],
+  yulin: ['shun', 10, 25, 20, 20, 85, 8000, 20000, 5000, 52, 42],
+  ningxia: ['shun', 15, 40, 30, 20, 80, 6000, 25000, 6000, 45, 40],
+  fengxiang: ['shun', 35, 50, 35, 35, 60, 4000, 30000, 8000, 48, 42],
+  pingliang: ['shun', 30, 40, 30, 30, 60, 4000, 25000, 6000, 45, 40],
+  gongchang: ['shun', 30, 40, 25, 25, 55, 3000, 20000, 5000, 45, 40],
+  zhangde: ['local', 35, 50, 40, 40, 55, 2500, 30000, 8000, 40, 36],
+  weihui: ['local', 30, 50, 40, 40, 50, 2000, 25000, 7000, 40, 36],
+  huaiqing: ['shun', 30, 55, 40, 40, 55, 3000, 25000, 7000, 40, 36],
+  runing: ['local', 35, 45, 35, 35, 55, 2500, 25000, 6000, 40, 36],
+  yunyang: ['mingprov', 15, 35, 25, 25, 70, 4000, 20000, 5000, 50, 45],
+  dean: ['shun', 30, 50, 40, 40, 55, 3000, 25000, 7000, 40, 38],
+  huangzhou: ['zuoliangyu', 40, 55, 45, 50, 55, 3000, 30000, 10000, 45, 42],
+  changde: ['mingprov', 40, 65, 45, 45, 60, 4000, 40000, 12000, 55, 50],
+  chenzhou: ['mingprov', 25, 45, 30, 30, 60, 3000, 20000, 6000, 55, 50],
+  hengzhou: ['mingprov', 45, 65, 45, 45, 60, 4000, 40000, 12000, 55, 50],
+  baoqing: ['mingprov', 35, 60, 35, 35, 55, 3000, 30000, 8000, 55, 50],
+  yongzhou: ['mingprov', 30, 55, 35, 35, 55, 3000, 25000, 7000, 55, 50],
+  chen: ['mingprov', 20, 45, 35, 30, 55, 2500, 18000, 6000, 55, 50],
+  raozhou: ['mingprov', 50, 65, 70, 55, 55, 3000, 45000, 20000, 58, 52],
+  guangxin: ['mingprov', 40, 55, 55, 50, 55, 3000, 35000, 15000, 58, 52],
+  fuzhoujx: ['mingprov', 45, 65, 50, 70, 55, 3000, 40000, 15000, 58, 52],
+  jian: ['mingprov', 55, 65, 50, 75, 55, 3000, 45000, 15000, 58, 52],
+  yuanzhou: ['mingprov', 30, 55, 40, 45, 55, 2500, 25000, 8000, 58, 52],
+  nanan: ['mingprov', 15, 40, 50, 35, 75, 2500, 15000, 8000, 58, 52],
+  huzhou: ['hongguang', 55, 75, 75, 80, 55, 3000, 70000, 40000, 62, 55],
+  jiaxing: ['hongguang', 55, 75, 80, 80, 55, 3000, 70000, 45000, 62, 55],
+  jinhua: ['hongguang', 40, 60, 55, 70, 60, 3000, 40000, 15000, 62, 55],
+  taizhou: ['hongguang', 35, 55, 50, 55, 55, 2500, 30000, 12000, 62, 55, undefined, 0.4],
+  chuzhouzj: ['hongguang', 25, 45, 40, 45, 55, 2000, 20000, 6000, 62, 55],
+  zhoushan: ['hongguang', 5, 30, 50, 20, 55, 3000, 15000, 8000, 60, 55, undefined, 0.6],
+  jiangyin: ['hongguang', 20, 70, 60, 65, 70, 2500, 30000, 15000, 66, 58],
+  tingzhou: ['mingprov', 25, 45, 35, 40, 60, 2500, 20000, 6000, 58, 52],
+  shaowu: ['mingprov', 20, 45, 35, 40, 65, 2500, 18000, 6000, 58, 52],
+  xinghua: ['mingprov', 30, 55, 60, 70, 55, 2500, 25000, 12000, 60, 55, undefined, 0.5],
+  shaozhou: ['mingprov', 25, 50, 45, 40, 60, 3000, 25000, 8000, 58, 52],
+  zhaoqing: ['mingprov', 40, 60, 55, 50, 65, 5000, 40000, 20000, 58, 52, 'dingkuichu'],
+  huizhougd: ['mingprov', 35, 55, 50, 40, 55, 2500, 30000, 10000, 58, 52],
+  chaozhou: ['mingprov', 45, 60, 70, 55, 60, 3000, 40000, 20000, 58, 52, undefined, 0.8],
+  gaozhou: ['mingprov', 30, 55, 40, 35, 50, 2000, 25000, 8000, 58, 52],
+  leizhou: ['mingprov', 20, 50, 40, 30, 50, 2000, 18000, 6000, 58, 52, undefined, 0.3],
+  qiongzhou: ['mingprov', 25, 50, 45, 40, 55, 2000, 20000, 8000, 60, 52, undefined, 0.4],
+  wuzhou: ['mingprov', 25, 50, 55, 40, 60, 3000, 25000, 10000, 58, 52],
+  pingle: ['mingprov', 20, 50, 35, 35, 55, 2000, 18000, 6000, 58, 52],
+  liuzhou: ['mingprov', 25, 45, 30, 30, 55, 2500, 20000, 6000, 55, 50],
+  nanning: ['mingprov', 25, 50, 40, 35, 55, 2500, 20000, 7000, 55, 50],
+  baoning: ['mingprov', 35, 55, 35, 40, 65, 4000, 30000, 8000, 48, 44],
+  shunqing: ['mingprov', 40, 65, 40, 40, 55, 3000, 35000, 9000, 48, 44],
+  xuzhousc: ['mingprov', 35, 55, 40, 35, 55, 3000, 30000, 8000, 50, 45],
+  luzhousc: ['mingprov', 30, 55, 40, 35, 55, 3000, 25000, 8000, 50, 45],
+  zunyi: ['mingprov', 20, 45, 30, 25, 65, 3000, 18000, 5000, 50, 45],
+  yazhou: ['mingprov', 15, 45, 30, 25, 60, 2500, 15000, 5000, 50, 45],
+  zhenyuan: ['mingprov', 15, 40, 30, 25, 60, 2500, 15000, 5000, 52, 48],
+  anshun: ['mingprov', 15, 40, 25, 20, 60, 2500, 15000, 4000, 52, 48],
+  qujing: ['mingprov', 25, 50, 30, 30, 60, 3000, 20000, 6000, 55, 50],
+  chuxiong: ['mingprov', 20, 50, 30, 30, 55, 2500, 18000, 5000, 55, 50],
+  dali: ['mingprov', 30, 55, 40, 45, 65, 3000, 25000, 8000, 58, 52],
+  yongchang: ['mingprov', 20, 45, 35, 30, 60, 2500, 18000, 6000, 55, 50],
+  linan: ['mingprov', 25, 55, 35, 35, 55, 2500, 20000, 6000, 55, 50],
+  dayuan: ['helan', 6, 35, 80, 20, 75, 2000, 20000, 60000, 50, 55, undefined, 1.5],
 };
 
 const UNCERTAIN: Record<string, string> = {
@@ -86,6 +162,14 @@ const UNCERTAIN: Record<string, string> = {
   nanyang: '大顺撤退后由地方自守。',
   luoyang: '大顺守将尚在，人心浮动。',
   jingzhou: '大顺于湖广北部仍设官守，具体控制范围待考。',
+  baoding: '清军入京后保定等府相继投诚，具体日期待考。',
+  zhending: '大顺官吏被逐，真定一带由地方武装自守。',
+  hejian: '河间一带向清投诚与地方自守并存。',
+  datong: '姜瓖杀大顺守将，以大同降清。',
+  dean: '大顺在湖广北部所设州县，存续时间待考。',
+  yunyang: '郧阳明军与大顺犬牙交错，归属待考。',
+  huaiqing: '大顺在豫西北仍有守将，人心浮动。',
+  zhoushan: '舟山为明军水师据点，后为黄斌卿所据。',
 };
 
 const mix = (inf: number, cav: number, gun: number, navy: number): TroopMix => ({ inf, cav, gun, navy });
@@ -111,6 +195,15 @@ export const ARMIES_1644: Army[] = [
   A('a_zhang', '西营本部', 'xi', 'zhangxianzhong', 80000, mix(0.65, 0.2, 0.1, 0.05), 'kuizhou', 'kuizhou', 72),
 ];
 
+/** 完整剧本：自选一家，自甲申五月玩到壬寅年末 */
+export function createGame(player: string, seed = 1644): GameState {
+  const s = createState1644(seed);
+  if (!s.factions[player]?.playable) throw new Error('不可选的势力：' + player);
+  s.player = player;
+  s.scenario = 'full';
+  return s;
+}
+
 export function createState1644(seed = 1644): GameState {
   const cities: Record<string, City> = {};
   for (const n of NODES) {
@@ -132,6 +225,7 @@ export function createState1644(seed = 1644): GameState {
   set('qing', 'xi', 'neutral');
   set('shun', 'xi', 'neutral');
   for (const f of FACTIONS) if (f.id !== 'local') set('local', f.id, 'war');
+  set('local', 'helan', 'neutral');
 
   const state: GameState = {
     version: 1,
@@ -151,7 +245,7 @@ export function createState1644(seed = 1644): GameState {
     reports: [],
     events: [],
     battles: [],
-    flags: {},
+    flags: { ming_court: 'hongguang' },
     nextId: 1,
   };
   // 李自成正自山西撤回关中

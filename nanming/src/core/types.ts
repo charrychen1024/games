@@ -75,7 +75,8 @@ export interface Attitudes {
   /** 主战 -100（主和）~ 100（主战） */
   hawk: number;
 }
-export type CharStatus = 'active' | 'captured' | 'dead';
+/** offstage：尚未登场（到 appear 回合或由事件、征辟引出） */
+export type CharStatus = 'active' | 'captured' | 'dead' | 'offstage';
 export interface Character {
   id: CharId;
   name: string;
@@ -87,6 +88,10 @@ export interface Character {
   location: NodeId;
   status: CharStatus;
   bio: string;
+  /** 登场回合（offstage 人物） */
+  appear?: number;
+  /** 宗室：可被拥立；era 为即位后所用年号 */
+  royal?: { era: string; claim: number };
 }
 
 /* ---------- 城池 ---------- */
@@ -249,4 +254,6 @@ export interface GameState {
   ended?: { kind: 'unified' | 'undecided' | 'fallen' | 'trial_end'; text: string };
   /** 试玩模式：限定月数 */
   turnLimit?: number;
+  /** 本局的年号更替（覆盖政权的预设年号） */
+  eras?: Record<PolityId, Era[]>;
 }
