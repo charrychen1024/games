@@ -51,7 +51,7 @@ npx tsx tools/sim.ts 12 1644   # 无界面模拟，打印每月军情，用于�
 nanming/
 ├── src/core/      规则核心：不碰页面，局势是纯 JSON，结算可复现
 ├── src/data/      地理、势力、人物、开局、史事与线索、预设局面
-├── src/render/    地图绘制（Canvas）与城池标志
+├── src/render/    地图绘制（Canvas）：真实高程晕渲与设色、城池标志
 ├── src/ui/        界面（GSAP 动画）、战斗场景（Phaser 3）、图标、声音
 ├── tests/         vitest 测试
 ├── tools/         本地服务器、端到端测试、截图、模拟、素材抽取

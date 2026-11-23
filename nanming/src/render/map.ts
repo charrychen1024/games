@@ -3,7 +3,10 @@
  * 远看以河流、疆域、城名为主；放大后才出现城防、港口、驻军与路线。 */
 import { Delaunay } from 'd3-delaunay';
 import type { GameState, Army } from '../core/types';
-import { NODES, NODE, ROUTES, RIVERS, CANALS, LAKES, MOUNTAINS, GREAT_WALL } from '../data/geography';
+import { NODES, NODE, ROUTES, RIVERS, CANALS, LAKES, GREAT_WALL } from '../data/geography';
+import type { Route } from '../core/types';
+import { loadRelief, paintRelief, grainTile, snapRiver, type Relief } from './relief';
+import reliefUrl from '../assets/relief.png?url';
 import { POLITIES } from '../data/factions';
 import { project, WORLD_W, WORLD_H, worldToScreen, screenToWorld, type Camera } from './projection';
 import { makeRng } from '../core/rng';
@@ -38,8 +41,8 @@ function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number,
 
 export const INK = '#2a2118';
 export const PAPER = '#ecdfc0';
-const SEA = '#c4cfbd';
-const WATER = '#6f9aa0';
+const SEA = '#244f6a';
+const WATER = '#3f7f9e';
 const BASE_SCALE = 2;
 
 export interface MapView {
@@ -69,7 +72,11 @@ export class MapRenderer {
   dpr = 1;
   w = 0;
   h = 0;
-  seaPattern: CanvasPattern | null = null;
+  relief: Relief | null = null;
+  reliefReady = false;
+  /** 入谷后的河道（世界坐标） */
+  riverPaths: { width: number; pts: Pt[] }[] = [];
+  lakePaths: Path2D[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -79,13 +86,14 @@ export class MapRenderer {
       this.landPath.closePath();
     }
     this.buildCells();
-    this.base = this.buildBase();
-    const tile = document.createElement('canvas'); tile.width = 24; tile.height = 18;
-    const tg = tile.getContext('2d')!;
-    tg.fillStyle = SEA; tg.fillRect(0, 0, 24, 18);
-    tg.strokeStyle = 'rgba(70,100,96,0.32)'; tg.lineWidth = 0.7;
-    for (const [x, y] of [[2, 6], [14, 6], [8, 15], [20, 15], [-4, 15]]) { tg.beginPath(); tg.arc(x, y, 5, Math.PI * 1.05, Math.PI * 1.95); tg.stroke(); }
-    this.seaPattern = this.ctx.createPattern(tile, 'repeat');
+    this.buildWater(null);
+    this.base = this.buildBase(null);
+    loadRelief(reliefUrl).then(r => {
+      this.relief = r;
+      this.buildWater(r);
+      this.base = this.buildBase(r);
+      this.reliefReady = true;
+    }).catch(err => console.warn('relief', err));
     const [nx, ny] = P(118.2, 31.6);
     this.cam = { x: nx, y: ny, z: 1.6 };
   }
@@ -128,93 +136,87 @@ export class MapRenderer {
     });
   }
 
-  /* ---------- 底图 ---------- */
-  buildBase(): HTMLCanvasElement {
+  /* ---------- 水系：河道入谷、湖岸 ---------- */
+  buildWater(r: Relief | null) {
+    this.riverPaths = RIVERS.map(rv => ({ width: rv.width, pts: snapRiver(r, rv.pts).map(([lo, la]) => P(lo, la)) }));
+    const rng = makeRng(31);
+    this.lakePaths = LAKES.map(l => {
+      const [x, y] = P(l.lon, l.lat);
+      const p = new Path2D();
+      const n = 40, ph = [rng.next() * 6, rng.next() * 6, rng.next() * 6];
+      for (let k = 0; k <= n; k++) {
+        const t = k / n * Math.PI * 2;
+        const rr = 1 + 0.16 * Math.sin(t * 3 + ph[0]) + 0.09 * Math.sin(t * 5 + ph[1]) + 0.05 * Math.sin(t * 9 + ph[2]);
+        const ex = Math.cos(t) * l.rx * 34 * rr, ey = Math.sin(t) * l.ry * 40 * rr;
+        const px = x + ex * Math.cos(l.rot) - ey * Math.sin(l.rot), py = y + ex * Math.sin(l.rot) + ey * Math.cos(l.rot);
+        k ? p.lineTo(px, py) : p.moveTo(px, py);
+      }
+      p.closePath();
+      return p;
+    });
+  }
+
+  /* ---------- 底图：真实地形晕渲 + 道路 + 长城 ---------- */
+  buildBase(r: Relief | null): HTMLCanvasElement {
     const c = document.createElement('canvas');
     c.width = Math.round(WORLD_W * BASE_SCALE);
     c.height = Math.round(WORLD_H * BASE_SCALE);
     const g = c.getContext('2d')!;
     g.scale(BASE_SCALE, BASE_SCALE);
-    const rng = makeRng(1644);
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'high';
+    const img = r ? paintRelief(r) : null;
     // 海
-    g.fillStyle = SEA;
-    g.fillRect(0, 0, WORLD_W, WORLD_H);
-    // 海波纹：一行行鱼鳞状弧线
+    if (img) g.drawImage(img.sea, 0, 0, WORLD_W, WORLD_H);
+    else { g.fillStyle = '#3f7f97'; g.fillRect(0, 0, WORLD_W, WORLD_H); }
+    // 近岸浪花：海岸外一圈浅色
     g.save();
-    g.strokeStyle = 'rgba(70,100,96,0.32)';
-    g.lineWidth = 0.7;
-    for (let y = 6; y < WORLD_H; y += 9) {
-      const off = (Math.floor(y / 9) % 2) * 6;
-      for (let x = -10 + off; x < WORLD_W; x += 12) {
-        g.beginPath();
-        g.arc(x, y, 5, Math.PI * 1.05, Math.PI * 1.95);
-        g.stroke();
-      }
-    }
+    g.lineJoin = 'round';
+    g.strokeStyle = 'rgba(200,230,226,0.22)'; g.lineWidth = 5; g.stroke(this.landPath);
+    g.strokeStyle = 'rgba(225,242,238,0.35)'; g.lineWidth = 2; g.stroke(this.landPath);
     g.restore();
     // 陆地
     g.save();
-    g.fillStyle = PAPER;
-    g.shadowColor = 'rgba(60,70,60,0.35)';
-    g.shadowBlur = 6;
-    g.fill(this.landPath);
+    g.shadowColor = 'rgba(10,30,40,0.5)'; g.shadowBlur = 4;
+    g.fillStyle = '#7d9460'; g.fill(this.landPath);
     g.restore();
     g.save();
     g.clip(this.landPath);
-    // 纸纹：斑点与纤维
-    for (let i = 0; i < 26000; i++) {
-      const x = rng.next() * WORLD_W, y = rng.next() * WORLD_H;
-      g.fillStyle = rng.chance(0.5) ? 'rgba(120,90,50,0.06)' : 'rgba(255,250,235,0.10)';
-      g.fillRect(x, y, 1 + rng.next() * 1.5, 1 + rng.next() * 1.5);
+    if (img) g.drawImage(img.land, 0, 0, WORLD_W, WORLD_H);
+    // 细纹理
+    const pat = g.createPattern(grainTile(), 'repeat');
+    if (pat) { g.save(); g.scale(1 / BASE_SCALE, 1 / BASE_SCALE); g.fillStyle = pat; g.fillRect(0, 0, WORLD_W * BASE_SCALE, WORLD_H * BASE_SCALE); g.restore(); }
+    // 驿路：土路，浅黄路面 + 深色路肩，随势微曲
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    const roads = ROUTES.filter(rt => rt.kind === 'land');
+    for (const [w, col] of [[2.1, 'rgba(58,40,24,0.38)'], [1.0, 'rgba(232,212,164,0.78)']] as const) {
+      g.strokeStyle = col; g.lineWidth = w;
+      for (const rt of roads) { const q = routeCurve(rt); g.beginPath(); g.moveTo(q[0], q[1]); g.quadraticCurveTo(q[2], q[3], q[4], q[5]); g.stroke(); }
     }
-    g.strokeStyle = 'rgba(130,100,60,0.05)';
-    for (let i = 0; i < 1400; i++) {
-      const x = rng.next() * WORLD_W, y = rng.next() * WORLD_H, a = rng.next() * Math.PI;
-      g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * 14, y + Math.sin(a) * 14); g.stroke();
-    }
-    // 湖泊
-    for (const l of LAKES) {
-      const [x, y] = P(l.lon, l.lat);
-      g.save();
-      g.translate(x, y); g.rotate(l.rot);
-      g.beginPath(); g.ellipse(0, 0, l.rx * 34, l.ry * 40, 0, 0, Math.PI * 2);
-      g.fillStyle = '#b9cbbf'; g.fill();
-      g.strokeStyle = 'rgba(60,95,100,0.55)'; g.lineWidth = 1; g.stroke();
-      g.strokeStyle = 'rgba(60,95,100,0.25)';
-      for (let k = -2; k <= 2; k++) { g.beginPath(); g.ellipse(0, k * l.ry * 9, l.rx * 22, 1.5, 0, 0, Math.PI); g.stroke(); }
-      g.restore();
-    }
-    // 山形：青绿山头沿山脉排布
-    for (const m of MOUNTAINS) {
-      const pts = m.pts.map(([lo, la]) => P(lo, la));
-      const step = 11 * m.size;
-      for (let i = 0; i < pts.length - 1; i++) {
-        const [ax, ay] = pts[i], [bx, by] = pts[i + 1];
-        const len = Math.hypot(bx - ax, by - ay);
-        for (let t = 0; t < len; t += step * (0.8 + rng.next() * 0.4)) {
-          const f = t / len;
-          const x = ax + (bx - ax) * f + (rng.next() - 0.5) * 8, y = ay + (by - ay) * f + (rng.next() - 0.5) * 8;
-          drawPeak(g, x, y, (7 + rng.next() * 5) * m.size, rng.next());
-          if (rng.chance(0.45)) drawPeak(g, x + (rng.next() - 0.5) * 12, y + 5 + rng.next() * 4, (4 + rng.next() * 3) * m.size, rng.next());
-        }
-      }
-    }
-    // 长城
-    const wall = GREAT_WALL.map(([lo, la]) => P(lo, la));
-    g.strokeStyle = '#6b4c34'; g.lineWidth = 2.2; g.lineJoin = 'round';
-    g.beginPath(); wall.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke();
-    g.lineWidth = 1.3;
-    for (let i = 0; i < wall.length - 1; i++) {
-      const [ax, ay] = wall[i], [bx, by] = wall[i + 1];
-      const len = Math.hypot(bx - ax, by - ay), nx = -(by - ay) / len, ny = (bx - ax) / len;
-      for (let t = 3; t < len; t += 5) {
-        const x = ax + (bx - ax) * t / len, y = ay + (by - ay) * t / len;
-        g.beginPath(); g.moveTo(x, y); g.lineTo(x + nx * 2.4, y + ny * 2.4); g.stroke();
+    // 长城：石墙 + 敌楼
+    const wall = smoothPts(GREAT_WALL.map(([lo, la]) => P(lo, la)));
+    g.beginPath(); wall.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+    g.strokeStyle = 'rgba(40,30,22,0.7)'; g.lineWidth = 3; g.stroke();
+    g.strokeStyle = '#b9ab92'; g.lineWidth = 1.5; g.stroke();
+    let acc = 0;
+    for (let i = 1; i < wall.length; i++) {
+      acc += Math.hypot(wall[i][0] - wall[i - 1][0], wall[i][1] - wall[i - 1][1]);
+      if (acc > 9) {
+        acc = 0;
+        const [x, y] = wall[i];
+        g.fillStyle = 'rgba(40,30,22,0.8)'; g.fillRect(x - 1.8, y - 1.8, 3.6, 3.6);
+        g.fillStyle = '#d6c9ae'; g.fillRect(x - 1.1, y - 1.3, 2.2, 2.2);
       }
     }
     g.restore();
+    // 海路：浅色虚线航道
+    g.save();
+    g.setLineDash([3, 4]); g.lineCap = 'round';
+    g.strokeStyle = 'rgba(220,238,240,0.4)'; g.lineWidth = 0.9;
+    for (const rt of ROUTES.filter(rt => rt.kind === 'sea')) { const q = routeCurve(rt); g.beginPath(); g.moveTo(q[0], q[1]); g.quadraticCurveTo(q[2], q[3], q[4], q[5]); g.stroke(); }
+    g.restore();
     // 海名
-    g.fillStyle = 'rgba(50,80,78,0.45)';
+    g.fillStyle = 'rgba(214,234,240,0.55)';
     g.font = '600 15px "Noto Serif SC", "Songti SC", serif';
     vertText(g, '东海', ...P(124.2, 29.5), 18);
     vertText(g, '南海', ...P(114.5, 19.8), 18);
@@ -240,7 +242,7 @@ export class MapRenderer {
     g.translate(this.w / 2, this.h / 2);
     g.scale(cam.z, cam.z);
     g.translate(-cam.x, -cam.y);
-    g.fillStyle = this.seaPattern ?? SEA;
+    g.fillStyle = SEA;
     g.fillRect(cam.x - this.w / cam.z, cam.y - this.h / cam.z, this.w * 2 / cam.z, this.h * 2 / cam.z);
     g.restore();
     g.save();
@@ -267,7 +269,7 @@ export class MapRenderer {
   drawTerritory(g: CanvasRenderingContext2D, s: GameState) {
     g.save();
     g.clip(this.landPath);
-    g.globalAlpha = 0.34;
+    g.globalAlpha = 0.2;
     for (const n of NODES) {
       const c = s.cities[n.id];
       const poly = this.cells[n.id];
@@ -285,6 +287,20 @@ export class MapRenderer {
       for (let k = -WORLD_H; k < WORLD_W; k += 9) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k + WORLD_H, WORLD_H); g.stroke(); }
       g.restore();
     }
+    // 疆界内侧色带：各自颜色向内晕开
+    const bw = 7 / Math.sqrt(this.cam.z) + 2;
+    for (const e of this.edges) {
+      const ca = s.cities[e.a]?.controller, cb = s.cities[e.b]?.controller;
+      if (ca === cb || NODE[e.a].kind === 'outland' || NODE[e.b].kind === 'outland') continue;
+      for (const [id, f] of [[e.a, ca], [e.b, cb]] as const) {
+        const poly = this.cells[id]; if (!poly) continue;
+        g.save();
+        g.beginPath(); poly.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.clip();
+        g.strokeStyle = s.factions[f!]?.color ?? '#999'; g.globalAlpha = 0.5; g.lineWidth = bw;
+        g.beginPath(); e.pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke();
+        g.restore();
+      }
+    }
     // 疆界：不同实控者之间
     for (const e of this.edges) {
       const ca = s.cities[e.a]?.controller, cb = s.cities[e.b]?.controller;
@@ -293,7 +309,7 @@ export class MapRenderer {
       if (outA && outB) continue;
       const major = !outA && !outB && topOfSafe(s, ca!) !== topOfSafe(s, cb!);
       g.beginPath(); e.pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
-      g.strokeStyle = major ? 'rgba(60,30,20,0.75)' : 'rgba(60,30,20,0.35)';
+      g.strokeStyle = major ? 'rgba(28,16,10,0.85)' : 'rgba(28,16,10,0.45)';
       g.lineWidth = major ? 1.6 / Math.sqrt(this.cam.z) + 0.5 : 0.8;
       g.setLineDash(major ? [] : [3, 3]);
       g.stroke();
@@ -305,25 +321,37 @@ export class MapRenderer {
   drawWater(g: CanvasRenderingContext2D) {
     const z = this.cam.z;
     // 海岸
-    g.strokeStyle = 'rgba(40,60,58,0.7)'; g.lineWidth = 1.1 / Math.sqrt(z);
+    g.strokeStyle = 'rgba(16,36,42,0.55)'; g.lineWidth = 0.8 / Math.sqrt(z);
     g.stroke(this.landPath);
-    // 河流：浅色宽带 + 深色细芯
-    for (const r of RIVERS) {
-      const pts = r.pts.map(([lo, la]) => P(lo, la));
-      g.lineJoin = 'round'; g.lineCap = 'round';
-      g.strokeStyle = 'rgba(160,190,190,0.9)'; g.lineWidth = r.width * 1.5;
-      smoothPath(g, pts); g.stroke();
-      g.strokeStyle = WATER; g.lineWidth = r.width * 0.55;
-      smoothPath(g, pts); g.stroke();
-      if (r.width >= 1.6) {
-        g.setLineDash([6, 22]); g.lineDashOffset = -this.lastTime / 45;
-        g.strokeStyle = 'rgba(235,250,250,0.55)'; g.lineWidth = r.width * 0.35;
-        smoothPath(g, pts); g.stroke();
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    // 湖
+    for (const p of this.lakePaths) {
+      g.fillStyle = '#4d8ea6'; g.fill(p);
+      g.strokeStyle = 'rgba(190,220,214,0.55)'; g.lineWidth = 1.6; g.stroke(p);
+      g.strokeStyle = 'rgba(20,45,50,0.6)'; g.lineWidth = 0.6; g.stroke(p);
+    }
+    // 河：上游细、下游粗，分段描
+    const SEG = 5;
+    for (const rv of this.riverPaths) {
+      const n = rv.pts.length;
+      for (let k = 0; k < SEG; k++) {
+        const i0 = Math.floor(k * (n - 1) / SEG), i1 = Math.floor((k + 1) * (n - 1) / SEG);
+        const w = rv.width * (0.35 + 0.65 * (k + 0.7) / SEG);
+        g.beginPath();
+        for (let i = i0; i <= i1; i++) { const [x, y] = rv.pts[i]; i === i0 ? g.moveTo(x, y) : g.lineTo(x, y); }
+        g.strokeStyle = 'rgba(30,60,60,0.35)'; g.lineWidth = w * 0.95 + 0.9; g.stroke();
+        g.strokeStyle = WATER; g.lineWidth = w * 0.95; g.stroke();
+      }
+      if (rv.width >= 1.6) {
+        g.beginPath(); rv.pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+        g.setLineDash([5, 26]); g.lineDashOffset = -this.lastTime / 45;
+        g.strokeStyle = 'rgba(210,238,245,0.5)'; g.lineWidth = rv.width * 0.3;
+        g.stroke();
         g.setLineDash([]);
       }
     }
-    g.setLineDash([4, 3]);
-    g.strokeStyle = 'rgba(80,120,130,0.8)'; g.lineWidth = 1.2;
+    g.setLineDash([3, 2]);
+    g.strokeStyle = 'rgba(63,127,158,0.9)'; g.lineWidth = 1.1;
     for (const c of CANALS) { smoothPath(g, c.pts.map(([lo, la]) => P(lo, la))); g.stroke(); }
     g.setLineDash([]);
   }
@@ -334,15 +362,20 @@ export class MapRenderer {
     if (z >= 1.9 || sel) {
       for (const r of ROUTES) {
         if (z < 1.9 && r.a !== sel && r.b !== sel) continue;
-        const [ax, ay] = nodePt(r.a), [bx, by] = nodePt(r.b);
-        g.strokeStyle = r.kind === 'land' ? 'rgba(110,70,40,0.45)' : r.kind === 'sea' ? 'rgba(40,80,110,0.45)' : 'rgba(40,90,110,0.4)';
-        g.lineWidth = 0.9;
-        g.setLineDash(r.kind === 'land' ? [1.5, 2.5] : [5, 3]);
-        g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();
+        const q = routeCurve(r);
+        const hi = r.a === sel || r.b === sel;
+        if (hi || r.kind !== 'land') {
+          g.strokeStyle = r.kind === 'land' ? 'rgba(255,226,150,0.85)' : 'rgba(170,225,240,0.7)';
+          g.lineWidth = hi ? 1.4 : 0.9;
+          g.setLineDash(r.kind === 'land' ? [] : [4, 3]);
+          g.beginPath(); g.moveTo(q[0], q[1]); g.quadraticCurveTo(q[2], q[3], q[4], q[5]); g.stroke();
+        }
         if (z >= 2.6) {
           g.setLineDash([]);
-          g.fillStyle = 'rgba(70,50,30,0.7)'; g.font = '6px "Noto Serif SC", serif'; g.textAlign = 'center';
-          g.fillText(`${r.days}日`, (ax + bx) / 2, (ay + by) / 2 - 1.5);
+          const mx = 0.25 * q[0] + 0.5 * q[2] + 0.25 * q[4], my = 0.25 * q[1] + 0.5 * q[3] + 0.25 * q[5];
+          g.font = '600 6px "Noto Serif SC", serif'; g.textAlign = 'center';
+          g.lineWidth = 2; g.strokeStyle = 'rgba(20,14,8,0.75)'; g.strokeText(`${r.days}日`, mx, my - 1.5);
+          g.fillStyle = '#f3e4bf'; g.fillText(`${r.days}日`, mx, my - 1.5);
         }
       }
       g.setLineDash([]);
@@ -539,16 +572,22 @@ export class MapRenderer {
         const cx = pts.reduce((n, p) => n + p[0], 0) / pts.length, cy = pts.reduce((n, p) => n + p[1], 0) / pts.length;
         const [sx, sy] = worldToScreen(this.cam, this.w, this.h, cx, cy);
         g.font = `600 ${Math.round(15 + Math.min(14, pts.length))}px "Ma Shan Zheng", "Noto Serif SC", serif`;
-        g.fillStyle = 'rgba(50,30,20,0.42)';
         g.textAlign = 'center';
+        g.lineWidth = 3; g.lineJoin = 'round'; g.strokeStyle = 'rgba(20,12,6,0.55)';
+        g.strokeText(fac.name, sx, sy + 22);
+        g.fillStyle = 'rgba(255,240,210,0.78)';
         g.fillText(fac.name, sx, sy + 22);
       }
     }
     // 河名
     if (z >= 0.9) {
       g.font = `italic 500 ${Math.round(11 + z * 1.5)}px "Noto Serif SC", serif`;
-      g.fillStyle = 'rgba(40,85,95,0.85)'; g.textAlign = 'center';
-      for (const r of RIVERS) if (r.label) { const [sx, sy] = worldToScreen(this.cam, this.w, this.h, ...P(r.label[0], r.label[1])); g.fillText(r.name, sx, sy); }
+      g.textAlign = 'center'; g.lineWidth = 3; g.lineJoin = 'round';
+      for (const r of RIVERS) if (r.label) {
+        const [sx, sy] = worldToScreen(this.cam, this.w, this.h, ...P(r.label[0], r.label[1]));
+        g.strokeStyle = 'rgba(14,34,44,0.6)'; g.strokeText(r.name, sx, sy);
+        g.fillStyle = '#cfe9f2'; g.fillText(r.name, sx, sy);
+      }
     }
     // 城名（按重要性排序，避免重叠）
     const placed: [number, number, number, number][] = [];
@@ -700,24 +739,31 @@ function smoothPath(g: CanvasRenderingContext2D, pts: Pt[]) {
   g.lineTo(l[0], l[1]);
 }
 
-function drawPeak(g: CanvasRenderingContext2D, x: number, y: number, s: number, v: number) {
-  const grd = g.createLinearGradient(x, y - s, x, y + s * 0.3);
-  grd.addColorStop(0, v > 0.5 ? '#5f8577' : '#6c8f73');
-  grd.addColorStop(1, 'rgba(160,170,130,0.35)');
-  g.fillStyle = grd;
-  g.beginPath();
-  g.moveTo(x - s * 1.1, y + s * 0.3);
-  g.quadraticCurveTo(x - s * 0.6, y - s * 0.2, x - s * 0.35, y - s * 0.55);
-  g.quadraticCurveTo(x - s * 0.1, y - s * 1.05, x + s * 0.05, y - s * 0.95);
-  g.quadraticCurveTo(x + s * 0.35, y - s * 0.75, x + s * 0.5, y - s * 0.35);
-  g.quadraticCurveTo(x + s * 0.8, y - s * 0.05, x + s * 1.1, y + s * 0.3);
-  g.closePath();
-  g.fill();
-  g.strokeStyle = 'rgba(40,40,30,0.75)'; g.lineWidth = 0.7; g.stroke();
-  // 皴笔
-  g.strokeStyle = 'rgba(40,50,40,0.35)'; g.lineWidth = 0.5;
-  g.beginPath(); g.moveTo(x - s * 0.1, y - s * 0.8); g.quadraticCurveTo(x - s * 0.25, y - s * 0.3, x - s * 0.15, y + s * 0.2); g.stroke();
-  g.beginPath(); g.moveTo(x + s * 0.3, y - s * 0.6); g.quadraticCurveTo(x + s * 0.25, y - s * 0.2, x + s * 0.4, y + s * 0.2); g.stroke();
+/** 驿路弧线：两端为城，控制点按路名种子侧偏，看起来不是尺子画的 */
+const curveCache = new Map<Route, number[]>();
+function routeCurve(r: Route): number[] {
+  let q = curveCache.get(r);
+  if (!q) {
+    const [ax, ay] = nodePt(r.a), [bx, by] = nodePt(r.b);
+    const rng = makeRng(r.a.length * 131 + r.b.length * 7 + r.a.charCodeAt(0) * 17 + r.b.charCodeAt(r.b.length - 1));
+    const len = Math.hypot(bx - ax, by - ay), off = (rng.next() - 0.5) * 0.22 * len;
+    q = [ax, ay, (ax + bx) / 2 - (by - ay) / len * off, (ay + by) / 2 + (bx - ax) / len * off, bx, by];
+    curveCache.set(r, q);
+  }
+  return q;
+}
+function smoothPts(pts: Pt[]): Pt[] {
+  const out: Pt[] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    for (let k = 0; k < 8; k++) {
+      const t = k / 8, t2 = t * t, t3 = t2 * t;
+      const f = (a: number, b: number, c: number, d: number) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      out.push([f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1])]);
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
 }
 
 export function drawFlag(g: CanvasRenderingContext2D, x: number, y: number, shape: string, fill: string, mark: string, s: number, ink: string) {

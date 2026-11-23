@@ -110,7 +110,7 @@ export class App {
         auto ? mb('btn-continue', 'play', '继续游戏', auto.label, () => this.start(auto.state, false)) : null,
         mb('btn-load', 'load', '读取存档', '三个存档位 · 可导入', () => this.openSaves(true)),
         mb('btn-about', 'help', '玩法说明', '一分钟上手', () => this.openAbout()),
-        h('div', { class: 'credit' }, '一尾小石斑 作 · 战斗引擎 Phaser · 图标 game-icons.net · 底图 Natural Earth'),
+        h('div', { class: 'credit' }, '一尾小石斑 作 · 战斗引擎 Phaser · 图标 game-icons.net · 底图 Natural Earth · 地形 AWS Terrain Tiles'),
       )));
     const tl = gsap.timeline({ defaults: { clearProps: 'transform,filter' } });
     tl.from('#title .ch', { opacity: 0, y: 40, scale: 1.4, filter: 'blur(12px)', duration: 0.9, stagger: 0.25, ease: 'power3.out' })
@@ -1042,7 +1042,7 @@ export class App {
       step('war', '战斗', '三路下令，可用计策，也可交给部将'),
       step('why', '钱粮来由', '每笔变化都有出处，红框是你的命令'),
       step('event', '史事 · 线索', '合乎史实时触发，影响人物态度'),
-    ), h('div', { class: 'note' }, '一尾小石斑 作。图标 game-icons.net（CC BY 3.0）；底图 Natural Earth（公有领域）；字体 Noto Serif SC、Ma Shan Zheng（OFL）。')],
+    ), h('div', { class: 'note' }, '一尾小石斑 作。图标 game-icons.net（CC BY 3.0）；底图 Natural Earth（公有领域）；地形高程 AWS Terrain Tiles（SRTM、ETOPO1、GEBCO 等公开数据）；字体 Noto Serif SC、Ma Shan Zheng（OFL）。')],
     [{ label: '开始', icon: 'ok', primary: true, onclick: () => {} }]);
   }
 

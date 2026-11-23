@@ -6,6 +6,7 @@
 |---|---|---|---|
 | 图标（约 80 个） | 资源、命令、军情分类、兵种、战斗指令、地图徽章 | [game-icons.net](https://game-icons.net/)，作者 Lorc、Delapouite 等；经 npm 包 `@iconify-json/game-icons` 取得，由 `tools/build-icons.mjs` 抽取到 `src/ui/icons.ts` | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
 | 陆地轮廓 | 地图海岸线 | [Natural Earth](https://www.naturalearthdata.com/) 1:50m land，经 npm 包 `world-atlas` 取得，由 `tools/build-geo.mjs` 裁剪抽稀到 `src/data/geo-land.json` | 公有领域 |
+| 地形高程 | 地图晕渲、设色、海深、河道入谷 | [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)（Terrarium 编码，z6），由 `tools/build-relief.mjs` 重采样为 `src/assets/relief.png`。数据源包括 SRTM、GMTED2010、ETOPO1、GEBCO 等，按其要求致谢；着色全部由代码完成（`src/render/relief.ts`） | 公开数据，需署名 |
 | Phaser 3 | 战斗场景引擎（WebGL 渲染、粒子、补间、镜头、后期特效） | [phaser.io](https://phaser.io/)，npm 包 `phaser` | MIT |
 | GSAP 3 | 界面动画（面板、卡片、标题、数字滚动） | [gsap.com](https://gsap.com/)，npm 包 `gsap` | GSAP Standard License（免费，可商用） |
 | 字体 Noto Serif SC、Ma Shan Zheng | 正文与标题 | Google Fonts，运行时加载；离线时退回系统宋体、楷体 | SIL Open Font License 1.1 |
