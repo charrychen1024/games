@@ -56,11 +56,15 @@ export interface MapView {
   planned: { army: string; path: string[] }[];
   /** 月末回放：军队从上月位置走到本月位置 */
   anim?: { from: Record<string, Pt>; t0: number; dur: number } | null;
+  /** 选势力时高亮其疆域 */
+  highlight?: string | null;
+  /** 引导：在某城上画脉动光圈 */
+  beacon?: string | null;
 }
 type Rect = [number, number, number, number];
 interface NodeSlot { id: string; sx: number; sy: number; w: number; tier: 'full' | 'small' | 'dot'; label: Rect | null; fsize: number; big: boolean }
 interface ArmyStack { armies: string[]; sx: number; sy: number; ax: number; ay: number; moving: boolean }
-export interface Fx { kind: 'capture' | 'battle' | 'stamp' | 'float' | 'ripple'; node?: string; text?: string; color?: string; dy?: number; t0: number; dur: number }
+export interface Fx { kind: 'capture' | 'battle' | 'stamp' | 'float' | 'ripple' | 'convoy'; node?: string; path?: string[]; text?: string; color?: string; dy?: number; t0: number; dur: number }
 const MAX_Z = 6;
 /** 城郭标志的屏幕宽度（像素） */
 const EMBLEM_PX: Record<EmblemType, number> = { capital: 50, region: 42, major: 42, city: 34, port: 34, ferry: 28, pass: 32 };
@@ -282,11 +286,12 @@ export class MapRenderer {
   drawTerritory(g: CanvasRenderingContext2D, s: GameState) {
     g.save();
     g.clip(this.landPath);
-    g.globalAlpha = 0.2;
+    const hl = this.view.highlight;
     for (const n of NODES) {
       const c = s.cities[n.id];
       const poly = this.cells[n.id];
       if (!c || !poly) continue;
+      g.globalAlpha = !hl ? 0.2 : (c.controller === hl || s.factions[c.controller]?.overlord === hl) ? 0.5 + 0.08 * Math.sin(this.lastTime / 300) : 0.07;
       g.fillStyle = s.factions[c.controller]?.color ?? '#999';
       g.beginPath(); poly.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.fill();
     }
@@ -618,6 +623,14 @@ export class MapRenderer {
       g.fillStyle = '#fff3d9'; g.font = '700 12px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('围', 0, 0.5);
       g.restore();
     }
+    if (this.view.beacon) {
+      const sl = this.layout.get(this.view.beacon);
+      if (sl) for (let k = 0; k < 3; k++) {
+        const p = ((time / 1400) + k / 3) % 1;
+        g.strokeStyle = `rgba(255,214,120,${0.9 * (1 - p)})`; g.lineWidth = 3 * (1 - p) + 1;
+        g.beginPath(); g.ellipse(sl.sx, sl.sy - sl.w * 0.2, 14 + p * 46, (14 + p * 46) * 0.55, 0, 0, Math.PI * 2); g.stroke();
+      }
+    }
     this.drawStacks(g, s, focus);
     this.drawNames(g, s, focus);
     this.drawFx(g, s, time);
@@ -748,6 +761,21 @@ export class MapRenderer {
       const sl = f.node ? this.layout.get(f.node) : null;
       const [wx, wy] = f.node ? nodePt(f.node) : [0, 0];
       const [sx, sy] = sl ? [sl.sx, sl.sy - sl.w * 0.4] : worldToScreen(this.cam, this.w, this.h, wx, wy);
+      if (f.kind === 'convoy' && f.path && f.path.length > 1) {
+        // 粮车沿驿路而行
+        const pts = f.path.map(id => { const sl2 = this.layout.get(id); return sl2 ? [sl2.sx, sl2.sy] as Pt : worldToScreen(this.cam, this.w, this.h, ...nodePt(id)); });
+        const seg = Math.min(pts.length - 2, Math.floor(p * (pts.length - 1)));
+        const q = p * (pts.length - 1) - seg;
+        const x = pts[seg][0] + (pts[seg + 1][0] - pts[seg][0]) * q, y = pts[seg][1] + (pts[seg + 1][1] - pts[seg][1]) * q;
+        g.save();
+        g.globalAlpha = p > 0.85 ? (1 - p) / 0.15 : 1;
+        g.strokeStyle = 'rgba(240,207,134,0.6)'; g.lineWidth = 2; g.setLineDash([4, 4]);
+        g.beginPath(); pts.forEach(([px, py], i) => i ? g.lineTo(px, py) : g.moveTo(px, py)); g.stroke(); g.setLineDash([]);
+        g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2); g.fillStyle = '#3a2a18'; g.fill(); g.strokeStyle = '#f0cf86'; g.lineWidth = 1.5; g.stroke();
+        drawIcon(g, f.text ?? 'grain', x, y, 13, '#f0cf86');
+        g.restore();
+        continue;
+      }
       g.save();
       g.translate(sx, sy);
       switch (f.kind) {

@@ -1,6 +1,6 @@
 /* 命令：校验、执行、留痕。玩家与电脑用同一套命令。 */
 import type { ArmyOrder, GameState, Order } from './types';
-import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt } from './state';
+import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance } from './state';
 import { setArmyOrder, capture } from './military';
 import { RECRUIT_SILVER, POLICY_NAME } from './economy';
 import { rngFor } from './rng';
@@ -8,7 +8,7 @@ import { shortestPath, neighbors } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
   policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', reinforce: '增兵',
-  envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏',
+  envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立',
 };
 
 /** 命令的一句话描述 */
@@ -24,6 +24,7 @@ export function describeOrder(s: GameState, o: Order): string {
     case 'persuade': return `遣${charName(s, o.char)}赴${nodeName(o.node)}劝降`;
     case 'command': return `号令${factionName(s, o.vassal)}：${s.armies[o.army]?.name ?? ''}${armyOrderText(o.order)}${o.silver ? `（犒银 ${o.silver} 两）` : ''}`;
     case 'reward': return `犒赏${factionName(s, o.vassal)}银 ${o.silver} 两`;
+    case 'independence': return `脱离${factionName(s, s.factions[s.player]?.overlord ?? '')}，自立门户`;
   }
 }
 
@@ -96,6 +97,7 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       if (o.silver > (cap?.silver ?? 0)) return '府库不足';
       return null;
     }
+    case 'independence': return s.factions[f]?.overlord ? null : '本方并不奉谁号令';
     case 'reward': {
       const v = s.factions[o.vassal];
       if (!v || v.overlord !== f) return '不是你的下属';
@@ -203,6 +205,14 @@ export function applyOrder(s: GameState, f: string, o: Order) {
     case 'command':
       commandVassal(s, f, o, src);
       break;
+    case 'independence': {
+      const fac = s.factions[f], lord = fac.overlord!;
+      delete fac.overlord; delete fac.loyalty;
+      setStance(s, f, lord, 'neutral');
+      for (const c of Object.values(s.chars)) if (c.faction === f && c.att.loyalty > 70) adjustAtt(s, c.id, 'loyalty', -8, `${fac.name}自立，有违名分`);
+      report(s, { cat: '交涉', urgent: true, text: `${fac.name}脱离${factionName(s, lord)}，自立门户。双方暂不交兵。`, src });
+      break;
+    }
     case 'reward': {
       const cap = s.factions[f].capital;
       bump(s, cap, 'silver', -o.silver, `犒赏${factionName(s, o.vassal)}`, src);

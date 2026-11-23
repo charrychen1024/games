@@ -16,6 +16,7 @@ const USE = {
   charge: 'cavalry', withdraw: 'run', storm: 'ladder', bombard: 'cannon', sap: 'hole', sortie: 'fist', repair: 'hammer-nails',
   ambush: 'spy', fire: 'fire', night: 'night-sky', info: 'info', close: 'cancel', ok: 'check-mark', crown: 'crown', prisoner: 'prisoner',
   dead: 'skull-crossed-bones', hourglass: 'hourglass', auto: 'gears', supply: 'wheat', army: 'spears', play: 'play-button', target: 'triangle-target',
+  menu: 'hamburger-menu', star: 'round-star', goal: 'flag-objective', calendar: 'calendar', pointing: 'pointing', emperor: 'imperial-crown', ruins: 'castle-ruins', winner: 'podium-winner',
   load: 'open-book', newgame: 'crown', map: 'compass', help: 'info', battle: 'sword-clash', port: 'anchor', pass: 'temple-gate', ferry: 'sailboat',
 };
 const out = {};

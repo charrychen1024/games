@@ -1,6 +1,6 @@
 /* 界面主控：游戏式 HUD。图标 + 大数字 + 短标签，细节点开才看。 */
 import type { GameState, Order, NodeId, ArmyOrder, Policy, ReportEntry, LedgerEntry, Character, ReportCat } from '../core/types';
-import { MapRenderer, nodePt } from '../render/map';
+import { MapRenderer, nodePt, armyPt } from '../render/map';
 import { h, $, clear, fmt, wan, signed } from './dom';
 import { iconSvg } from './icons';
 import { gameSelect, stepper, closeSelects, type SelOpt } from './widgets';
@@ -8,14 +8,16 @@ import gsap from 'gsap';
 import { playBattle } from './battle';
 import { chime, alarm, click, isMuted, setMuted } from './audio';
 import { resolveMonth, unificationProgress, type Answer } from '../core/turn';
-import { dateLabel, eraYear, monthName, lunarOf, shortDate } from '../core/calendar';
+import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
 import { POLITIES } from '../data/factions';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays } from '../data/geography';
-import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName } from '../core/state';
+import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf } from '../core/state';
 import { POLICY_NAME, POLICY_HINT, monthlyIncome, upkeepOf, RECRUIT_SILVER } from '../core/economy';
 import { describeOrder, validateOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
-import { trialState, yangzhouSiegeState } from '../data/presets';
+import { yangzhouSiegeState } from '../data/presets';
+import { createGame } from '../data/scenario1644';
+import { polityOf } from '../core/regime';
 import { canSea } from '../core/military';
 import type { PendingChoice } from '../core/events';
 
@@ -24,8 +26,17 @@ const FIELD_NAME: Record<string, string> = { grain: '仓粮', silver: '府库', 
 const FIELD_ICON: Record<string, string> = { grain: 'grain', silver: 'silver', pop: 'pop', minxin: 'minxin', garrison: 'troops', wall: 'wall', order: 'order', agri: 'agri', commerce: 'commerce', edu: 'edu' };
 const CAT_ICON: Record<ReportCat, string> = { 急报: 'urgent', 军报: 'war', 易主: 'capture', 交涉: 'envoy', 内政: 'admin', 人事: 'person', 史事: 'event', 线索: 'clue' };
 const POLICY_ICON: Record<Policy, string> = { balanced: 'order', agri: 'agri', commerce: 'commerce', fortify: 'wall', relief: 'minxin', edu: 'edu', levy: 'reward' };
-const ORDER_ICON: Record<Order['kind'], string> = { policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward' };
+const ORDER_ICON: Record<Order['kind'], string> = { policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown' };
 const HINT_KEY = 'nanming:hint';
+
+/** 选势力卡片：难度、一句处境、目标 */
+const PICK: { id: string; name: string; stars: number; z: number; line: string; situation: string; goal: string }[] = [
+  { id: 'hongguang', name: '弘光朝廷', stars: 4, z: 1.5, line: '坐拥江南财赋，号令却出不了南京。', situation: '福王在南京即位。江北四镇各拥重兵，朝中党争不息。', goal: '驾驭四镇，守住长江，再图恢复' },
+  { id: 'qing', name: '大清', stars: 2, z: 1.2, line: '铁骑新入关，天下尚未归心。', situation: '清军入北京。大顺西撤，江南另立新君。', goal: '先逐大顺，再定江南，一统天下' },
+  { id: 'shun', name: '大顺', stars: 5, z: 1.3, line: '山海关新败，退守关中。', situation: '李自成弃北京西走。清军与吴三桂紧追不舍。', goal: '择地站稳，收拾人心，再争天下' },
+  { id: 'xi', name: '张献忠部', stars: 3, z: 1.3, line: '溯江入蜀，天府之国就在眼前。', situation: '西营兵临夔州。四川明军单薄，成都可图。', goal: '取成都，建大西，进而争雄' },
+  { id: 'zheng', name: '福建郑氏', stars: 3, z: 1.5, line: '海上船队与贸易都在手里。', situation: '郑芝龙受明封爵，海舶无郑氏令旗不得往来。', goal: '以海养兵，奉明还是自立，由你决定' },
+];
 
 /** 内联图标元素 */
 export const ic = (name: string, cls = 'ic') => { const s = h('span', { style: { display: 'contents' } }); s.innerHTML = iconSvg(name, cls); return s; };
@@ -71,12 +82,16 @@ export class App {
     window.addEventListener('resize', () => { this.map.resize(); this.map.clamp(); });
     this.bindMap(canvas);
     window.addEventListener('keydown', e => this.onKey(e));
-    try { this.hintStep = Number(localStorage.getItem(HINT_KEY) ?? 0); } catch { this.hintStep = 0; }
+    try { this.hintStep = Number(localStorage.getItem(HINT_KEY) ?? 0) >= 4 ? 9 : 0; } catch { this.hintStep = 0; }
     const loop = (t: number) => { this.map.render(t); requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
+    this.bindTips();
+    document.addEventListener('contextmenu', e => { if (!(e.target as HTMLElement).closest('input, textarea')) e.preventDefault(); });
+    document.addEventListener('pointerdown', e => { if (!$('#menu').classList.contains('hidden') && !(e.target as HTMLElement).closest('#menu, #btn-menu')) this.toggleMenu(false); });
     this.showTitle();
     (window as any).NM = this; // 调试与自动化测试入口
     (window as any).NM_nodePt = nodePt;
+    (window as any).NM_presets = { createGame, yangzhouSiegeState };
   }
 
   /* ================= 标题 ================= */
@@ -85,40 +100,112 @@ export class App {
     const t = $('#title');
     t.classList.remove('gone');
     clear(t);
+    $('#pick')?.remove(); $('#intro')?.remove();
     this.s = null;
-    this.map.view.state = trialState(1);
-    this.map.view.selected = null;
+    this.endTarget();
+    this.map.view.state = createGame('hongguang', 1);
+    this.map.view.selected = null; this.map.view.highlight = null; this.map.view.beacon = null;
     this.map.focus('wuchang', 1.1);
-    for (const id of ['#panel', '#report', '#hint', '#legend']) $(id).classList.add('hidden');
+    for (const id of ['#panel', '#report', '#hint', '#legend', '#menu']) $(id)?.classList.add('hidden');
     clear($('#orders'));
+    clear($('#topbar')).className = '';
     // 背景地图缓缓巡游
-    const tour = ['nanjing', 'yangzhou', 'beijing', 'xian', 'chengdu', 'wuchang', 'fuzhou'];
+    const tour = ['nanjing', 'yangzhou', 'beijing', 'xian', 'chengdu', 'wuchang', 'fuzhou', 'guangzhou', 'kunming'];
     let ti = 0;
     clearInterval(this.titleTimer);
     this.map.flyTo(tour[0], 1.5);
     this.titleTimer = window.setInterval(() => { if (this.s) { clearInterval(this.titleTimer); return; } ti = (ti + 1) % tour.length; this.map.flyTo(tour[ti], 1.3 + (ti % 3) * 0.25); }, 4200);
     const auto = loadFrom(this.kv, 'auto');
-    const mb = (id: string, icon: string, title: string, sub: string, onclick: () => void, primary = false) =>
-      h('button', { class: 'mbtn' + (primary ? ' primary' : ''), id, onclick }, ic(icon), h('div', null, h('b', null, title), h('small', null, sub)));
     const embers = h('div', { class: 'embers' });
     for (let k = 0; k < 28; k++) embers.append(h('i', { style: { left: (Math.random() * 100) + '%', animationDelay: (Math.random() * 8) + 's', animationDuration: (6 + Math.random() * 6) + 's', transform: `scale(${0.5 + Math.random()})` } }));
+    const round = (id: string, icon: string, tip: string, onclick: () => void) => h('button', { class: 'tbtn', id, 'data-tip': tip, 'aria-label': tip, onclick: () => { click(); onclick(); } }, ic(icon));
     t.append(embers, h('div', { class: 'title-in' },
-      h('div', { class: 'logo' }, h('div', { class: 't' }, h('span', { class: 'ch' }, '南'), h('span', { class: 'ch red' }, '明')), h('div', { class: 'seal' }, '甲申以后'), h('div', { class: 'years' }, '一六四四 — 一六六二'),
-        h('div', { class: 'tagline' }, '北京失守的消息传到南京')),
-      h('div', { class: 'menu hud' },
-        mb('btn-new', 'newgame', '新开局 · 弘光朝廷', '十二回合试玩', () => this.start(trialState(Date.now() % 100000), true), true),
-        mb('btn-sample', 'siege', '地图样稿 · 扬州被围', '乙酉四月', () => this.start(yangzhouSiegeState(), false, 'yangzhou')),
-        auto ? mb('btn-continue', 'play', '继续游戏', auto.label, () => this.start(auto.state, false)) : null,
-        mb('btn-load', 'load', '读取存档', '三个存档位 · 可导入', () => this.openSaves(true)),
-        mb('btn-about', 'help', '玩法说明', '一分钟上手', () => this.openAbout()),
-        h('div', { class: 'credit' }, '一尾小石斑 作 · 战斗引擎 Phaser · 图标 game-icons.net · 底图 Natural Earth · 地形 AWS Terrain Tiles'),
-      )));
+      h('div', { class: 'logo' }, h('div', { class: 't' }, h('span', { class: 'ch' }, '南'), h('span', { class: 'ch red' }, '明')), h('div', { class: 'seal' }, '甲申以后'), h('div', { class: 'years' }, '一六四四 — 一六六二')),
+      h('div', { class: 'title-actions' },
+        h('button', { class: 'big-start', id: 'btn-new', onclick: () => { click(); this.showPick(); } }, h('span', { class: 'glow' }), h('b', null, '开 始')),
+        auto ? h('button', { class: 'cont', id: 'btn-continue', onclick: () => { click(); this.start(auto.state, false); } }, ic('play'), h('div', null, h('b', null, '继续'), h('small', null, auto.label))) : null,
+        h('div', { class: 'title-icons' },
+          round('btn-load', 'load', '读档', () => this.openSaves(true)),
+          round('btn-about', 'help', '玩法', () => this.openAbout()),
+          round('btn-sound-t', isMuted() ? 'mute' : 'sound', '声音', () => { setMuted(!isMuted()); this.showTitle(); }))),
+      h('div', { class: 'credit' }, '一尾小石斑 作 · ', h('button', { class: 'linkish', id: 'btn-sample', onclick: () => this.start(yangzhouSiegeState(), false, 'yangzhou') }, '地图样稿：扬州被围')),
+    ));
     const tl = gsap.timeline({ defaults: { clearProps: 'transform,filter' } });
     tl.from('#title .ch', { opacity: 0, y: 40, scale: 1.4, filter: 'blur(12px)', duration: 0.9, stagger: 0.25, ease: 'power3.out' })
       .from('#title .seal', { opacity: 0, scale: 2.4, rotate: -25, duration: 0.45, ease: 'back.out(2.5)' }, '-=0.2')
-      .from('#title .years, #title .tagline', { opacity: 0, y: 10, duration: 0.5, stagger: 0.12 }, '-=0.1')
-      .from('#title .menu', { opacity: 0, x: 60, duration: 0.5, ease: 'power3.out' }, 0.5)
-      .from('#title .mbtn', { opacity: 0, x: 40, duration: 0.4, stagger: 0.08, ease: 'power3.out' }, 0.7);
+      .from('#title .years', { opacity: 0, y: 10, duration: 0.5 }, '-=0.1')
+      .from('#title .big-start', { opacity: 0, scale: 0.6, duration: 0.6, ease: 'back.out(1.8)' }, '-=0.2')
+      .from('#title .cont, #title .tbtn, #title .credit', { opacity: 0, y: 14, duration: 0.35, stagger: 0.06 }, '-=0.3');
+  }
+
+  /* ================= 择一方 ================= */
+  showPick() {
+    const st = createGame('hongguang', 1);
+    this.map.view.state = st;
+    clearInterval(this.titleTimer);
+    gsap.to('#title .title-in', { opacity: 0, y: -20, duration: 0.3 });
+    let chosen = '';
+    const goLabel = h('span', { class: 'lbl' }, '开 局');
+    const go = h('button', { class: 'pick-go', id: 'pick-go', disabled: true, onclick: () => { if (chosen) begin(chosen); } }, ic('next'), goLabel) as HTMLButtonElement;
+    const begin = (id: string) => { click(); el.remove(); $('#title').classList.add('gone'); this.start(createGame(id, Date.now() % 100000), true); };
+    const cards = h('div', { class: 'pick-cards' });
+    for (const info of PICK) {
+      const f = st.factions[info.id];
+      const pol = POLITIES[f.polity];
+      const leader = st.chars[f.leader];
+      const n = citiesOf(st, info.id).length;
+      const troops = citiesOf(st, info.id).reduce((m, c) => m + c.garrison, 0) + Object.values(st.armies).filter(a => a.faction === info.id).reduce((m, a) => m + a.troops, 0);
+      const card = h('button', { class: 'pcard', id: 'pick-' + info.id, style: { '--fc': f.color } as any,
+        onclick: () => { click(); chosen = info.id; cards.querySelectorAll('.pcard').forEach(c => c.classList.toggle('on', c === card)); go.disabled = false; goLabel.textContent = `以${f.short}开局`; },
+        ondblclick: () => begin(info.id),
+        onmouseenter: () => { this.map.view.highlight = info.id; this.map.flyTo(f.capital, info.z); } },
+      h('div', { class: 'pseal' }, h('i', null, pol.mark || f.short)),
+      h('div', { class: 'pname' }, info.name),
+      h('div', { class: 'plead' }, `${leader?.name ?? ''} · ${nodeName(f.capital)}`),
+      h('div', { class: 'pstars', 'aria-label': `难度 ${info.stars}` }, ...Array.from({ length: 5 }, (_, i) => h('i', { class: i < info.stars ? 'on' : '' }))),
+      h('div', { class: 'pline' }, info.line),
+      h('div', { class: 'pstat' }, h('span', null, ic('city'), `${n} 城`), h('span', null, ic('troops'), wan(troops))));
+      cards.append(card);
+    }
+    const el = h('div', { id: 'pick' },
+      h('div', { class: 'pick-h' }, h('h1', null, '择 一 方'), h('small', null, '甲申年五月 · 北京失守的消息传到南京')),
+      cards,
+      h('div', { class: 'pick-f' }, h('button', { class: 'pick-back', onclick: () => { el.remove(); this.map.view.highlight = null; this.showTitle(); } }, ic('exit'), '返回'), go));
+    $('#app').append(el);
+    gsap.from('#pick .pick-h', { opacity: 0, y: -20, duration: 0.4 });
+    gsap.from('#pick .pcard', { opacity: 0, y: 60, rotateX: -35, duration: 0.55, stagger: 0.08, ease: 'back.out(1.5)', delay: 0.1, clearProps: 'transform,opacity' });
+    gsap.from('#pick .pick-f', { opacity: 0, y: 20, duration: 0.4, delay: 0.5 });
+  }
+
+  /** 开局过场：年月、势力印、一句处境 */
+  playIntro(): Promise<void> {
+    return new Promise(resolve => {
+      const s = this.s!;
+      const me = s.factions[s.player];
+      const pol = polityOf(s, me.polity);
+      const info = PICK.find(p => p.id === s.player);
+      const el = h('div', { id: 'intro' },
+        h('div', { class: 'bar top' }), h('div', { class: 'bar bot' }),
+        h('div', { class: 'intro-in' },
+          h('div', { class: 'i-date' }, `${eraYear(pol, s.turn)}${monthName(lunarOf(s.turn))}`),
+          h('div', { class: 'i-seal', style: { background: me.color } }, pol.mark || me.short),
+          h('div', { class: 'i-name' }, me.name),
+          h('div', { class: 'i-line' }, info?.situation ?? ''),
+          h('div', { class: 'i-goal' }, ic('goal'), info?.goal ?? '统一天下'),
+          h('div', { class: 'i-skip' }, '点击继续')));
+      let done = false;
+      const end = () => { if (done) return; done = true; gsap.to(el, { opacity: 0, duration: 0.5, onComplete: () => { el.remove(); resolve(); } }); this.map.flyTo(me.capital, 2.1); };
+      el.onclick = end;
+      $('#app').append(el);
+      this.map.focus(me.capital, 0.9);
+      gsap.from('#intro .bar.top', { yPercent: -100, duration: 0.6, ease: 'power3.out' });
+      gsap.from('#intro .bar.bot', { yPercent: 100, duration: 0.6, ease: 'power3.out' });
+      gsap.from('#intro .i-date', { opacity: 0, letterSpacing: '1em', scale: 1.4, duration: 1.1, ease: 'power3.out', delay: 0.2 });
+      gsap.from('#intro .i-seal', { opacity: 0, scale: 3, rotate: -30, duration: 0.5, ease: 'back.out(2)', delay: 0.9 });
+      gsap.from('#intro .i-name, #intro .i-line, #intro .i-goal', { opacity: 0, y: 16, duration: 0.5, stagger: 0.25, delay: 1.2 });
+      gsap.from('#intro .i-skip', { opacity: 0, duration: 0.6, delay: 2.2 });
+      setTimeout(end, 5200);
+    });
   }
 
   start(state: GameState, fresh: boolean, focus?: string) {
@@ -126,16 +213,22 @@ export class App {
     this.orders = [];
     this.seq = 0;
     this.reportTurn = state.turn - 1;
+    this.lastPills = {};
     clearInterval(this.titleTimer);
+    $('#pick')?.remove();
+    this.map.view.highlight = null;
     gsap.to('#title', { opacity: 0, duration: 0.35, onComplete: () => { $('#title').classList.add('gone'); ($('#title') as HTMLElement).style.opacity = ''; } });
     this.map.view.state = state;
     this.map.view.selected = null;
     this.map.view.selectedArmy = null;
+    this.map.view.beacon = null;
     this.map.focus(focus ?? state.factions[state.player].capital, focus ? 2.4 : 2.0);
     this.renderAll();
     if (focus) this.selectNode(focus);
-    if (fresh && this.hintStep < 4) { this.hintStep = 0; this.showHint(); }
-    else if (state.reports.some(r => r.turn === state.turn - (state.ended ? 0 : 1))) { this.reportTurn = state.turn - (state.ended ? 0 : 1); this.openReport(); }
+    if (fresh) {
+      this.hintStep = this.hintStep >= 9 ? 9 : 0;
+      void this.playIntro().then(() => { if (this.s === state) this.showHint(); });
+    } else if (state.reports.some(r => r.turn === state.turn - (state.ended ? 0 : 1))) { this.reportTurn = state.turn - (state.ended ? 0 : 1); this.openReport(); }
     if (fresh) this.autoSave();
     // 读到已结束的局势：重新打开结局面板，按结局允许的操作继续
     if (state.ended) this.showEnd();
@@ -185,10 +278,33 @@ export class App {
     }, { passive: false });
   }
 
+  /** 提示气泡：统一用游戏样式，不用浏览器自带的 title 小黄条 */
+  bindTips() {
+    const tip = h('div', { id: 'gtip', class: 'hidden' });
+    document.body.append(tip);
+    let cur: HTMLElement | null = null;
+    document.addEventListener('pointerover', e => {
+      const el = (e.target as HTMLElement).closest?.('[data-tip], [title]') as HTMLElement | null;
+      if (el && el.hasAttribute('title')) { el.dataset.tip = el.getAttribute('title')!; el.removeAttribute('title'); }
+      if (!el || !el.dataset.tip || el.id === 'map') { tip.classList.add('hidden'); cur = null; return; }
+      if (el === cur) return;
+      cur = el;
+      tip.textContent = el.dataset.tip;
+      tip.classList.remove('hidden');
+      const r = el.getBoundingClientRect(), w = tip.offsetWidth, hh = tip.offsetHeight;
+      let x = r.left + r.width / 2 - w / 2, y = r.bottom + 8;
+      if (y + hh > window.innerHeight - 6) y = r.top - hh - 8;
+      x = Math.max(6, Math.min(window.innerWidth - w - 6, x));
+      tip.style.left = x + 'px'; tip.style.top = y + 'px';
+    });
+    document.addEventListener('pointerdown', () => { tip.classList.add('hidden'); cur = null; });
+  }
+
   onKey(e: KeyboardEvent) {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
     if (e.key === 'Escape') {
-      if (this.targetCb) this.endTarget();
+      if (!$('#menu').classList.contains('hidden')) this.toggleMenu(false);
+      else if (this.targetCb) this.endTarget();
       else if (!$('#modal').classList.contains('hidden')) this.closeModal();
       else this.closePanel();
     }
@@ -260,8 +376,37 @@ export class App {
     click();
     this.toast(describeOrder(s, o), ORDER_ICON[o.kind]);
     this.renderOrders(); this.renderTop(); this.refreshPanel();
-    if (this.hintStep === 1) { this.hintStep = 2; this.showHint(); }
+    if (this.hintStep <= 1) this.advanceHint(2);
+    this.orderFx(o);
     return true;
+  }
+  /** 下令的反馈：在地图上落印、粮车出发、目标处涟漪；命令条从上方落入 */
+  orderFx(o: Order) {
+    const s = this.s!;
+    const m = this.map;
+    const fac = s.factions[s.player];
+    const stamp = (node: string | undefined, text: string, color = '#c8352a') => { if (node && s.cities[node]) m.addFx({ kind: 'stamp', node, text, color, dur: 1200 }); };
+    switch (o.kind) {
+      case 'policy': stamp(o.node, '政'); m.addFx({ kind: 'float', node: o.node, text: POLICY_NAME[o.policy], color: '#f0cf86', dur: 1500, delay: 200 }); break;
+      case 'recruit': stamp(o.node, '募'); m.addFx({ kind: 'float', node: o.node, text: `+${o.troops} 兵`, color: '#bfe6b7', dur: 1500, delay: 200 }); break;
+      case 'appoint': stamp(o.node, '任'); m.addFx({ kind: 'float', node: o.node, text: charName(s, o.char), color: '#f0cf86', dur: 1500, delay: 200 }); break;
+      case 'transfer': { const p = shortestPath(o.from, o.to, false); if (p) m.addFx({ kind: 'convoy', node: o.from, path: [o.from, ...p], text: o.grain ? 'grain' : 'silver', dur: 1600 }); stamp(o.from, '调'); break; }
+      case 'army': case 'command': {
+        const a = s.armies[o.army];
+        stamp(a?.location, o.kind === 'command' ? '令' : '军');
+        if (o.order.kind !== 'hold') m.addFx({ kind: 'ripple', node: o.order.target, color: o.order.kind === 'move' && !o.order.attack ? '#f0cf86' : '#e0503f', dur: 1400, delay: 250 });
+        break;
+      }
+      case 'reinforce': stamp(o.node, '兵'); break;
+      case 'envoy': stamp(s.factions[o.target]?.capital, '使', '#2f6f8f'); break;
+      case 'persuade': stamp(o.node, '降', '#2f6f8f'); break;
+      case 'reward': stamp(s.factions[o.vassal]?.capital, '赏', '#b0702a'); break;
+      case 'independence': stamp(fac.capital, '立'); break;
+    }
+    const chip = $('#orders').lastElementChild as HTMLElement | null;
+    if (chip) gsap.from(chip, { y: -60, scale: 1.4, opacity: 0, duration: 0.45, ease: 'back.out(1.8)' });
+    const btn = $('#btn-next');
+    if (btn) gsap.fromTo(btn, { scale: 1.08 }, { scale: 1, duration: 0.35, ease: 'power2.out' });
   }
   removeOrder(id: string) { this.orders = this.orders.filter(o => o.id !== id); this.renderOrders(); this.renderTop(); this.refreshPanel(); }
   toast(text: string, icon = 'info') {
@@ -279,16 +424,17 @@ export class App {
     const top = clear($('#topbar'));
     top.className = 'hud';
     const me = s.factions[s.player];
-    const pol = POLITIES[me.polity];
+    const pol = polityOf(s, me.polity);
     const cap = s.cities[me.capital];
     const own = Object.values(s.cities).filter(c => c.controller === s.player);
     const troops = own.reduce((n, c) => n + c.garrison, 0) + Object.values(s.armies).filter(a => a.faction === s.player).reduce((n, a) => n + a.troops, 0);
     const lm = lunarOf(s.turn);
     const pips = h('div', { class: 'pips' });
     if (s.scenario === 'trial' && s.turnLimit) for (let i = 0; i < s.turnLimit; i++) pips.append(h('i', { class: i < s.turn ? 'on' : i === s.turn ? 'now' : '' }));
+    else pips.append(h('div', { class: 'yearbar', 'data-tip': `剧本进度 ${s.turn + 1} / ${TOTAL_TURNS} 月` }, h('i', { style: { width: ((s.turn + 1) / TOTAL_TURNS * 100) + '%' } })));
     const unread = s.reports.filter(r => r.turn === s.turn - 1 && r.urgent && (!r.faction || r.faction === s.player)).length;
     const ib = (id: string, icon: string, tip: string, onclick: () => void, extra?: { on?: boolean; badge?: number }) =>
-      h('button', { class: 'ibtn' + (extra?.on ? ' on' : ''), id, 'data-tip': tip, 'aria-label': tip, onclick }, ic(icon), extra?.badge ? h('span', { class: 'badge' }, String(extra.badge)) : null);
+      h('button', { class: 'ibtn' + (extra?.on ? ' on' : ''), id, 'data-tip': tip, 'aria-label': tip, onclick: () => { click(); onclick(); } }, ic(icon), extra?.badge ? h('span', { class: 'badge' }, String(extra.badge)) : null);
     const pill = (icon: string, val: string, label: string, tip: string, raw?: number) => {
       const b = h('b', null, val);
       const key = 'pill:' + icon;
@@ -296,34 +442,52 @@ export class App {
       if (raw !== undefined && prev !== undefined && prev !== raw) {
         const o = { v: prev };
         gsap.to(o, { v: raw, duration: 0.9, ease: 'power2.out', onUpdate: () => { b.textContent = icon === 'city' ? String(Math.round(o.v)) : wan(o.v); } });
-        gsap.fromTo(b, { color: raw > prev ? '#9fe08f' : '#ff9a8a' }, { color: '#f3e6c8', duration: 1.2 });
+        gsap.fromTo(b, { color: raw > prev ? '#9fe08f' : '#ff9a8a', scale: 1.25 }, { color: '#f3e6c8', scale: 1, duration: 1.2 });
       }
       if (raw !== undefined) this.lastPills[key] = raw;
       return h('div', { class: 'pill', 'data-tip': tip }, ic(icon), b, h('small', null, label));
     };
+    const u = unificationProgress(s);
     top.append(
-      h('div', { class: 'emblem', title: me.name }, pol.mark || me.short),
+      h('div', { class: 'emblem', 'data-tip': me.name, style: { background: `radial-gradient(circle at 35% 30%, ${shade(me.color, 0.25)}, ${shade(me.color, -0.45)})` } }, pol.mark || me.short),
       h('div', { class: 'datebox' },
         h('div', null, h('div', { class: 'era', id: 'date-label', title: dateLabel(pol, s.turn) }, `${eraYear(pol, s.turn)}${monthName(lm)}`), h('div', { class: 'yr' }, `${me.short} · 公元 ${lm.year}`), pips)),
       h('div', { class: 'res' },
         pill('silver', wan(cap.silver - this.pendingSpend(me.capital, 'silver')), '两', `${nodeName(me.capital)}府库（银）`, cap.silver - this.pendingSpend(me.capital, 'silver')),
         pill('grain', wan(cap.grain - this.pendingSpend(me.capital, 'grain')), '石', `${nodeName(me.capital)}仓粮`, cap.grain - this.pendingSpend(me.capital, 'grain')),
-        pill('city', String(own.length), '城', '直辖城池', own.length),
+        pill('city', String(own.length), '城', `直辖城池 · 统一进度 ${u.held}/${u.total}`, own.length),
         pill('troops', wan(troops), '兵', '直辖兵力', troops),
       ),
       h('div', { class: 'spacer' }),
       ib('btn-report', 'report', '军情（R）', () => this.toggleReport(), { badge: unread }),
-      ib('btn-factions', 'factions', '天下诸家', () => this.openFactions()),
+      ib('btn-factions', 'factions', '天下', () => this.openFactions()),
       ib('btn-chars', 'chars', '人物', () => this.openChars()),
-      ib('btn-legend', 'map', '图例', () => this.toggleLegend(), { on: !$('#legend').classList.contains('hidden') }),
-      ib('btn-save', 'save', '存档', () => this.openSaves(false)),
-      ib('btn-battle', this.autoBattle ? 'auto' : 'battle', this.autoBattle ? '战斗：部将自动' : '战斗：亲自指挥', () => { this.autoBattle = !this.autoBattle; this.renderTop(); }, { on: !this.autoBattle }),
-      ib('btn-sound', isMuted() ? 'mute' : 'sound', isMuted() ? '已静音' : '声音', () => { setMuted(!isMuted()); this.renderTop(); }),
-      ib('btn-title', 'exit', '回到标题', () => this.confirmTitle()),
-      h('button', { class: 'endturn' + (this.orders.length && !this.resolving ? ' ready' : ''), id: 'btn-next', disabled: this.resolving || !!s.ended, onclick: () => void this.endTurn() },
+      ib('btn-menu', 'menu', '菜单', () => this.toggleMenu(), { on: !$('#menu').classList.contains('hidden') }),
+      h('button', { class: 'endturn' + (this.orders.length && !this.resolving ? ' ready' : '') + (this.hintStep === 2 ? ' beckon' : ''), id: 'btn-next', disabled: this.resolving || !!s.ended, onclick: () => void this.endTurn() },
         ic(this.resolving ? 'hourglass' : 'next'), h('span', null, s.ended ? '本局结束' : this.resolving ? '行动中' : '结束本月'),
         this.orders.length ? h('span', { class: 'badge' }, String(this.orders.length)) : null),
     );
+  }
+
+  /** 菜单：存档、图例、战斗方式、声音、玩法、回到标题 */
+  toggleMenu(force?: boolean) {
+    const el = $('#menu');
+    const show = force ?? el.classList.contains('hidden');
+    el.classList.toggle('hidden', !show);
+    if (show) {
+      const row = (id: string, icon: string, label: string, sub: string, onclick: () => void) => h('button', { class: 'mrow', id, onclick: () => { click(); onclick(); } }, ic(icon), h('div', null, h('b', null, label), h('small', null, sub)));
+      clear(el).append(
+        row('btn-save', 'save', '存档 · 读档', '三个栏位，可导出文件', () => { this.toggleMenu(false); this.openSaves(false); }),
+        row('btn-legend', 'map', '图例', '色块、旗记、线路的意思', () => { this.toggleMenu(false); this.toggleLegend(); }),
+        row('btn-battle', this.autoBattle ? 'auto' : 'battle', this.autoBattle ? '战斗：部将自动' : '战斗：亲自指挥', '点此切换', () => { this.autoBattle = !this.autoBattle; this.toggleMenu(true); }),
+        row('btn-sound', isMuted() ? 'mute' : 'sound', isMuted() ? '声音：关' : '声音：开', '点此切换', () => { setMuted(!isMuted()); this.toggleMenu(true); }),
+        row('btn-help', 'help', '玩法', '一分钟上手', () => { this.toggleMenu(false); this.openAbout(); }),
+        row('btn-title', 'exit', '回到标题', '进度每月自动存档', () => { this.toggleMenu(false); this.confirmTitle(); }),
+      );
+      gsap.fromTo(el, { opacity: 0, y: -8, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.2, ease: 'power2.out' });
+      gsap.from('#menu .mrow', { opacity: 0, x: 12, duration: 0.2, stagger: 0.03 });
+    }
+    if (this.s) this.renderTop();
   }
 
   renderOrders() {
@@ -356,7 +520,7 @@ export class App {
     this.map.view.selected = id;
     this.map.view.selectedArmy = null;
     this.renderCity(id);
-    if (this.hintStep === 0 && id === this.s!.factions[this.s!.player].capital) { this.hintStep = 1; this.showHint(); }
+    if (this.hintStep === 0 && id === this.s!.factions[this.s!.player].capital) this.advanceHint(1);
   }
   selectArmy(id: string) {
     this.map.view.selectedArmy = id;
@@ -803,6 +967,13 @@ export class App {
         h('div', { class: 'nm' }, h('b', null, f.name), h('small', null, `奉${POLITIES[f.polity].name} · ${cities} 城 · ${friendly(s, s.player, f.id) ? wan(troops) : roughTroops(troops)} 兵`)),
         h('span', { class: 'stance st-' + st }, STANCE_NAME[st] ?? st), btn));
     }
+    const me = s.factions[s.player];
+    if (me.overlord && !s.factions[me.overlord]?.defunct) {
+      const pend = this.orders.some(o => o.kind === 'independence');
+      list.prepend(h('div', { class: 'lrow mine-lord' }, h('div', { class: 'coin', style: { background: s.factions[me.overlord].color } }, ic('crown')),
+        h('div', { class: 'nm' }, h('b', null, `奉${s.factions[me.overlord].name}号令`), h('small', null, `服从 ${me.loyalty ?? '—'} · 自立后不再受其节制，但部下忠诚者不悦`)),
+        h('button', { class: 'mini', id: 'act-independence', disabled: pend, onclick: () => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'independence' }); } }, ic('crown'), pend ? '已下令' : '自立')));
+    }
     const u = unificationProgress(s);
     this.modal('factions', '天下诸家', `统一进度 ${u.held} / ${u.total}`, [
       h('div', { class: 'progress' }, h('i', { style: { width: (u.held / u.total * 100) + '%' } })),
@@ -941,9 +1112,54 @@ export class App {
   }
 
   /* ================= 月度推进 ================= */
+  /** 翻月：旧月翻过，新月落下 */
+  monthFlip(before: GameState, after: GameState): Promise<void> {
+    return new Promise(resolve => {
+      const pol = polityOf(after, after.factions[after.player].polity);
+      const lmA = lunarOf(before.turn), lmB = lunarOf(Math.min(after.turn, TOTAL_TURNS - 1));
+      const yearChanged = lmA.year !== lmB.year;
+      const face = (cls: string, lm: ReturnType<typeof lunarOf>, turn: number) => h('div', { class: 'flip-face ' + cls },
+        h('small', null, `${eraYear(polityOf(after, after.factions[after.player].polity), turn)}`), h('b', null, monthName(lm)), h('em', null, `公元 ${lm.year}`));
+      const el = h('div', { id: 'flip' }, h('div', { class: 'flip-card' }, face('old', lmA, before.turn), face('new', lmB, Math.min(after.turn, TOTAL_TURNS - 1))),
+        yearChanged ? h('div', { class: 'flip-year' }, `${ganzhiOf(lmB.year)}年 · ${eraYear(pol, Math.min(after.turn, TOTAL_TURNS - 1))}`) : null);
+      $('#app').append(el);
+      const tl = gsap.timeline({ onComplete: () => { el.remove(); resolve(); } });
+      tl.from(el, { opacity: 0, duration: 0.2 })
+        .fromTo('#flip .old', { rotateX: 0 }, { rotateX: -90, duration: 0.45, ease: 'power2.in' })
+        .fromTo('#flip .new', { rotateX: 90 }, { rotateX: 0, duration: 0.5, ease: 'back.out(1.6)' })
+        .from('#flip .flip-year', { opacity: 0, scale: 1.5, duration: 0.4 }, '-=0.2')
+        .to(el, { opacity: 0, y: -20, duration: 0.35, delay: yearChanged ? 0.8 : 0.45 });
+    });
+  }
+
+  /** 月末地图动效：易主冲击波、交战火光、新围城、本方钱粮飘字 */
+  monthFx(before: GameState, after: GameState) {
+    const m = this.map;
+    const t = before.turn;
+    let k = 0;
+    for (const r of after.reports.filter(x => x.turn === t && x.cat === '易主' && x.node)) {
+      const c = after.cities[r.node!];
+      const f = after.factions[c?.controller ?? ''];
+      if (!c || before.cities[r.node!]?.controller === c.controller) continue;
+      m.addFx({ kind: 'capture', node: r.node, color: f?.color ?? '#c8352a', text: polityOf(after, f?.polity ?? 'none').mark || f?.short || '易', dur: 2000, delay: 500 + (k++ % 8) * 220 });
+    }
+    after.battles.filter(b => b.turn === t).slice(-12).forEach((b, i) => m.addFx({ kind: 'battle', node: b.node, dur: 1500, delay: 200 + i * 160 }));
+    for (const node of Object.keys(after.sieges)) if (!before.sieges[node]) m.addFx({ kind: 'ripple', node, color: '#e0503f', dur: 1600, delay: 900 });
+    const cap = after.factions[after.player].capital;
+    const b0 = before.cities[cap], a0 = after.cities[cap];
+    if (b0 && a0) {
+      const ds = a0.silver - b0.silver, dg = a0.grain - b0.grain;
+      if (Math.abs(ds) >= 100) m.addFx({ kind: 'float', node: cap, text: `${ds > 0 ? '+' : '−'}${wan(Math.abs(ds))} 两`, color: ds > 0 ? '#bfe6b7' : '#ffb3a6', dur: 1900, delay: 1200 });
+      if (Math.abs(dg) >= 100) m.addFx({ kind: 'float', node: cap, text: `${dg > 0 ? '+' : '−'}${wan(Math.abs(dg))} 石`, color: dg > 0 ? '#e8d48a' : '#ffb3a6', dur: 1900, delay: 1500, dy: 18 });
+    }
+  }
+
   async endTurn() {
     if (!this.s || this.resolving || this.s.ended) return;
     this.resolving = true;
+    click();
+    gsap.fromTo('#btn-next', { scale: 0.9 }, { scale: 1, duration: 0.4, ease: 'back.out(3)' });
+    this.toggleMenu(false);
     this.closePanel();
     this.endTarget();
     $('#hint').classList.add('hidden');
@@ -968,18 +1184,25 @@ export class App {
       this.renderTop();
       return;
     }
+    const from: Record<string, [number, number]> = {};
+    for (const a of Object.values(before.armies)) from[a.id] = armyPt(a);
     this.s = r.value.state;
     this.orders = [];
     this.map.view.state = this.s;
-    this.resolving = false;
+    this.map.view.anim = { from, t0: this.map.lastTime, dur: 1700 };
     this.autoSave();
     this.reportTurn = this.s.turn - (this.s.ended ? 0 : 1);
     this.renderAll();
     const urgent = this.s.reports.some(x => x.turn === this.reportTurn && x.urgent && (!x.faction || x.faction === this.s!.player));
     if (urgent) alarm(); else chime();
+    this.monthFx(before, this.s);
+    await this.monthFlip(before, this.s);
+    await new Promise(res => setTimeout(res, 700));
     await this.showSplash();
+    this.resolving = false;
+    this.renderTop();
     this.openReport();
-    if (this.hintStep === 2) { this.hintStep = 3; this.showHint(); }
+    if (this.hintStep === 2) this.advanceHint(3);
     if (this.s.ended) this.showEnd();
   }
 
@@ -1003,25 +1226,30 @@ export class App {
     const u = unificationProgress(s);
     const myBattles = s.battles.filter(b => this.isMineOrVassal(b.attacker) || this.isMineOrVassal(b.defender));
     const kind = s.ended!.kind;
-    const troops = Object.values(s.cities).filter(c => c.controller === s.player).reduce((n, c) => n + c.garrison, 0) + Object.values(s.armies).filter(a => a.faction === s.player).reduce((n, a) => n + a.troops, 0);
-    this.modal(kind === 'unified' ? 'crown' : kind === 'fallen' ? 'dead' : 'hourglass', kind === 'trial_end' ? '试玩结束' : kind === 'unified' ? '天下一统' : kind === 'fallen' ? '覆亡' : '天下未定', s.ended!.text, [
+    const me = s.factions[s.player];
+    const own = citiesOf(s, s.player).length;
+    const troops = citiesOf(s, s.player).reduce((n, c) => n + c.garrison, 0) + Object.values(s.armies).filter(a => a.faction === s.player).reduce((n, a) => n + a.troops, 0);
+    const years = Math.floor((Math.min(s.turn, TOTAL_TURNS - 1)) / 12 * 10) / 10;
+    const dlg = this.modal(kind === 'unified' ? 'emperor' : kind === 'fallen' ? 'ruins' : 'hourglass', kind === 'trial_end' ? '试玩结束' : kind === 'unified' ? '天下一统' : kind === 'fallen' ? '覆亡' : '天下未定', s.ended!.text, [
+      h('div', { class: 'end-seal', style: { background: me.color } }, polityOf(s, me.polity).mark || me.short),
       h('div', { class: 'tiles' },
-        this.tile('city', '主要城池', `${u.held}/${u.total}`),
+        this.tile('city', '城池', `${own}`, { unit: `/ ${Object.keys(s.cities).length}` }),
+        this.tile('goal', '统一进度', `${u.held}/${u.total}`),
+        this.tile('hourglass', '历时', `${years}`, { unit: '年' }),
         this.tile('battle', '参与战斗', String(myBattles.length)),
         this.tile('event', '史事线索', String(s.events.length)),
-        this.tile('siege', '扬州', s.cities.yangzhou.controller === s.player ? (s.sieges.yangzhou ? '被围' : '在手') : '已失'),
-        this.tile('city', '南京', s.cities.nanjing.controller === s.player ? '无恙' : '已失'),
         this.tile('troops', '直辖兵', wan(troops))),
-      h('div', { class: 'note' }, kind === 'trial_end' ? '可继续推进；史事只编到乙酉四月。' : kind === 'fallen' ? '本局已覆亡，可读取更早的存档重来。' : '本局已终，可回看军情或读取存档。'),
+      h('div', { class: 'note' }, kind === 'trial_end' ? '可继续推进。' : kind === 'fallen' ? '本局已覆亡，可读取更早的存档重来，或换一方再战。' : kind === 'unified' ? '天下归一。可回看军情，或换一方再战。' : '剧本期满。可回看军情，或换一方再战。'),
     ], [
       { label: '回到标题', icon: 'exit', onclick: () => this.showTitle() },
       ...(kind !== 'trial_end' ? [] : [{ label: '继续推进', icon: 'next', primary: true, id: 'end-continue', onclick: () => {
         if (this.s !== s || !s.ended) return; // 只能前进一次
-        delete s.ended; s.turnLimit = undefined; s.turn++;
+        delete s.ended; s.turnLimit = undefined; s.scenario = 'full'; s.turn++;
         this.autoSave();
         this.renderAll();
       } }]),
     ]);
+    gsap.from(dlg.querySelector('.end-seal'), { scale: 3, rotate: -30, opacity: 0, duration: 0.6, ease: 'back.out(2)', delay: 0.2 });
   }
 
   /* ================= 图例 ================= */
@@ -1114,25 +1342,36 @@ export class App {
     [{ label: '开始', icon: 'ok', primary: true, onclick: () => {} }]);
   }
 
-  /* ================= 新手提示 ================= */
+  /* ================= 开局三步（目标追踪） ================= */
   showHint() {
     const el = $('#hint');
-    if (!this.s) return;
-    const steps = [
-      ['city', '点一下南京', '你的都城：看谁控制、驻军多少。'],
-      ['policy', '下一道命令', '右侧点“方针”或“募兵”；也可点军旗调兵。'],
-      ['next', '结束本月', '点右上角红色按钮，各方行动。'],
-      ['report', '读军情', '点地名回到出事的城；“钱粮来由”看每笔账。'],
-    ];
-    if (this.hintStep >= steps.length) { el.classList.add('hidden'); return; }
-    const [icon, title, text] = steps[this.hintStep];
+    if (!this.s || this.hintStep >= 3) { el.classList.add('hidden'); this.map.view.beacon = null; return; }
+    const cap = this.s.factions[this.s.player].capital;
+    const steps: [string, string][] = [['city', `点你的都城：${nodeName(cap)}`], ['policy', '下一道命令'], ['next', '结束本月']];
     clear(el);
     el.className = 'hud';
-    el.append(ic(icon), h('div', null, h('div', { class: 'step' }, `新手 ${this.hintStep + 1}/4`), h('p', null, title), h('div', { class: 'note', style: { marginTop: '-4px', marginBottom: '8px' } }, text),
-      h('button', { onclick: () => { this.hintStep = 9; try { localStorage.setItem(HINT_KEY, '9'); } catch { /* ignore */ } el.classList.add('hidden'); } }, '不再提示')));
-    el.style.left = '50%'; el.style.top = '86px'; el.style.transform = 'translateX(-50%)';
-    if (this.hintStep === 3) try { localStorage.setItem(HINT_KEY, '4'); } catch { /* ignore */ }
+    el.append(h('div', { class: 'q-h' }, ic('goal'), h('b', null, '开局三步'), h('button', { class: 'q-x', 'aria-label': '不再提示', 'data-tip': '不再提示', onclick: () => { this.hintStep = 9; try { localStorage.setItem(HINT_KEY, '9'); } catch { /* ignore */ } this.showHint(); this.renderTop(); } }, ic('close'))));
+    steps.forEach(([icon, text], i) => el.append(h('div', { class: 'q-step' + (i < this.hintStep ? ' done' : i === this.hintStep ? ' now' : '') }, h('i', { class: 'q-box' }, i < this.hintStep ? ic('ok') : String(i + 1)), ic(icon), h('span', null, text))));
     el.classList.remove('hidden');
+    this.map.view.beacon = this.hintStep === 0 ? cap : null;
+    gsap.from('#hint .q-step.now', { x: -10, opacity: 0.3, duration: 0.4 });
+  }
+  /** 完成一步：打勾、下一步 */
+  advanceHint(to: number) {
+    if (this.hintStep >= to || this.hintStep >= 9) return;
+    this.hintStep = to;
+    if (to >= 3) {
+      try { localStorage.setItem(HINT_KEY, '9'); } catch { /* ignore */ }
+      const el = $('#hint');
+      this.map.view.beacon = null;
+      clear(el).append(h('div', { class: 'q-done' }, ic('winner'), h('b', null, '上手了'), h('small', null, '接下来，天下由你')));
+      gsap.fromTo(el, { scale: 1.15 }, { scale: 1, duration: 0.4, ease: 'back.out(2)' });
+      setTimeout(() => gsap.to(el, { opacity: 0, duration: 0.5, onComplete: () => { el.classList.add('hidden'); el.style.opacity = ''; } }), 2600);
+      this.hintStep = 9;
+      return;
+    }
+    this.showHint();
+    this.renderTop();
   }
 }
 

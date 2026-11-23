@@ -41,9 +41,8 @@ async function nextMonth(manualBattle = false) {
       await wait(400); continue;
     }
     if (await visible('#splash-go')) { await page.click('#splash-go', { timeout: 1000 }).catch(() => {}); await wait(150); continue; }
-    const enabled = await page.locator('#btn-next').isEnabled().catch(() => false);
-    const label = await text('#btn-next');
-    if (enabled || label.includes('本局')) break;
+    // 结算、翻月动画、要闻都过去之后才算这个月结束
+    if (!(await page.evaluate(() => NM.resolving))) break;
     await wait(150);
   }
   await wait(200);
@@ -56,11 +55,22 @@ try {
   await page.reload();
   await wait(1000);
   console.log('标题与开局');
-  check('标题页出现', await visible('#btn-new'));
+  check('标题页出现，只有一个“开始”大按钮', await visible('#btn-new'));
+  check('标题页没有原生下拉框与数字框', (await page.locator('select, input[type=number]').count()) === 0);
   await page.click('#btn-new');
-  await wait(600);
+  await wait(700);
+  check('择一方：五家可选', (await page.locator('#pick .pcard').count()) === 5);
+  check('未选势力前不能开局', await page.locator('#pick-go').isDisabled());
+  await page.click('#pick-hongguang');
+  check('选中后可开局', await page.locator('#pick-go').isEnabled());
+  await page.click('#pick-go');
+  await wait(900);
+  check('开局过场出现', await visible('#intro'));
+  await page.screenshot({ path: `${OUT}/01-intro.png` });
+  await page.click('#intro');
+  await wait(800);
   check('进入地图，顶栏显示崇祯十七年五月', (await text('#date-label')).includes('崇祯十七年五月'), await text('#date-label'));
-  check('新手提示出现', await visible('#hint'));
+  check('开局三步出现', (await text('#hint')).includes('开局三步'));
   // 直接用页面里暴露的投影：点南京
   const nj = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('nanjing'); return [r.left + (p[0] - m.cam.x) * m.cam.z + m.w / 2, r.top + (p[1] - m.cam.y) * m.cam.z + m.h / 2]; });
   await page.mouse.click(nj[0], nj[1]);
@@ -73,10 +83,24 @@ try {
   await page.click('[data-policy="agri"]');
   await wait(200);
   check('改方针加入本月命令', (await text('#orders')).includes('劝农'));
+  check('下令后开局三步进到第三步', (await page.locator('#hint .q-step.done').count()) >= 2, await text('#hint'));
   await page.click('#act-recruit');
   await page.click('#recruit-ok');
   await wait(200);
   check('募兵加入本月命令', (await text('#orders')).includes('募兵'));
+  // 调拨：游戏化下拉框，不用浏览器原生控件
+  await page.click('#act-transfer');
+  await wait(300);
+  check('调拨弹窗没有原生下拉框与数字框', (await page.locator('#modal select, #modal input[type=number]').count()) === 0);
+  await page.click('#tr-to .gsel-btn');
+  await wait(200);
+  check('下拉浮层展开且有选项', (await page.locator('.gsel-list .gsel-opt').count()) > 3);
+  await page.locator('.gsel-list .gsel-opt[data-value="zhenjiang"]').click();
+  await wait(150);
+  check('选中镇江', (await text('#tr-to')).includes('镇江'));
+  await page.click('#tr-ok');
+  await wait(200);
+  check('调拨加入本月命令', (await text('#orders')).includes('镇江'), await text('#orders'));
   // 选中督师标营并下行军令
   await wait(300);
   const sxy = await armyXY('a_shi');
@@ -106,7 +130,7 @@ try {
   await wait(200);
   check('号令加入本月命令', (await text('#orders')).includes('号令黄得功部'));
 
-  console.log('推进十二个月');
+  console.log('推进月份');
   const m1 = await nextMonth();
   check('第一个月结算后日期前进', m1.after !== m1.before, `${m1.before} → ${m1.after}`);
   check('第一个月有史事抉择（高杰争扬州）', m1.choices >= 1);
@@ -123,40 +147,16 @@ try {
   await wait(150);
   check('城池详情逐项列出钱粮变化并标出你的命令', (await text('#ledger')).includes('你的命令'), (await text('#ledger')).slice(0, 160));
   let months = 1, totalBattles = m1.battles;
-  for (let i = 0; i < 11; i++) {
-    const label = await text('#btn-next');
-    if (label.includes('本局')) break;
+  for (let i = 0; i < 5; i++) {
     const r = await nextMonth();
     months++; totalBattles += r.battles;
   }
-  check('连续推进满十二个月', months === 12, `months=${months}`);
-  check('试玩结束弹窗出现', (await text('#modal')).includes('试玩结束'), (await text('#modal')).slice(0, 80));
+  check('连续推进六个月', months === 6 && (await page.evaluate(() => NM.s.turn)) === 6, `months=${months}`);
   console.log(`  （本局玩家参与的战斗 ${totalBattles} 场）`);
-  const endDate = await page.getAttribute('#date-label', 'title');
-  check('最后一月为乙酉四月', endDate.includes('四月') && endDate.includes('1645'), endDate);
-
-  console.log('结局恢复（审查 03）');
-  await page.reload();
-  await wait(900);
-  check('结局时刷新，标题页有“继续游戏”', await visible('#btn-continue'));
-  await page.click('#btn-continue');
-  await wait(600);
-  check('继续游戏后重新打开试玩结局', (await text('#modal')).includes('试玩结束'), (await text('#modal')).slice(0, 60));
-  check('结局面板可“继续推进”', await visible('#end-continue'));
-  await page.click('#end-continue');
-  await wait(300);
-  const after13 = await page.evaluate(() => ({ turn: NM.s.turn, ended: !!NM.s.ended }));
-  check('继续推进进入第十三个月', after13.turn === 12 && !after13.ended, JSON.stringify(after13));
-  check('结束本月按钮可用', await page.locator('#btn-next').isEnabled());
-  await page.reload();
-  await wait(900);
-  await page.click('#btn-continue');
-  await wait(600);
-  const again = await page.evaluate(() => NM.s.turn);
-  check('再次刷新不重复前进、也不再弹结局', again === 12 && !(await text('#modal')).includes('试玩结束'), `turn=${again}`);
 
   console.log('存档与读档');
   await wait(200);
+  await page.click('#btn-menu');
   await page.click('#btn-save');
   await page.click('[data-save="1"]');
   await wait(200);
@@ -172,6 +172,7 @@ try {
   console.log('存档写入失败（审查 02）');
   const old1 = await page.evaluate(() => localStorage.getItem('nanming:slot:1'));
   await page.evaluate(() => { window.__setItem = Storage.prototype.setItem; Storage.prototype.setItem = function () { throw new DOMException('quota', 'QuotaExceededError'); }; });
+  await page.click('#btn-menu');
   await page.click('#btn-save');
   await page.click('[data-save="1"]');
   await wait(300);
@@ -188,12 +189,26 @@ try {
   await page.evaluate(() => { document.querySelector('#save-fail')?.remove(); NM.closeModal(); });
 
   console.log('图例（审查 08）');
+  await page.click('#btn-menu');
   await page.click('#btn-legend');
   await wait(200);
   check('图例说明色块只是控制范围示意', (await text('#legend')).includes('控制范围示意'));
-  await page.click('#btn-legend');
+  await page.locator('#legend .x').click();
+
+  console.log('自立（郑氏）');
+  await page.evaluate(() => NM.start(NM_presets.createGame('zheng', 3), false));
+  await wait(500);
+  await page.click('#btn-factions');
+  await wait(300);
+  check('郑氏在“天下”里可下令自立', await visible('#act-independence'));
+  await page.click('#act-independence');
+  await wait(200);
+  check('自立加入本月命令', (await text('#orders')).includes('自立'), await text('#orders'));
+  await nextMonth();
+  check('结算后郑氏不再奉弘光号令', await page.evaluate(() => !NM.s.factions.zheng.overlord));
 
   console.log('地图样稿：扬州被围');
+  await page.click('#btn-menu');
   await page.click('#btn-title');
   await page.click('#title-ok');
   await wait(300);
@@ -212,6 +227,29 @@ try {
   const yz = await page.evaluate(() => ({ ctrl: NM.s.cities.yangzhou.controller, siege: !!NM.s.sieges.yangzhou, manual: NM.s.battles.map(b => b.manual), nodes: NM.s.battles.map(b => b.node) }));
   check('手动指挥的战斗被记为亲征', yz.manual.includes(true), JSON.stringify(yz));
   check('扬州要么仍被围，要么已易主（有结果）', yz.siege || yz.ctrl !== 'hongguang', JSON.stringify(yz));
+
+  console.log('结局恢复（审查 03）');
+  await nextMonth();
+  check('样稿两月后试玩结束弹窗出现', (await text('#modal')).includes('试玩结束'), (await text('#modal')).slice(0, 80));
+  const endTurn = await page.evaluate(() => NM.s.turn);
+  await page.reload();
+  await wait(900);
+  check('结局时刷新，标题页有“继续”', await visible('#btn-continue'));
+  await page.click('#btn-continue');
+  await wait(600);
+  check('继续后重新打开试玩结局', (await text('#modal')).includes('试玩结束'), (await text('#modal')).slice(0, 60));
+  check('结局面板可“继续推进”', await visible('#end-continue'));
+  await page.click('#end-continue');
+  await wait(300);
+  const after = await page.evaluate(() => ({ turn: NM.s.turn, ended: !!NM.s.ended }));
+  check('继续推进进入下一个月', after.turn === endTurn + 1 && !after.ended, JSON.stringify(after));
+  check('结束本月按钮可用', await page.locator('#btn-next').isEnabled());
+  await page.reload();
+  await wait(900);
+  await page.click('#btn-continue');
+  await wait(600);
+  const again = await page.evaluate(() => NM.s.turn);
+  check('再次刷新不重复前进、也不再弹结局', again === endTurn + 1 && !(await text('#modal')).includes('试玩结束'), `turn=${again}`);
 } catch (e) {
   fail++;
   console.log('  ✗ 测试异常：' + e.message);
