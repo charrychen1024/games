@@ -6,7 +6,8 @@ import { iconSvg } from './icons';
 import { gameSelect, stepper, closeSelects, type SelOpt } from './widgets';
 import gsap from 'gsap';
 import { playBattle } from './battle';
-import { chime, alarm, click, isMuted, setMuted } from './audio';
+import { chime, alarm, click, isMuted, setMuted, setScene, setIntensity, audioState, getVolumes, setVolume, paper, scroll, stampSfx, orderSfx, endTurnSfx, monthSfx, captureSfx, distantBattle, choiceSfx, successSfx, denySfx, introSfx, hoverPluck } from './audio';
+import { dangerOf } from './musicTheory';
 import { resolveMonth, unificationProgress, type Answer } from '../core/turn';
 import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
 import { POLITIES } from '../data/factions';
@@ -93,6 +94,7 @@ export class App {
     (window as any).NM = this; // 调试与自动化测试入口
     (window as any).NM_nodePt = nodePt;
     (window as any).NM_presets = { createGame, yangzhouSiegeState };
+    (window as any).NM_audio = audioState;
   }
 
   /* ================= 标题 ================= */
@@ -110,6 +112,7 @@ export class App {
     for (const id of ['#panel', '#report', '#hint', '#legend', '#menu']) $(id)?.classList.add('hidden');
     clear($('#orders'));
     clear($('#topbar')).className = '';
+    setScene('title');
     // 背景地图缓缓巡游
     const tour = ['nanjing', 'yangzhou', 'beijing', 'xian', 'chengdu', 'wuchang', 'fuzhou', 'guangzhou', 'kunming'];
     let ti = 0;
@@ -159,7 +162,7 @@ export class App {
       const card = h('button', { class: 'pcard', id: 'pick-' + info.id, style: { '--fc': f.color } as any,
         onclick: () => { click(); chosen = info.id; cards.querySelectorAll('.pcard').forEach(c => c.classList.toggle('on', c === card)); go.disabled = false; goLabel.textContent = `以${f.short}开局`; },
         ondblclick: () => begin(info.id),
-        onmouseenter: () => { this.map.view.highlight = info.id; this.map.flyTo(f.capital, info.z); } },
+        onmouseenter: () => { hoverPluck(PICK.indexOf(info)); this.map.view.highlight = info.id; this.map.flyTo(f.capital, info.z); } },
       h('div', { class: 'pseal' }, h('i', null, pol.mark || f.short)),
       h('div', { class: 'pname' }, info.name),
       h('div', { class: 'plead' }, `${leader?.name ?? ''} · ${nodeName(f.capital)}`),
@@ -198,6 +201,7 @@ export class App {
       const end = () => { if (done) return; done = true; gsap.to(el, { opacity: 0, duration: 0.5, onComplete: () => { el.remove(); resolve(); } }); this.map.flyTo(me.capital, 2.1); };
       el.onclick = end;
       $('#app').append(el);
+      introSfx();
       this.map.focus(me.capital, 0.9);
       gsap.from('#intro .bar.top', { yPercent: -100, duration: 0.6, ease: 'power3.out' });
       gsap.from('#intro .bar.bot', { yPercent: 100, duration: 0.6, ease: 'power3.out' });
@@ -223,6 +227,7 @@ export class App {
     this.map.view.selected = null;
     this.map.view.selectedArmy = null;
     this.map.view.beacon = null;
+    this.musicForState();
     this.map.focus(focus ?? state.factions[state.player].capital, focus ? 2.4 : 2.0);
     this.renderAll();
     if (focus) this.selectNode(focus);
@@ -233,6 +238,15 @@ export class App {
     if (fresh) this.autoSave();
     // 读到已结束的局势：重新打开结局面板，按结局允许的操作继续
     if (state.ended) this.showEnd();
+  }
+
+  /** 地图配乐：按玩家所奉政权换调式与主奏，按局势紧张度加层 */
+  musicForState() {
+    const s = this.s;
+    if (!s) return;
+    if (s.ended) { setScene(s.ended.kind === 'unified' ? 'victory' : s.ended.kind === 'fallen' ? 'lament' : 'map', s.factions[s.player].polity, s.seed); return; }
+    setScene('map', s.factions[s.player].polity, s.seed);
+    setIntensity(dangerOf(s));
   }
 
   /* ================= 地图交互 ================= */
@@ -387,6 +401,7 @@ export class App {
     const m = this.map;
     const fac = s.factions[s.player];
     const stamp = (node: string | undefined, text: string, color = '#c8352a') => { if (node && s.cities[node]) m.addFx({ kind: 'stamp', node, text, color, dur: 1200 }); };
+    stampSfx(); orderSfx(o.kind);
     switch (o.kind) {
       case 'policy': stamp(o.node, '政'); m.addFx({ kind: 'float', node: o.node, text: POLICY_NAME[o.policy], color: '#f0cf86', dur: 1500, delay: 200 }); break;
       case 'recruit': stamp(o.node, '募'); m.addFx({ kind: 'float', node: o.node, text: `+${o.troops} 兵`, color: '#bfe6b7', dur: 1500, delay: 200 }); break;
@@ -411,6 +426,7 @@ export class App {
   }
   removeOrder(id: string) { this.orders = this.orders.filter(o => o.id !== id); this.renderOrders(); this.renderTop(); this.refreshPanel(); }
   toast(text: string, icon = 'info') {
+    if (icon === 'close') denySfx();
     const el = h('div', { class: 'hud' }, ic(icon), text);
     $('#toast').append(el);
     gsap.from(el, { y: -16, opacity: 0, scale: 0.9, duration: 0.3, ease: 'back.out(2)' });
@@ -482,6 +498,9 @@ export class App {
         row('btn-legend', 'map', '图例', '色块、旗记、线路的意思', () => { this.toggleMenu(false); this.toggleLegend(); }),
         row('btn-battle', this.autoBattle ? 'auto' : 'battle', this.autoBattle ? '战斗：部将自动' : '战斗：亲自指挥', '点此切换', () => { this.autoBattle = !this.autoBattle; this.toggleMenu(true); }),
         row('btn-sound', isMuted() ? 'mute' : 'sound', isMuted() ? '声音：关' : '声音：开', '点此切换', () => { setMuted(!isMuted()); this.toggleMenu(true); }),
+        ...(['music', 'sfx'] as const).map(k => h('div', { class: 'mvol' }, h('span', null, k === 'music' ? '配乐' : '音效'),
+          h('input', { type: 'range', id: 'vol-' + k, min: 0, max: 100, value: Math.round(getVolumes()[k] * 100), 'aria-label': k === 'music' ? '配乐音量' : '音效音量',
+            oninput: (e: Event) => setVolume(k, +(e.target as HTMLInputElement).value / 100), onchange: () => { if (k === 'sfx') click(); } }))),
         row('btn-help', 'help', '玩法', '一分钟上手', () => { this.toggleMenu(false); this.openAbout(); }),
         row('btn-title', 'exit', '回到标题', '进度每月自动存档', () => { this.toggleMenu(false); this.confirmTitle(); }),
       );
@@ -540,7 +559,7 @@ export class App {
     const panel = clear($('#panel'));
     const wasHidden = panel.classList.contains('hidden');
     requestAnimationFrame(() => {
-      if (wasHidden) gsap.fromTo('#panel', { x: 50, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: 'power3.out' });
+      if (wasHidden) { paper(); gsap.fromTo('#panel', { x: 50, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: 'power3.out' }); }
       gsap.from('#panel .banner h2', { opacity: 0, x: -14, duration: 0.3, ease: 'power2.out' });
       gsap.from('#panel .tile, #panel .act, #panel .unit, #panel .row', { opacity: 0, y: 8, duration: 0.25, stagger: 0.012, ease: 'power2.out' });
     });
@@ -775,6 +794,7 @@ export class App {
     }
     m.append(dlg);
     m.onclick = e => { if (e.target === m && buttons.length) this.closeModal(); };
+    scroll();
     gsap.fromTo(dlg, { scale: 0.88, opacity: 0, y: 12 }, { scale: 1, opacity: 1, y: 0, duration: 0.3, ease: 'back.out(1.7)' });
     gsap.from(dlg.querySelectorAll('.opt, .gopt, .lrow, .slot, .tile'), { opacity: 0, y: 10, duration: 0.25, stagger: 0.03, delay: 0.1 });
     return dlg;
@@ -1124,6 +1144,7 @@ export class App {
       const el = h('div', { id: 'flip' }, h('div', { class: 'flip-card' }, face('old', lmA, before.turn), face('new', lmB, Math.min(after.turn, TOTAL_TURNS - 1))),
         yearChanged ? h('div', { class: 'flip-year' }, `${ganzhiOf(lmB.year)}年 · ${eraYear(pol, Math.min(after.turn, TOTAL_TURNS - 1))}`) : null);
       $('#app').append(el);
+      monthSfx(yearChanged);
       const tl = gsap.timeline({ onComplete: () => { el.remove(); resolve(); } });
       tl.from(el, { opacity: 0, duration: 0.2 })
         .fromTo('#flip .old', { rotateX: 0 }, { rotateX: -90, duration: 0.45, ease: 'power2.in' })
@@ -1145,6 +1166,12 @@ export class App {
       m.addFx({ kind: 'capture', node: r.node, color: f?.color ?? '#c8352a', text: polityOf(after, f?.polity ?? 'none').mark || f?.short || '易', dur: 2000, delay: 500 + (k++ % 8) * 220 });
     }
     after.battles.filter(b => b.turn === t).slice(-12).forEach((b, i) => m.addFx({ kind: 'battle', node: b.node, dur: 1500, delay: 200 + i * 160 }));
+    if (after.battles.some(b => b.turn === t)) setTimeout(distantBattle, 300);
+    const me = after.player;
+    const lost = Object.keys(after.cities).some(id => before.cities[id]?.controller === me && after.cities[id].controller !== me);
+    const won = Object.keys(after.cities).some(id => before.cities[id]?.controller !== me && after.cities[id].controller === me);
+    if (lost || won) setTimeout(() => captureSfx(!lost), 650);
+    this.musicForState();
     for (const node of Object.keys(after.sieges)) if (!before.sieges[node]) m.addFx({ kind: 'ripple', node, color: '#e0503f', dur: 1600, delay: 900 });
     const cap = after.factions[after.player].capital;
     const b0 = before.cities[cap], a0 = after.cities[cap];
@@ -1158,7 +1185,7 @@ export class App {
   async endTurn() {
     if (!this.s || this.resolving || this.s.ended) return;
     this.resolving = true;
-    click();
+    endTurnSfx();
     gsap.fromTo('#btn-next', { scale: 0.9 }, { scale: 1, duration: 0.4, ease: 'back.out(3)' });
     this.toggleMenu(false);
     this.closePanel();
@@ -1214,6 +1241,7 @@ export class App {
       m.onclick = null;
       const opts = h('div', { class: 'opts' });
       c.options.forEach((o, i) => opts.append(h('button', { class: 'opt', 'data-choice': i, onclick: () => { this.closeModal(); resolve(i); } }, h('span', { class: 'num' }, String(i + 1)), h('div', null, h('b', null, o.label), h('small', null, o.desc)))));
+      choiceSfx();
       m.append(h('div', { class: 'dialog hud', role: 'dialog' },
         h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic('event')), h('div', null, h('h2', null, c.title), h('small', null, `史事 · ${this.s?.factions[this.s.player]?.name ?? ''}决断`))),
         h('div', { class: 'db' }, h('div', { class: 'lead' }, c.text), opts)));
@@ -1224,6 +1252,7 @@ export class App {
 
   showEnd() {
     const s = this.s!;
+    this.musicForState();
     const u = unificationProgress(s);
     const myBattles = s.battles.filter(b => this.isMineOrVassal(b.attacker) || this.isMineOrVassal(b.defender));
     const kind = s.ended!.kind;
@@ -1361,6 +1390,7 @@ export class App {
   advanceHint(to: number) {
     if (this.hintStep >= to || this.hintStep >= 9) return;
     this.hintStep = to;
+    successSfx();
     if (to >= 3) {
       try { localStorage.setItem(HINT_KEY, '9'); } catch { /* ignore */ }
       const el = $('#hint');

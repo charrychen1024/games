@@ -26,11 +26,12 @@ async function nextMonth(manualBattle = false) {
   const before = await text('#date-label');
   await page.click('#btn-next');
   const t0 = Date.now();
-  let battles = 0, choices = 0, manualDone = false;
+  let battles = 0, choices = 0, manualDone = false, battleScene = false;
   while (Date.now() - t0 < 60000) {
     if (await visible('[data-choice]')) { await page.click('[data-choice="0"]', { timeout: 1000 }).catch(() => {}); choices++; await wait(150); continue; }
     if (await visible('#battle-done')) { await page.click('#battle-done', { timeout: 1000 }).catch(() => {}); battles++; await wait(200); continue; }
     if (await visible('#battle-go')) {
+      if ((await page.evaluate(() => NM_audio().want)) === 'battle') battleScene = true;
       if (manualBattle && !manualDone) {
         // 亲自指挥一回合：三路都下令
         const orders = await page.locator('#battle-ui .ord[data-lane="0"]').count();
@@ -46,7 +47,7 @@ async function nextMonth(manualBattle = false) {
     await wait(150);
   }
   await wait(200);
-  return { before, after: await text('#date-label'), battles, choices };
+  return { before, after: await text('#date-label'), battles, choices, battleScene };
 }
 
 try {
@@ -71,6 +72,9 @@ try {
   await wait(800);
   check('进入地图，顶栏显示崇祯十七年五月', (await text('#date-label')).includes('崇祯十七年五月'), await text('#date-label'));
   check('开局三步出现', (await text('#hint')).includes('开局三步'));
+  await wait(1500);
+  const au = await page.evaluate(() => NM_audio());
+  check('声音已启动，地图配乐在排', au.running && au.scene === 'map' && au.scheduled > 0, JSON.stringify(au));
   // 直接用页面里暴露的投影：点南京
   const nj = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('nanjing'); return [r.left + (p[0] - m.cam.x) * m.cam.z + m.w / 2, r.top + (p[1] - m.cam.y) * m.cam.z + m.h / 2]; });
   await page.mouse.click(nj[0], nj[1]);
@@ -220,6 +224,7 @@ try {
   await page.screenshot({ path: `${OUT}/02-siege.png` });
   const sm = await nextMonth(true);
   check('扬州攻城战进入战斗画面并完成', sm.battles >= 1, JSON.stringify(sm));
+  check('战斗时切换战斗配乐', sm.battleScene === true, JSON.stringify(sm));
   const rep = await text('#report-entries');
   check('月报记录扬州攻城战', rep.includes('扬州攻城战'), rep.slice(0, 200));
   await page.evaluate(() => NM.selectNode('yangzhou'));

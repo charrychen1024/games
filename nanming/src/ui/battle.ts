@@ -8,7 +8,7 @@ import {
 } from '../core/battle';
 import { h, $, clear, wan } from './dom';
 import { iconSvg } from './icons';
-import { beat, gong } from './audio';
+import { beat, gong, setScene, setIntensity } from './audio';
 import { POLITIES } from '../data/factions';
 import type { SideLook } from './battleScene';
 
@@ -101,6 +101,9 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       const next = resolveRound(cur, attC, defC);
       busy = true;
       beat();
+      // 战斗配乐随回合与伤亡加剧
+      const mine = sideTroops(next[side]), start = sideTroops(b0[side]) || 1;
+      setIntensity(Math.min(1, next.round / next.maxRounds * 0.7 + (1 - mine / start) * 0.6));
       renderUI();
       await view.playRound(cur, next, next.log[next.log.length - 1], d);
       cur = next;
@@ -120,11 +123,14 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       while (!cur.over) await step(aiChoice(cur, side), true);
     }
     function done() {
+      setScene('map');
       view.destroy();
       root.classList.add('hidden');
       clear(ui);
       resolve({ result: cur, manual });
     }
+    setScene('battle');
+    setIntensity(0.1);
     renderUI();
     // 面板排好之后再按舞台实际大小建场景
     requestAnimationFrame(() => requestAnimationFrame(() => {

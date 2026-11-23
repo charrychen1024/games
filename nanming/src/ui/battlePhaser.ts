@@ -3,6 +3,7 @@
  * - 粒子：硝烟、尘土、火星、碎石、火焰、雨
  * - 补间：前进、冲锋、交锋、倒地、溃逃、云梯攀登、炮弹
  * - 镜头：震屏、炮火闪光；后期：暗角、泛光 */
+import { battleSfx } from './audio';
 import Phaser from 'phaser';
 import type { BattleState, RoundLog, LaneOrder } from '../core/battle';
 import { BattleScene, drawSoldier, drawCavalry, drawStandard, shade, type SideLook } from './battleScene';
@@ -301,6 +302,7 @@ class WarScene extends Phaser.Scene {
       const txt = this.add.text(this.W / 2, this.H * 0.16, label, { fontFamily: '"Ma Shan Zheng","Noto Serif SC",serif', fontSize: '30px', color: st.ok ? '#ffe2a0' : '#cfc2ae' }).setOrigin(0.5).setDepth(9501).setAlpha(0);
       this.tweens.add({ targets: [box, txt], alpha: 1, scale: 1, duration: 260 * d, ease: 'Back.out' });
       const foe = st.side === 'att' ? 'def' : 'att';
+      if (st.ok) battleSfx[st.kind]();
       if (st.ok && st.kind === 'fire') for (let i = 0; i < 3; i++) { const g = this.groups[foe + i]; const x = g ? g.c.x : this.baseX(foe, i); this.flames.explode(40, x - (foe === 'att' ? 40 : -40), this.geo.laneY(i) - 10); }
       if (st.ok && st.kind === 'night') { const ov = this.add.rectangle(0, 0, this.W, this.H, 0x0a1030, 0).setOrigin(0).setDepth(8500); this.tweens.add({ targets: ov, fillAlpha: 0.55, duration: 300 * d, yoyo: true, hold: 500 * d, onComplete: () => ov.destroy() }); }
       if (st.ok && (st.kind === 'ambush' || st.kind === 'persuade')) cam.shake(250 * d, 0.004);
@@ -321,8 +323,8 @@ class WarScene extends Phaser.Scene {
         if (this.b.kind === 'siege' && side === 'att' && order === 'storm') dx = this.geo.wallX(this.geo.laneY(i)) - 34 * this.geo.laneS(i) - g.baseX;
         if (order === 'volley') { this.setPose(side, i, 'aim'); this.volley(side, i, d); }
         else if (order === 'bombard') { this.bombard(i, d); }
-        else if (Math.abs(dx) > 1) { this.setPose(side, i, 'walk'); advances.push(this.tween({ targets: g.c, x: g.baseX + dx, duration: (order === 'charge' ? 420 : 600) * d, ease: order === 'charge' ? 'Quad.in' : 'Sine.inOut' })); }
-        if (order === 'storm' && this.b.kind === 'siege') this.ladders(i, d);
+        else if (Math.abs(dx) > 1) { if (i === 1) { battleSfx.advance(order === 'charge' || g.units.some(u => u.kind === 'cav')); if (order === 'charge' || order === 'storm') battleSfx.shout(); } this.setPose(side, i, 'walk'); advances.push(this.tween({ targets: g.c, x: g.baseX + dx, duration: (order === 'charge' ? 420 : 600) * d, ease: order === 'charge' ? 'Quad.in' : 'Sine.inOut' })); }
+        if (order === 'storm' && this.b.kind === 'siege') { this.ladders(i, d); if (i === 1) battleSfx.ladders(); }
       }
       if (this.b.kind === 'siege' && (ev.def === 'volley' || ev.def === 'hold')) this.wallArrows(i, d);
       if (this.b.kind === 'siege' && ev.def === 'sortie') this.sortie(i, d);
@@ -350,9 +352,10 @@ class WarScene extends Phaser.Scene {
       this.floatNumber(ax - 30 * s, y - 56 * s, ev.attLoss);
       this.floatNumber(dxp + 30 * s, y - 66 * s, ev.defLoss);
     }
-    if (heavy > 0) cam.shake(320 * d, Math.min(0.012, 0.002 + heavy / 400000));
+    if (heavy > 0) { cam.shake(320 * d, Math.min(0.012, 0.002 + heavy / 400000)); battleSfx.clash(Math.min(12, 4 + Math.round(heavy / 800))); }
     // 城防变化
     if (this.b.kind === 'siege' && log.wallAfter < log.wallBefore) {
+      battleSfx.rubble();
       for (let i = 0; i < 3; i++) this.debris.explode(16, this.geo.wallX(this.geo.laneY(i)) + 6, this.wallTopY(i) + 20);
       this.drawWall(to);
     }
@@ -364,6 +367,7 @@ class WarScene extends Phaser.Scene {
       if (!g || !g.units.length) continue;
       const fromL = from[side].lanes[i], toL = to[side].lanes[i];
       if (toL.routed && !fromL.routed) {
+        battleSfx.rout();
         this.setPose(side, i, 'flee');
         backs.push(this.tween({ targets: g.c, x: g.c.x - (side === 'att' ? 1 : -1) * this.W * 0.45, alpha: 0, duration: 900 * d, ease: 'Quad.in' }));
       } else {
@@ -376,7 +380,7 @@ class WarScene extends Phaser.Scene {
     for (let i = 0; i < 3; i++) for (const side of ['att', 'def'] as const) this.buildGroup(side, i, to);
     if (to.kind === 'siege') {
       this.buildDefenders(to);
-      if (to.outcome === 'breach') { cam.shake(700, 0.016); for (let i = 0; i < 3; i++) this.dust.explode(40, this.geo.wallX(this.geo.laneY(i)), this.geo.laneY(i) - 30); }
+      if (to.outcome === 'breach') { battleSfx.breach(); cam.shake(700, 0.016); for (let i = 0; i < 3; i++) this.dust.explode(40, this.geo.wallX(this.geo.laneY(i)), this.geo.laneY(i) - 30); }
     }
   }
 
@@ -388,6 +392,7 @@ class WarScene extends Phaser.Scene {
     const guns = g.units.filter(u => u.kind === 'gun');
     const shooters = guns.length ? guns : g.units.slice(0, 4);
     this.time.delayedCall(180 * d, () => {
+      if (guns.length) battleSfx.muskets(); else battleSfx.arrows();
       for (const u of shooters) {
         const x = g.c.x + u.bx + dir * 20 * s, y = g.c.y + u.by - 19 * s;
         this.smoke.explode(3, x, y);
@@ -407,6 +412,7 @@ class WarScene extends Phaser.Scene {
     const cx = (g ? g.c.x : this.baseX('att', i)) + 26 * s;
     const can = this.sprite(cx, y0 + 8 * s, 'cannon', s * 1.2, false).setDepth(2000 + i * 1000);
     this.time.delayedCall(250 * d, () => {
+      battleSfx.cannon();
       this.smoke.explode(8, cx + 20 * s, y0 - 2 * s);
       this.sparks.explode(10, cx + 20 * s, y0 - 2 * s);
       this.cameras.main.flash(120, 255, 220, 160);
@@ -415,7 +421,7 @@ class WarScene extends Phaser.Scene {
       const tx = this.b.kind === 'siege' ? this.geo.wallX(y0) + 4 : (this.groups['def' + i]?.c.x ?? cx + 300), ty = this.b.kind === 'siege' ? this.wallTopY(i) + 25 * s : y0 - 10;
       const sx = ball.x, sy = ball.y;
       this.tweens.addCounter({ from: 0, to: 1, duration: 420 * d, onUpdate: tw => { const p = tw.getValue() ?? 0; ball.setPosition(sx + (tx - sx) * p, sy + (ty - sy) * p - Math.sin(p * Math.PI) * 50 * s); },
-        onComplete: () => { ball.destroy(); this.debris.explode(20, tx, ty); this.dust.explode(8, tx, ty); this.cameras.main.shake(180, 0.006); } });
+        onComplete: () => { battleSfx.impact(); ball.destroy(); this.debris.explode(20, tx, ty); this.dust.explode(8, tx, ty); this.cameras.main.shake(180, 0.006); } });
     });
     this.time.delayedCall(1400 * d, () => this.tweens.add({ targets: can, alpha: 0, duration: 300, onComplete: () => can.destroy() }));
   }

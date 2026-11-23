@@ -565,3 +565,5 @@ button:disabled { cursor: default; }
 /* 结局与自立 */
 .end-seal { width: 84px; height: 84px; margin: 4px auto 12px; border-radius: 12px; display: grid; place-items: center; font-family: var(--brush); font-size: 52px; color: #fff6e2; border: 3px solid #f0cf86; transform: rotate(-5deg); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6); }
 .lrow.mine-lord { border-color: rgba(224, 80, 63, 0.5); background: rgba(200, 53, 42, 0.14); }
+.mvol { display: flex; align-items: center; gap: 10px; padding: 2px 10px 4px 44px; color: var(--dim); font-size: 12.5px; }
+.mvol span { width: 30px; flex: none; }
