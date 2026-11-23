@@ -13,7 +13,7 @@ import { cardHand, cardArt, type GameCard, type Chip } from './cards';
 import { resolveMonth, unificationProgress, type Answer } from '../core/turn';
 import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
 import { POLITIES } from '../data/factions';
-import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan } from '../data/geography';
+import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
 import { POLICY_NAME, POLICY_HINT, monthlyIncome, upkeepOf, RECRUIT_SILVER } from '../core/economy';
 import { describeOrder, validateOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
@@ -30,7 +30,7 @@ const FIELD_NAME: Record<string, string> = { grain: '仓粮', silver: '府库', 
 const FIELD_ICON: Record<string, string> = { grain: 'grain', silver: 'silver', pop: 'pop', minxin: 'minxin', garrison: 'troops', wall: 'wall', order: 'order', agri: 'agri', commerce: 'commerce', edu: 'edu' };
 const CAT_ICON: Record<ReportCat, string> = { 急报: 'urgent', 军报: 'war', 易主: 'capture', 交涉: 'envoy', 内政: 'admin', 人事: 'person', 史事: 'event', 线索: 'clue' };
 const POLICY_ICON: Record<Policy, string> = { balanced: 'order', agri: 'agri', commerce: 'commerce', fortify: 'wall', relief: 'minxin', edu: 'edu', levy: 'reward' };
-const ORDER_ICON: Record<Order['kind'], string> = { policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war' };
+const ORDER_ICON: Record<Order['kind'], string> = { policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army' };
 const HINT_KEY = 'nanming:hint';
 
 /** 选势力卡片：难度、一句处境、目标 */
@@ -104,6 +104,16 @@ export class App {
     (window as any).NM_nodePt = nodePt;
     (window as any).NM_presets = { createGame, yangzhouSiegeState, name: nodeName };
     (window as any).NM_audio = audioState;
+    // 自动化测试：直接打一场指定的仗
+    (window as any).NM_testBattle = async (kind: 'field' | 'siege' | 'naval') => {
+      const { createBattle, makeSide } = await import('../core/battle');
+      const s = this.s!;
+      const sd = (f: string, cmd: string, t: number, navy: number) => makeSide({ faction: f, name: s.factions[f].name, commander: cmd, commanderName: s.chars[cmd]?.name ?? '守将', tong: 60, mou: 55, wai: 50, surrender: 20,
+        mix: navy ? { inf: 0.4, cav: 0, gun: 0.2, navy: 0.4 } : { inf: 0.6, cav: 0.25, gun: 0.15, navy: 0 }, stratagems: 2, armies: [], garrison: kind === 'siege', troops: t, morale: 70 });
+      const b = createBattle({ id: 'test', kind, node: 'zhenjiang', nodeName: '镇江', terrain: kind === 'naval' ? 'water' : kind === 'siege' ? 'city' : 'plain', weather: 'wind',
+        att: sd('qing', 'duoduo', 30000, kind === 'naval' ? 1 : 0), def: sd(s.player, s.factions[s.player].leader, 26000, kind === 'naval' ? 1 : 0), wall: 70, seed: 11 });
+      return playBattle(s, b, 'def', false);
+    };
   }
 
   /* ================= 标题 ================= */
@@ -156,6 +166,7 @@ export class App {
     const st = createGame('hongguang', 1);
     this.map.view.state = st;
     clearInterval(this.titleTimer);
+    setScene('pick');
     gsap.to('#title .title-in', { opacity: 0, y: -20, duration: 0.3 });
     let chosen = '';
     const goLabel = h('span', { class: 'lbl' }, '开 局');
@@ -480,9 +491,9 @@ export class App {
     const stamp = (node: string | undefined, text: string, color = '#c8352a') => { if (node && s.cities[node]) m.addFx({ kind: 'stamp', node, text, color, dur: 1200 }); };
     stampSfx(); orderSfx(o.kind);
     switch (o.kind) {
-      case 'policy': stamp(o.node, '政'); m.addFx({ kind: 'float', node: o.node, text: POLICY_NAME[o.policy], color: '#f0cf86', dur: 1500, delay: 200 }); break;
-      case 'recruit': stamp(o.node, '募'); m.addFx({ kind: 'float', node: o.node, text: `+${o.troops} 兵`, color: '#bfe6b7', dur: 1500, delay: 200 }); break;
-      case 'appoint': stamp(o.node, '任'); m.addFx({ kind: 'float', node: o.node, text: charName(s, o.char), color: '#f0cf86', dur: 1500, delay: 200 }); break;
+      case 'policy': m.addFx({ kind: 'card', node: o.node, img: cardArt(POLICY_ICON[o.policy], '#8c6a35', 0), text: POLICY_NAME[o.policy], dur: 2000 }); stamp(o.node, '政'); break;
+      case 'recruit': m.addFx({ kind: 'march', node: o.node, color: fac.color, dur: 1800 }); m.addFx({ kind: 'float', node: o.node, text: `+${o.troops} 兵`, color: '#bfe6b7', dur: 1500, delay: 500 }); break;
+      case 'appoint': { const c = s.chars[o.char]; m.addFx({ kind: 'card', node: o.node, img: portrait(c, fac.color, fac.polity), text: c.name, dur: 2000 }); stamp(o.node, '任'); break; }
       case 'transfer': { const p = shortestPath(o.from, o.to, false); if (p) m.addFx({ kind: 'convoy', node: o.from, path: [o.from, ...p], text: o.grain ? 'grain' : 'silver', dur: 1600 }); stamp(o.from, '调'); break; }
       case 'army': case 'command': {
         const a = s.armies[o.army];
@@ -491,10 +502,12 @@ export class App {
         break;
       }
       case 'reinforce': stamp(o.node, '兵'); break;
-      case 'envoy': stamp(s.factions[o.target]?.capital, '使', '#2f6f8f'); break;
+      case 'envoy': m.addFx({ kind: 'treaty', node: s.factions[o.target]?.capital, color: fac.color, color2: s.factions[o.target]?.color, text: '使', dur: 2200 }); break;
       case 'persuade': stamp(o.node, '降', '#2f6f8f'); break;
       case 'reward': stamp(s.factions[o.vassal]?.capital, '赏', '#b0702a'); break;
       case 'independence': stamp(fac.capital, '立'); break;
+      case 'war': stamp(s.factions[o.target]?.capital, '战', '#8f2015'); break;
+      case 'raise': stamp(o.node, '兵'); m.addFx({ kind: 'float', node: o.node, text: `出兵 ${o.troops}`, color: '#f0cf86', dur: 1500, delay: 200 }); break;
     }
     const chip = $('#orders').lastElementChild as HTMLElement | null;
     if (chip) gsap.from(chip, { y: -60, scale: 1.4, opacity: 0, duration: 0.45, ease: 'back.out(1.8)' });
@@ -646,7 +659,7 @@ export class App {
     bar.append(h('div', { class: 'ab-h' }, ic('army'), `我军 ${mine.length}`));
     for (const a of mine) bar.append(chip(a));
     if (vas.length) { bar.append(h('div', { class: 'ab-h' }, ic('urgent'), `诸镇 ${vas.length}`)); for (const a of vas) bar.append(chip(a)); }
-    if (!mine.length && !vas.length) bar.append(h('div', { class: 'ab-none' }, '尚无野战军：在城中“募兵”，驻军充足后编成新军'));
+    if (!mine.length && !vas.length) bar.append(h('div', { class: 'ab-none' }, '尚无野战军：点一座城，用“出兵”从驻军编成新军'));
   }
   showRing(id: string) {
     const s = this.s!, a = s.armies[id];
@@ -779,6 +792,7 @@ export class App {
       if (mine) {
         acts.append(A('act-policy', 'policy', '方针', () => this.formPolicy(id), has('policy')),
           A('act-recruit', 'recruit', '募兵', () => this.formRecruit(id), has('recruit')),
+          A('act-raise', 'army', '出兵', () => this.formRaise(id), this.orders.some(o => o.kind === 'raise' && o.node === id), c.garrison >= 3000),
           A('act-transfer', 'transfer', '调拨', () => this.formTransfer(id), has('transfer')),
           A('act-appoint', 'appoint', '任命', () => this.formAppoint(id), has('appoint')));
       } else if (vassal) {
@@ -964,6 +978,33 @@ export class App {
     this.modal('policy', '方针', `${nodeName(node)} · 选一张，此后每月持续执行`, [cardHand(cards, k => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'policy', node, policy: k as Policy }); }, { stampText: '令' })], [this.cancelBtn()], 'wide');
   }
 
+
+  /** 出兵：从城中驻军抽人编成野战军，选一员将领统领 */
+  formRaise(node: string, char?: string) {
+    const s = this.s!, c = s.cities[node];
+    if (c.garrison < 2000) { this.toast(`${nodeName(node)}驻军不足两千，出不了兵`, 'close'); return; }
+    const list = this.freeChars().filter(x => !x.royal).sort((a, b) => b.ab.tong - a.ab.tong);
+    if (!list.length) { this.toast('无将可用：所有将领都在统兵或出使', 'close'); return; }
+    const fc = s.factions[s.player].color, pol = s.factions[s.player].polity;
+    if (!char) {
+      const cards: GameCard[] = list.map(x => ({ id: x.id, title: x.name, sub: x.title, art: portrait(x, fc, pol), portrait: true, badge: `统 ${x.ab.tong}`,
+        chips: [{ icon: 'event', text: `谋 ${x.ab.mou}` }, { icon: 'morale', text: `忠 ${Math.round(x.att.loyalty)}`, tone: x.att.loyalty >= 60 ? 'good' : 'bad' }], note: `现在${nodeName(x.location)}` }));
+      this.modal('army', '出兵 · 选将', `${nodeName(node)} · 驻军 ${wan(c.garrison)} · 统军越高，打仗越强`, [cardHand(cards, id => { this.closeModal(); setTimeout(() => this.formRaise(node, id), 0); }, { stampText: '将' })], [this.cancelBtn()], 'wide');
+      return;
+    }
+    const ch = s.chars[char];
+    const port = NODE[node].kind === 'port' || neighbors(node).some(n => n.route.kind === 'river' || n.route.kind === 'sea');
+    let navy = false;
+    const max = Math.floor((c.garrison - 1000) / 500) * 500;
+    const n = stepper('raise-n', Math.min(max, Math.max(1000, Math.round(c.garrison / 2 / 500) * 500)), { step: 500, min: 1000, max, unit: '人', presets: [2000, 5000, 10000] });
+    const kind = h('div', { class: 'grid-opts', style: { gridTemplateColumns: 'repeat(2, 1fr)' } });
+    const paintKind = () => { clear(kind); for (const [k, icon, label, sub] of [[false, 'army', '陆军', '步骑火器'], [true, 'navy', '水师', port ? '战船，可走江海' : '此城不临江海']] as const) kind.append(h('button', { class: 'gopt' + (navy === k ? ' on' : ''), disabled: k && !port, 'data-navy': String(k), onclick: () => { navy = k; paintKind(); } }, ic(icon), h('b', null, label), h('small', null, sub))); };
+    paintKind();
+    this.modal('army', `出兵 · ${ch.name}统领`, `${nodeName(node)} · 驻军 ${wan(c.garrison)}，城中至少留一千`, [
+      h('div', { class: 'raise-top' }, face(s, ch.id, 72, 'face round'), h('div', null, h('b', null, ch.name), h('small', null, `${ch.title} · 统 ${ch.ab.tong} 谋 ${ch.ab.mou}`))),
+      h('div', { class: 'field' }, h('label', null, ic('troops'), '兵数'), n), kind,
+    ], [this.cancelBtn(), { label: '出兵', icon: 'army', primary: true, id: 'raise-ok', onclick: () => this.addOrder({ id: this.newOrderId(), kind: 'raise', node, char, troops: n.value, navy }) ? undefined : false }]);
+  }
 
   formRecruit(node: string) {
     const s = this.s!, c = s.cities[node];
@@ -1341,8 +1382,8 @@ export class App {
         // 镜头与地图动效、声音
         if (node) {
           this.map.flyTo(node, Math.max(2.1, Math.min(2.8, this.map.cam.z)));
-          if (c === '易主') { this.map.addFx({ kind: 'capture', node, color: ctrl?.color ?? '#c8352a', text: (ctrl && polityOf(s, ctrl.polity).mark) || ctrl?.short || '易', dur: 2000, delay: 350 }); setTimeout(() => captureSfx(mineNode(node)), 350); }
-          else if (c === '军报') { this.map.addFx({ kind: 'battle', node, dur: 1500, delay: 300 }); setTimeout(distantBattle, 300); }
+          if (c === '易主') { this.map.addFx({ kind: 'capture', node, color: ctrl?.color ?? '#c8352a', color2: '#7a6a58', text: (ctrl && polityOf(s, ctrl.polity).mark) || ctrl?.short || '易', dur: 2600, delay: 350 }); setTimeout(() => captureSfx(mineNode(node)), 350); }
+          else if (c === '军报') { this.map.addFx({ kind: 'clash', node, dur: 1700, delay: 300 }); setTimeout(distantBattle, 300); }
           else if (c === '史事') { this.map.addFx({ kind: 'stamp', node, text: '史', color: '#8c6a35', dur: 1500, delay: 300 }); setTimeout(chime, 300); }
           else this.map.addFx({ kind: 'ripple', node, color: c === '急报' ? '#e0503f' : '#f0cf86', dur: 1400, delay: 300 });
         } else chime();
@@ -1388,9 +1429,14 @@ export class App {
       const c = after.cities[r.node!];
       const f = after.factions[c?.controller ?? ''];
       if (!c || before.cities[r.node!]?.controller === c.controller) continue;
-      m.addFx({ kind: 'capture', node: r.node, color: f?.color ?? '#c8352a', text: polityOf(after, f?.polity ?? 'none').mark || f?.short || '易', dur: 2000, delay: 500 + (k++ % 8) * 220 });
+      m.addFx({ kind: 'capture', node: r.node, color: f?.color ?? '#c8352a', color2: before.factions[before.cities[r.node!]?.controller ?? '']?.color, text: polityOf(after, f?.polity ?? 'none').mark || f?.short || '易', dur: 2600, delay: 500 + (k++ % 8) * 260 });
     }
-    after.battles.filter(b => b.turn === t).slice(-12).forEach((b, i) => m.addFx({ kind: 'battle', node: b.node, dur: 1500, delay: 200 + i * 160 }));
+    after.battles.filter(b => b.turn === t).slice(-12).forEach((b, i) => m.addFx({ kind: 'clash', node: b.node, dur: 1700, delay: 200 + i * 160 }));
+    for (const r of after.reports.filter(x => x.turn === t && x.cat === '交涉' && /结盟|停战|议和|和好/.test(x.text) && !/未成|拒/.test(x.text))) {
+      const fs = Object.values(after.factions).filter(f => r.text.includes(f.name)).slice(0, 2);
+      const node = fs[1]?.capital ?? fs[0]?.capital;
+      if (node) m.addFx({ kind: 'treaty', node, color: fs[0]?.color, color2: fs[1]?.color, text: '约', dur: 2600, delay: 700 });
+    }
     if (after.battles.some(b => b.turn === t)) setTimeout(distantBattle, 300);
     const me = after.player;
     const lost = Object.keys(after.cities).some(id => before.cities[id]?.controller === me && after.cities[id].controller !== me);

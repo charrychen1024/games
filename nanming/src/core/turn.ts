@@ -26,7 +26,9 @@ export type Answer =
 export interface MonthResult { state: GameState }
 
 export function playerSideOf(s: GameState, b: BattleState): 'att' | 'def' | null {
-  const mine = (side: BattleState['att']) => side.faction === s.player || side.armies.some(id => s.armies[id]?.faction === s.player);
+  // 本方的战斗，以及下属军镇奉玩家号令出征（号令后三个月内）的战斗，都由玩家指挥
+  const led = (id: string) => { const t = s.flags['commanded_' + id]; return typeof t === 'number' && t >= 0 && s.turn - t <= 3; };
+  const mine = (side: BattleState['att']) => side.faction === s.player || side.armies.some(id => s.armies[id]?.faction === s.player || led(id));
   if (mine(b.att)) return 'att';
   if (mine(b.def)) return 'def';
   return null;

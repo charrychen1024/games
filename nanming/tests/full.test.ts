@@ -238,3 +238,35 @@ describe('出征：宣战、行程与战斗', () => {
     expect(plan.some(x => x.month >= 2)).toBe(true);
   });
 });
+
+describe('出兵、下属的战斗、解围', () => {
+  it('任一城可出兵：抽驻军编成野战军，交给一员将领', () => {
+    const s0 = createGame('hongguang', 1);
+    const g0 = s0.cities.hangzhou.garrison;
+    const s = runMonthAuto(s0, [{ id: 'r', kind: 'raise', node: 'hangzhou', char: 'zhangguowei', troops: 3000, navy: false }]);
+    const a = Object.values(s.armies).find(x => x.commander === 'zhangguowei');
+    expect(a).toBeTruthy();
+    expect(a!.faction).toBe('hongguang');
+    expect(s.ledger.some(e => e.node === 'hangzhou' && e.field === 'garrison' && e.delta === -3000)).toBe(true);
+    expect(g0).toBeGreaterThan(3000);
+  });
+  it('下属军镇奉玩家号令出征的战斗交给玩家指挥', () => {
+    let s = createGame('hongguang', 1);
+    s.cities.yanzhou.controller = 'shun';
+    const a = s.armies.a_huang; a.location = 'xuzhou'; a.path = []; a.order = { kind: 'hold' };
+    s.relations['hongguang|shun'] = { stance: 'war' };
+    const gen = resolveMonth(s, [{ id: 'c', kind: 'command', vassal: 'huangdegong', army: 'a_huang', order: { kind: 'move', target: 'yanzhou', attack: true }, silver: 60000 }]);
+    let r = gen.next(), sides: string[] = [];
+    while (!r.done) { if (r.value.type === 'battle') sides.push(r.value.side); r = gen.next(r.value.type === 'choice' ? { type: 'choice', index: 0 } : undefined); }
+    // 黄得功可能拖延，不一定当月出兵；出兵则必由玩家指挥
+    const fought = r.value.state.battles.filter(b => b.node === 'yanzhou' && b.turn === 0);
+    expect(fought.length === 0 || sides.length > 0).toBe(true);
+  });
+  it('所围之城为他人所得：解围待命，不再空围', () => {
+    let s = createGame('hongguang', 1);
+    const a = s.armies.a_shi; a.location = 'yanzhou'; a.order = { kind: 'siege', target: 'yanzhou', assault: false };
+    s.cities.yanzhou.controller = 'zheng';
+    s = runMonthAuto(s, []);
+    expect(s.armies.a_shi.order.kind).not.toBe('siege');
+  });
+});

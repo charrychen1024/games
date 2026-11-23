@@ -82,6 +82,28 @@ export class BattleScene {
       mist.addColorStop(0, 'rgba(240,236,220,0)'); mist.addColorStop(1, 'rgba(240,236,220,0.55)');
       g.fillStyle = mist; g.fillRect(0, r.y - r.amp * 0.3, W, r.amp * 0.3 + 8);
     }
+    // 水战：大江或海面，远岸、波纹、浪花
+    if (b.kind === 'naval') {
+      const sea = g.createLinearGradient(0, hz, 0, H);
+      sea.addColorStop(0, '#9fb9bd'); sea.addColorStop(0.25, '#5d8a98'); sea.addColorStop(1, '#2c5566');
+      g.fillStyle = sea; g.fillRect(0, hz, W, H - hz);
+      // 远岸
+      g.fillStyle = 'rgba(70,90,70,0.8)'; g.beginPath(); g.moveTo(0, hz + 4);
+      for (let x = 0; x <= W; x += 20) g.lineTo(x, hz - 2 - Math.abs(Math.sin(x / 60)) * 8 - rng.next() * 3);
+      g.lineTo(W, hz + 6); g.closePath(); g.fill();
+      // 天光倒影
+      const glare = g.createRadialGradient(W * 0.78, hz + 20, 4, W * 0.78, hz + 40, 180);
+      glare.addColorStop(0, 'rgba(255,245,220,0.45)'); glare.addColorStop(1, 'rgba(255,245,220,0)');
+      g.fillStyle = glare; g.fillRect(0, hz, W, H - hz);
+      // 波纹：近大远小
+      for (let i = 0; i < 900; i++) {
+        const f = rng.next() ** 0.9, y = hz + 6 + f * (H - hz - 6), x = rng.next() * W, s2 = 0.5 + f * 2.2;
+        g.strokeStyle = rng.chance(0.5) ? 'rgba(220,236,240,0.35)' : 'rgba(20,50,64,0.35)'; g.lineWidth = 0.7 * s2;
+        g.beginPath(); g.moveTo(x - 6 * s2, y); g.quadraticCurveTo(x, y - 2 * s2, x + 6 * s2, y); g.stroke();
+      }
+      this.bg = c; this.bgKey = key;
+      return c;
+    }
     // 地面
     const ground = g.createLinearGradient(0, hz, 0, H);
     if (b.kind === 'siege') { ground.addColorStop(0, '#8d9468'); ground.addColorStop(1, '#6f6a45'); }
@@ -671,4 +693,35 @@ export function shade(hex: string, k: number): string {
   const n = parseInt(hex.slice(1), 16);
   const f = (c: number) => Math.max(0, Math.min(255, Math.round(c + (k < 0 ? c * k : (255 - c) * k))));
   return '#' + [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(f).map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+/** 战船：福船式样，船身弧起，竹篾硬帆，船尾大旗 */
+export function drawShip(g: CanvasRenderingContext2D, look: SideLook, big: boolean) {
+  const L = big ? 64 : 48, Hh = big ? 14 : 11;
+  // 倒影
+  g.fillStyle = 'rgba(10,30,40,0.3)'; g.beginPath(); g.ellipse(0, 4, L * 0.55, 4, 0, 0, Math.PI * 2); g.fill();
+  // 船身
+  const hull = g.createLinearGradient(0, -Hh, 0, 2);
+  hull.addColorStop(0, '#7a4a26'); hull.addColorStop(1, '#3e2412');
+  g.fillStyle = hull;
+  g.beginPath(); g.moveTo(-L / 2, -Hh); g.quadraticCurveTo(-L * 0.42, 2, 0, 2); g.quadraticCurveTo(L * 0.45, 2, L / 2 + 4, -Hh - 4); g.lineTo(L / 2 - 6, -Hh); g.closePath(); g.fill();
+  g.strokeStyle = '#2a170a'; g.lineWidth = 1; g.stroke();
+  g.fillStyle = look.color; g.fillRect(-L / 2 + 4, -Hh + 2, L - 12, 2.2);
+  // 船眼
+  g.fillStyle = '#f3e6c8'; g.beginPath(); g.arc(L / 2 - 6, -Hh + 4, 2, 0, Math.PI * 2); g.fill(); g.fillStyle = '#111'; g.beginPath(); g.arc(L / 2 - 5.5, -Hh + 4, 0.9, 0, Math.PI * 2); g.fill();
+  // 桅与帆
+  const sails = big ? [[-8, 34], [12, 26]] : [[0, 28]];
+  for (const [mx, mh] of sails) {
+    g.strokeStyle = '#3b2615'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(mx, -Hh); g.lineTo(mx, -Hh - mh - 4); g.stroke();
+    g.fillStyle = '#b5683a'; g.beginPath(); g.moveTo(mx - 1, -Hh - mh - 2); g.quadraticCurveTo(mx + 14, -Hh - mh * 0.6, mx + 12, -Hh - 4); g.lineTo(mx - 1, -Hh - 4); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(60,30,10,0.6)'; g.lineWidth = 0.8;
+    for (let k = 1; k < 6; k++) { const yy = -Hh - 4 - (mh - 2) * k / 6; g.beginPath(); g.moveTo(mx - 1, yy); g.lineTo(mx + 13, yy + 2); g.stroke(); }
+  }
+  // 尾旗
+  g.strokeStyle = '#2a1d12'; g.lineWidth = 1; g.beginPath(); g.moveTo(-L / 2 + 2, -Hh); g.lineTo(-L / 2 + 2, -Hh - 16); g.stroke();
+  g.fillStyle = look.color; g.beginPath(); g.moveTo(-L / 2 + 2, -Hh - 16); g.lineTo(-L / 2 - 10, -Hh - 13); g.lineTo(-L / 2 + 2, -Hh - 9); g.closePath(); g.fill();
+  if (look.mark) { g.fillStyle = '#fff6e0'; g.font = '700 6px serif'; g.textAlign = 'center'; g.fillText(look.mark, -L / 2 - 3, -Hh - 11); }
+  // 船上兵卒
+  g.fillStyle = '#2a1d12';
+  for (let k = 0; k < (big ? 6 : 4); k++) { const x = -L / 2 + 10 + k * (L - 20) / (big ? 6 : 4); g.beginPath(); g.arc(x, -Hh - 3, 1.6, 0, Math.PI * 2); g.fill(); g.fillRect(x - 1, -Hh - 2, 2, 2); }
 }

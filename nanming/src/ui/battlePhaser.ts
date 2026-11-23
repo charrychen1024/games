@@ -6,14 +6,14 @@
 import { battleSfx } from './audio';
 import Phaser from 'phaser';
 import type { BattleState, RoundLog, LaneOrder } from '../core/battle';
-import { BattleScene, drawSoldier, drawCavalry, drawStandard, shade, type SideLook } from './battleScene';
+import { BattleScene, drawSoldier, drawCavalry, drawStandard, drawShip, shade, type SideLook } from './battleScene';
 
 const TEX = 2; // 贴图超采样倍数
-type Kind = 'inf' | 'gun' | 'cav';
+type Kind = 'inf' | 'gun' | 'cav' | 'ship';
 interface Unit { spr: Phaser.GameObjects.Sprite; kind: Kind; bx: number; by: number }
 interface Group { c: Phaser.GameObjects.Container; units: Unit[]; flag: Phaser.GameObjects.Image | null; baseX: number }
 
-const REACH: Partial<Record<LaneOrder, number>> = { attack: 0.11, charge: 0.14, flank: 0.09, storm: 0.3, sap: 0.24, sortie: 0.12, withdraw: -0.06, blockade: -0.03 };
+const REACH: Partial<Record<LaneOrder, number>> = { attack: 0.11, charge: 0.14, flank: 0.09, storm: 0.3, sap: 0.24, sortie: 0.12, withdraw: -0.06, blockade: -0.03, ram: 0.16, board: 0.13, fireship: 0.05, evade: 0.04 };
 
 export class BattleView {
   game: Phaser.Game;
@@ -38,6 +38,8 @@ export class BattleView {
   }
   async playRound(from: BattleState, to: BattleState, log: RoundLog, fast: boolean) { await this.ready; await this.scene.playRound(from, to, log, fast ? 0.4 : 1); }
   async showResult(win: boolean, text: string) { await this.ready; this.scene.showResult(win, text); }
+  /** 布阵预览：按新的三路兵力重排阵列 */
+  preview(b: BattleState) { if (!this.scene) return; this.scene.b = b; for (let i = 0; i < 3; i++) for (const sd of ['att', 'def'] as const) this.scene.buildGroup(sd, i, b); }
   destroy() { this.game.destroy(true); }
 }
 
@@ -137,6 +139,8 @@ class WarScene extends Phaser.Scene {
         reg(`${side}-gun-walk-${k}`, 66, 48, 22, 44, g => drawSoldier(g, 0, 0, 1, 'gun', lk, 1, ph, true, 'walk'));
         reg(`${side}-cav-gal-${k}`, 92, 66, 40, 62, g => drawCavalry(g, 0, 0, 1, lk, 1, ph, true));
       }
+      reg(`${side}-ship`, 90, 70, 45, 60, g => drawShip(g, lk, false));
+      reg(`${side}-ship-big`, 110, 84, 55, 72, g => drawShip(g, lk, true));
       reg(`${side}-inf-idle`, 66, 48, 22, 44, g => drawSoldier(g, 0, 0, 1, 'inf', lk, 1, 0.5, false, 'idle'));
       reg(`${side}-gun-idle`, 66, 48, 22, 44, g => drawSoldier(g, 0, 0, 1, 'gun', lk, 1, 0.5, false, 'idle'));
       reg(`${side}-gun-aim`, 66, 48, 22, 44, g => drawSoldier(g, 0, 0, 1, 'gun', lk, 1, 0.5, false, 'aim'));
@@ -244,6 +248,18 @@ class WarScene extends Phaser.Scene {
     this.groups[key] = g;
     if (lane.routed || lane.troops <= 0 || (b.kind === 'siege' && side === 'def')) { c.setVisible(!(b.kind === 'siege' && side === 'def') && false); return; }
     if (lane.withdrawn) c.setAlpha(0.4);
+    if (b.kind === 'naval') {
+      // 船队：三五条战船，随浪起伏
+      const ns = Math.max(2, Math.min(6, Math.round(lane.troops / 2500)));
+      for (let k = 0; k < ns; k++) {
+        const x = -dir * (k % 3) * 46 * s - (k >= 3 ? dir * 22 * s : 0), y = (k >= 3 ? 12 : -4 + (k % 2) * 8) * s;
+        const spr = this.sprite(x, y, `${side}-ship${k === 0 ? '-big' : ''}`, s * 0.9, dir < 0);
+        c.add(spr);
+        g.units.push({ spr, kind: 'ship', bx: x, by: y });
+        this.tweens.add({ targets: spr, y: y - 2.5 * s, angle: dir * 2, duration: 900 + k * 130, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+      }
+      return;
+    }
     const n = Math.max(5, Math.min(36, Math.round(Math.sqrt(lane.troops) / 3.6)));
     const rows = n > 24 ? 4 : n > 14 ? 3 : n > 6 ? 2 : 1;
     const mix = b[side].mix;
@@ -278,6 +294,7 @@ class WarScene extends Phaser.Scene {
     const g = this.groups[side + i];
     if (!g) return;
     for (const u of g.units) {
+      if (u.kind === 'ship') continue;
       if (u.kind === 'cav') { if (pose === 'idle') u.spr.stop().setTexture(`${side}-cav-idle`); else u.spr.play(`${side}-cav-gal`, true); }
       else if (u.kind === 'gun' && pose === 'aim') u.spr.stop().setTexture(`${side}-gun-aim`);
       else if (pose === 'idle') u.spr.stop().setTexture(`${side}-${u.kind}-idle`);
@@ -321,7 +338,9 @@ class WarScene extends Phaser.Scene {
         const dir = side === 'att' ? 1 : -1;
         let dx = dir * this.W * (REACH[order] ?? 0);
         if (this.b.kind === 'siege' && side === 'att' && order === 'storm') dx = this.geo.wallX(this.geo.laneY(i)) - 34 * this.geo.laneS(i) - g.baseX;
-        if (order === 'volley') { this.setPose(side, i, 'aim'); this.volley(side, i, d); }
+        if (order === 'volley' || order === 'cannonade') { this.setPose(side, i, 'aim'); this.volley(side, i, d); if (order === 'cannonade') this.cameras.main.shake(160 * d, 0.004); }
+        if (order === 'fireship' && i === 1) { battleSfx.fire(); }
+        if (order === 'fireship') { const foeG = this.groups[(side === 'att' ? 'def' : 'att') + i]; if (foeG) this.time.delayedCall(500 * d, () => this.flames.explode(30, foeG.c.x, foeG.c.y - 20)); }
         else if (order === 'bombard') { this.bombard(i, d); }
         else if (Math.abs(dx) > 1) { if (i === 1) { battleSfx.advance(order === 'charge' || g.units.some(u => u.kind === 'cav')); if (order === 'charge' || order === 'storm') battleSfx.shout(); } this.setPose(side, i, 'walk'); advances.push(this.tween({ targets: g.c, x: g.baseX + dx, duration: (order === 'charge' ? 420 : 600) * d, ease: order === 'charge' ? 'Quad.in' : 'Sine.inOut' })); }
         if (order === 'storm' && this.b.kind === 'siege') { this.ladders(i, d); if (i === 1) battleSfx.ladders(); }
@@ -389,7 +408,7 @@ class WarScene extends Phaser.Scene {
     if (!g) return;
     const dir = side === 'att' ? 1 : -1;
     const s = this.geo.laneS(i);
-    const guns = g.units.filter(u => u.kind === 'gun');
+    const guns = g.units.filter(u => u.kind === 'gun' || u.kind === 'ship');
     const shooters = guns.length ? guns : g.units.slice(0, 4);
     this.time.delayedCall(180 * d, () => {
       if (guns.length) battleSfx.muskets(); else battleSfx.arrows();

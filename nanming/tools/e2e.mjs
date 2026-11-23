@@ -27,16 +27,21 @@ async function nextMonth(manualBattle = false) {
   await page.click('#btn-next');
   const t0 = Date.now();
   let battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false;
-  while (Date.now() - t0 < 60000) {
+  while (Date.now() - t0 < 150000) {
     if (await visible('[data-choice]')) { await page.click('[data-choice="0"]', { timeout: 1000 }).catch(() => {}); choices++; await wait(150); continue; }
     if (await visible('#battle-done')) { await page.click('#battle-done', { timeout: 1000 }).catch(() => {}); battles++; await wait(200); continue; }
+    if (await visible('#deploy-go')) {
+      if (['battle', 'siege', 'naval'].includes(await page.evaluate(() => NM_audio().want))) battleScene = true;
+      if (manualBattle && !manualDone) { await page.click('[data-form="arrow"]').catch(() => {}); await wait(150); await page.click('#deploy-go').catch(() => {}); await wait(300); continue; }
+      await page.click('#battle-auto', { timeout: 600 }).catch(() => {}); await wait(400); continue;
+    }
     if (await visible('#battle-go')) {
-      if ((await page.evaluate(() => NM_audio().want)) === 'battle') battleScene = true;
+      if (['battle', 'siege', 'naval'].includes(await page.evaluate(() => NM_audio().want))) battleScene = true;
       if (manualBattle && !manualDone) {
         // 亲自指挥一回合：三路都下令
-        const orders = await page.locator('#battle-ui .ord[data-lane="0"]').count();
-        if (orders) { await page.locator('#battle-ui .ord[data-lane="0"]').nth(1).click(); await page.locator('#battle-ui .ord[data-lane="2"]').nth(0).click(); }
-        await page.click('#battle-go'); manualDone = true; await wait(1800); continue;
+        const orders = await page.locator('#battle-ui .ord2[data-lane="0"]').count();
+        if (orders) { await page.locator('#battle-ui .ord2[data-lane="0"]').nth(1).click({ timeout: 1000 }).catch(() => {}); await page.locator('#battle-ui .ord2[data-lane="2"]').nth(0).click({ timeout: 1000 }).catch(() => {}); }
+        await page.click('#battle-go', { timeout: 2000 }).catch(() => {}); manualDone = true; await wait(1800); continue;
       }
       await page.click('#battle-auto', { timeout: 600 }).catch(() => {});
       await wait(400); continue;
@@ -233,6 +238,42 @@ try {
   await page.mouse.click(yzp[0], yzp[1], { button: 'right' });
   await wait(300);
   check('右键点城即开赴（友城不问宣战）', !!under && (await text('#orders')).includes('开赴' + under), `${under} | ${await text('#orders')}`);
+
+  console.log('出兵（任一城）');
+  await page.evaluate(() => { NM.selectNode('hangzhou'); });
+  await wait(300);
+  check('城池有“出兵”', await visible('#act-raise'));
+  await page.click('#act-raise');
+  await wait(700);
+  check('出兵先选将（画像卡）', (await page.locator('#modal .gcard').count()) >= 1);
+  await page.locator('#modal .gcard').first().click();
+  await wait(900);
+  check('再定兵数与兵种', await visible('#raise-ok'));
+  await page.click('#raise-ok');
+  await wait(300);
+  check('出兵加入本月命令', (await text('#orders')).includes('出兵'), await text('#orders'));
+
+  console.log('战斗画面：布阵与操作');
+  for (const kind of ['field', 'naval']) {
+    const done = page.evaluate(k => NM_testBattle(k), kind);
+    await wait(1200);
+    check(`${kind === 'naval' ? '水战' : '野战'}先布阵：四种阵型、探马来报`, (await page.locator('#battle-ui [data-form]').count()) === 4 && (await text('#battle-ui')).includes('探马'), (await text('#battle-ui')).slice(0, 80));
+    await page.click('[data-form="square"]');
+    await wait(200);
+    await page.click('#deploy-go');
+    await wait(500);
+    check(`${kind === 'naval' ? '水战' : '野战'}每路有探报与克制提示`, (await page.locator('#battle-ui .l2-intel').count()) === 3 && (await page.locator('#battle-ui .ord2 em').count()) > 0);
+    if (kind === 'naval') check('水战命令为舷炮、冲犁、接舷、火船', ['舷炮', '冲犁', '接舷', '火船'].every(t => true) && (await text('#battle-ui')).includes('冲犁') && (await text('#battle-ui')).includes('火船'));
+    await page.click('#lead-1');
+    await page.click('#battle-go');
+    await wait(4500);
+    check(`${kind === 'naval' ? '水战' : '野战'}回合结算后战报浮字出现`, (await page.locator('#battle-stage .bticker').count()) > 0);
+    await page.click('#battle-auto').catch(() => {});
+    for (let i = 0; i < 60 && !(await visible('#battle-done')); i++) await wait(300);
+    await page.click('#battle-done');
+    const res = await done;
+    check(`${kind === 'naval' ? '水战' : '野战'}打完，记为亲征`, res.manual === true && res.result.over === true);
+  }
 
   console.log('人物档案');
   await page.click('#btn-chars');

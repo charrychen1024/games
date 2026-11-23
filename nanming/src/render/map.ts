@@ -64,7 +64,9 @@ export interface MapView {
 type Rect = [number, number, number, number];
 interface NodeSlot { id: string; sx: number; sy: number; w: number; tier: 'full' | 'small' | 'dot'; label: Rect | null; fsize: number; big: boolean }
 interface ArmyStack { armies: string[]; sx: number; sy: number; ax: number; ay: number; moving: boolean }
-export interface Fx { kind: 'capture' | 'battle' | 'stamp' | 'float' | 'ripple' | 'convoy'; node?: string; path?: string[]; text?: string; color?: string; dy?: number; t0: number; dur: number }
+export interface Fx { kind: 'capture' | 'battle' | 'stamp' | 'float' | 'ripple' | 'convoy' | 'clash' | 'treaty' | 'card' | 'march'; node?: string; path?: string[]; text?: string; color?: string; color2?: string; img?: string; dy?: number; t0: number; dur: number }
+const fxImg = new Map<string, HTMLImageElement>();
+function imgOf(url: string): HTMLImageElement { let im = fxImg.get(url); if (!im) { im = new Image(); im.src = url; fxImg.set(url, im); } return im; }
 const MAX_Z = 6;
 /** 城郭标志的屏幕宽度（像素） */
 const EMBLEM_PX: Record<EmblemType, number> = { capital: 50, region: 42, major: 42, city: 34, port: 34, ferry: 28, pass: 32 };
@@ -832,17 +834,105 @@ export class MapRenderer {
       g.translate(sx, sy);
       switch (f.kind) {
         case 'capture': {
-          // 两圈势力色冲击波 + 旗面翻转
-          for (const k of [0, 0.25]) {
+          // 城破：火舌、烟柱、旧旗倒下、新旗升起、两圈冲击波
+          for (const k of [0, 0.22]) {
             const q = Math.max(0, Math.min(1, (p - k) / 0.6));
             if (q <= 0 || q >= 1) continue;
             g.strokeStyle = f.color ?? '#fff'; g.globalAlpha = 1 - q; g.lineWidth = 5 * (1 - q) + 1;
-            g.beginPath(); g.ellipse(0, 6, 12 + q * 70, (12 + q * 70) * 0.45, 0, 0, Math.PI * 2); g.stroke();
+            g.beginPath(); g.ellipse(0, 10, 14 + q * 80, (14 + q * 80) * 0.42, 0, 0, Math.PI * 2); g.stroke();
           }
-          const q = Math.min(1, p / 0.35);
+          g.globalAlpha = p > 0.8 ? (1 - p) / 0.2 : 1;
+          // 烟柱
+          for (let k = 0; k < 8; k++) {
+            const q = (p * 1.4 + k / 8) % 1;
+            g.fillStyle = `rgba(50,44,40,${0.5 * (1 - q)})`;
+            g.beginPath(); g.arc(Math.sin(k * 1.7 + q * 3) * 6 + q * 12, -10 - q * 60, 5 + q * 12, 0, Math.PI * 2); g.fill();
+          }
+          // 火舌
+          for (let k = 0; k < 6; k++) {
+            const fl = 0.6 + 0.4 * Math.sin(time / 70 + k * 2);
+            const x = (k - 2.5) * 6, h0 = (10 + (k % 3) * 5) * fl * (p < 0.6 ? 1 : (1 - p) / 0.4);
+            const gr = g.createLinearGradient(x, 6, x, 6 - h0);
+            gr.addColorStop(0, 'rgba(255,90,20,0.95)'); gr.addColorStop(0.6, 'rgba(255,190,60,0.85)'); gr.addColorStop(1, 'rgba(255,240,180,0)');
+            g.fillStyle = gr; g.beginPath(); g.moveTo(x - 4, 6); g.quadraticCurveTo(x - 3, 6 - h0 * 0.6, x, 6 - h0); g.quadraticCurveTo(x + 3, 6 - h0 * 0.6, x + 4, 6); g.fill();
+          }
+          // 旗：旧旗倒下，新旗升起
+          const q1 = Math.min(1, p / 0.35), q2 = Math.max(0, Math.min(1, (p - 0.35) / 0.3));
+          g.save(); g.translate(-8, 6); g.rotate(-q1 * 1.4);
+          g.strokeStyle = '#2a1d12'; g.lineWidth = 2; g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -34); g.stroke();
+          g.fillStyle = f.color2 ?? '#777'; g.globalAlpha *= 1 - q2 * 0.8; g.fillRect(0, -34, 16, 11);
+          g.restore();
+          if (q2 > 0) {
+            g.save(); g.translate(8, 6);
+            g.strokeStyle = '#2a1d12'; g.lineWidth = 2.2; g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -40 * q2); g.stroke();
+            const wv = Math.sin(time / 120) * 2;
+            g.fillStyle = f.color ?? '#c8352a'; g.beginPath(); g.moveTo(0, -40 * q2); g.lineTo(20, -40 * q2 + 2 + wv); g.lineTo(20, -40 * q2 + 14 + wv); g.lineTo(0, -40 * q2 + 12); g.closePath(); g.fill();
+            g.strokeStyle = '#f0cf86'; g.lineWidth = 1; g.stroke();
+            g.fillStyle = '#fff6e2'; g.font = '700 9px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(f.text ?? '', 10, -40 * q2 + 7 + wv / 2);
+            g.restore();
+          }
+          if (p > 0.55) { const q = Math.min(1, (p - 0.55) / 0.15); g.translate(0, -58); stamp(g, '破', '#8f2015', 1 + (1 - q) * 1.4); }
+          break;
+        }
+        case 'clash': {
+          // 两刃相交，火星四溅，尘土翻滚
+          const q = Math.min(1, p / 0.3);
           g.globalAlpha = p > 0.75 ? (1 - p) / 0.25 : 1;
-          g.scale(1, Math.abs(Math.cos((1 - q) * Math.PI)) || 0.05);
-          stamp(g, f.text ?? '易', f.color ?? '#c8352a', 1.2 + (1 - q) * 0.8);
+          for (let k = 0; k < 6; k++) { const a = k * 1.05 + p * 2; g.fillStyle = `rgba(170,140,100,${0.35 * (1 - p)})`; g.beginPath(); g.arc(Math.cos(a) * (10 + p * 26), 8 + Math.sin(a) * 6, 8 + p * 10, 0, Math.PI * 2); g.fill(); }
+          for (const sd of [-1, 1]) {
+            g.save(); g.rotate(sd * (0.9 - q * 0.9 + 0.55)); g.translate(0, -2);
+            g.strokeStyle = '#e8e8e0'; g.lineWidth = 3; g.lineCap = 'round'; g.beginPath(); g.moveTo(0, 18); g.lineTo(0, -22); g.stroke();
+            g.strokeStyle = '#6b4a2a'; g.lineWidth = 4; g.beginPath(); g.moveTo(-6, 14); g.lineTo(6, 14); g.moveTo(0, 14); g.lineTo(0, 24); g.stroke();
+            g.restore();
+          }
+          if (q >= 1) for (let k = 0; k < 12; k++) {
+            const a = k * Math.PI / 6 + p * 3, r1 = 6 + (p - 0.3) * 60;
+            g.strokeStyle = `rgba(255,${200 - k * 6},90,${1 - p})`; g.lineWidth = 2;
+            g.beginPath(); g.moveTo(Math.cos(a) * r1, Math.sin(a) * r1 - 4); g.lineTo(Math.cos(a) * (r1 + 8), Math.sin(a) * (r1 + 8) - 4); g.stroke();
+          }
+          break;
+        }
+        case 'treaty': {
+          // 盟书展开，两方各落一印
+          const q = Math.min(1, p / 0.3);
+          g.globalAlpha = p > 0.8 ? (1 - p) / 0.2 : 1;
+          const w = 70 * q;
+          g.fillStyle = '#efe2c2'; g.fillRect(-w / 2, -40, w, 34);
+          g.strokeStyle = '#8c6a35'; g.lineWidth = 1.5; g.strokeRect(-w / 2, -40, w, 34);
+          g.fillStyle = '#5a3a1a'; g.fillRect(-w / 2 - 4, -43, 5, 40); g.fillRect(w / 2 - 1, -43, 5, 40);
+          if (q >= 1) {
+            g.strokeStyle = 'rgba(40,30,20,0.6)'; g.lineWidth = 1; for (let k = 0; k < 4; k++) { g.beginPath(); g.moveTo(-26 + k * 8, -34); g.lineTo(-26 + k * 8, -14); g.stroke(); }
+            const s1 = Math.min(1, Math.max(0, (p - 0.35) / 0.12)), s2 = Math.min(1, Math.max(0, (p - 0.5) / 0.12));
+            if (s1 > 0) { g.save(); g.translate(12, -24); stamp(g, '盟', f.color ?? '#c8352a', 0.55 + (1 - s1) * 1.2); g.restore(); }
+            if (s2 > 0) { g.save(); g.translate(26, -20); stamp(g, f.text ?? '约', f.color2 ?? '#2f6f8f', 0.55 + (1 - s2) * 1.2); g.restore(); }
+          }
+          break;
+        }
+        case 'card': {
+          // 政令卡：翻转落下，再升起淡去
+          const im = f.img ? imgOf(f.img) : null;
+          const q = Math.min(1, p / 0.25);
+          g.globalAlpha = p > 0.75 ? (1 - p) / 0.25 : 1;
+          g.translate(0, -44 - Math.max(0, p - 0.5) * 30);
+          g.scale(Math.abs(Math.cos((1 - q) * Math.PI)) * 0.95 + 0.05, 1);
+          g.fillStyle = '#2a1d12'; g.fillRect(-26, -34, 52, 68);
+          g.strokeStyle = '#f0cf86'; g.lineWidth = 2; g.strokeRect(-26, -34, 52, 68);
+          if (im?.complete && q > 0.5) g.drawImage(im, -23, -31, 46, 44);
+          g.fillStyle = '#f0cf86'; g.font = '700 11px "Ma Shan Zheng", "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+          if (q > 0.5) g.fillText(f.text ?? '', 0, 24);
+          break;
+        }
+        case 'march': {
+          // 新募之兵列队入城
+          g.globalAlpha = p > 0.8 ? (1 - p) / 0.2 : 1;
+          for (let k = 0; k < 5; k++) {
+            const q = Math.max(0, Math.min(1, p * 1.6 - k * 0.12));
+            const x = -60 + q * 56 + k * 2, y = 14 - Math.sin(q * Math.PI) * 6 + (k % 2) * 3;
+            const bob = Math.sin(time / 90 + k) * 1.2;
+            g.fillStyle = f.color ?? '#c8352a'; g.fillRect(x - 2.5, y - 9 + bob, 5, 8);
+            g.fillStyle = '#e8c49a'; g.beginPath(); g.arc(x, y - 11 + bob, 2.4, 0, Math.PI * 2); g.fill();
+            g.strokeStyle = '#3a2a1a'; g.lineWidth = 1; g.beginPath(); g.moveTo(x + 3, y - 2 + bob); g.lineTo(x + 3, y - 18 + bob); g.stroke();
+          }
           break;
         }
         case 'battle': {

@@ -91,3 +91,49 @@ describe('战斗结算', () => {
     expect(breach).toBeGreaterThan(10);
   });
 });
+
+import { deploy, aiFormation, scout, counterOf } from '../src/core/battle';
+describe('布阵、探马、主将亲冲、水战', () => {
+  it('布阵按阵型重分三路兵力，总数不变；锋矢阵中军最厚', () => {
+    const b = deploy(field(20000, 20000), 'att', 'arrow');
+    const l = b.att.lanes.map(x => x.troops);
+    expect(l[1]).toBeGreaterThan(l[0]);
+    expect(Math.abs(l.reduce((a, c) => a + c, 0) - 20000)).toBeLessThan(5);
+    expect(b.form?.att).toBe('arrow');
+  });
+  it('阵型有用：方圆阵受伤少，以少敌多时电脑择方圆', () => {
+    const base = field(20000, 20000);
+    const sq = resolveRound(deploy(deploy(base, 'def', 'square'), 'att', 'wings'), { lanes: ['attack', 'attack', 'attack'] }, { lanes: ['hold', 'hold', 'hold'] });
+    const ar = resolveRound(deploy(deploy(base, 'def', 'arrow'), 'att', 'wings'), { lanes: ['attack', 'attack', 'attack'] }, { lanes: ['hold', 'hold', 'hold'] });
+    expect(lossesOf(sq, 'def')).toBeLessThan(lossesOf(ar, 'def'));
+    expect(aiFormation(field(8000, 20000), 'att')).toBe('square');
+  });
+  it('探马所报大多是敌方真实命令；克制倍数可供判断', () => {
+    const b = field(20000, 20000, 9, { mou: 90 });
+    const sc = scout(b, 'att');
+    const real = aiChoice(b, 'def').lanes;
+    expect(sc.sure).toBeGreaterThan(0.7);
+    expect(sc.orders.filter((o, i) => o === real[i]).length).toBeGreaterThanOrEqual(2);
+    expect(counterOf(b, 'att', 'flank', 'hold')).toBeGreaterThan(1.25);
+    expect(counterOf(b, 'att', 'charge', 'hold')).toBeLessThan(1);
+  });
+  it('主将亲冲：一战一次，那一路杀伤更大', () => {
+    const b = deploy(deploy(field(20000, 20000), 'att', 'square'), 'def', 'square');
+    const plain = resolveRound(b, { lanes: ['attack', 'attack', 'attack'] }, { lanes: ['hold', 'hold', 'hold'] });
+    const led = resolveRound(b, { lanes: ['attack', 'attack', 'attack'], lead: 1 }, { lanes: ['hold', 'hold', 'hold'] });
+    expect(led.log[0].lanes[1].defLoss).toBeGreaterThan(plain.log[0].lanes[1].defLoss);
+    expect(led.att.led).toBe(true);
+    const again = resolveRound(led, { lanes: ['attack', 'attack', 'attack'], lead: 0 }, { lanes: ['hold', 'hold', 'hold'] });
+    expect(again.log[1].leads ?? []).toHaveLength(0);
+  });
+  it('水战：有专门的命令，火船有风大成', () => {
+    const nav = (w: 'wind' | 'clear') => createBattle({ id: 'n', kind: 'naval', node: 'x', nodeName: '江面', terrain: 'water', weather: w, att: side('甲', 15000, { gun: 0.2 }), def: side('乙', 15000), seed: 3 });
+    const b = nav('clear');
+    const { legalOrders } = { legalOrders: (x: BattleState) => x };
+    void legalOrders;
+    const wind = resolveRound(nav('wind'), { lanes: ['fireship', 'fireship', 'fireship'] }, { lanes: ['board', 'board', 'board'] });
+    const calm = resolveRound(nav('clear'), { lanes: ['fireship', 'fireship', 'fireship'] }, { lanes: ['board', 'board', 'board'] });
+    expect(lossesOf(wind, 'def')).toBeGreaterThan(lossesOf(calm, 'def'));
+    expect(autoResolve(b).over).toBe(true);
+  });
+});

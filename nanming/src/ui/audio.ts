@@ -326,7 +326,7 @@ function birds(t: number, bus: GainNode) {
 }
 
 /* ===================== 配乐：场景与调度 ===================== */
-export type Scene = 'title' | 'map' | 'battle' | 'victory' | 'lament' | 'silent';
+export type Scene = 'title' | 'pick' | 'map' | 'battle' | 'siege' | 'naval' | 'victory' | 'lament' | 'silent';
 interface Track {
   scene: Scene; bus: GainNode; amb: Amb; nextBar: number; bar: number; bpm: number;
   mel: Note[][]; key: { gong: number; mode: Mode }; lead: 'qin' | 'pipa' | 'zheng' | 'dizi'; color: string; seed: number; polity: string;
@@ -351,16 +351,20 @@ function startTrack(scene: Scene, t: number): Track {
   const a = ctx!;
   const bus = a.createGain(); bus.gain.setValueAtTime(0.0001, t); bus.gain.exponentialRampToValueAtTime(1, t + 2); bus.connect(musicBus);
   const pal = paletteOf(want.polity);
-  let key = { gong: pal.gong, mode: pal.mode }, lead = pal.lead, bpm = 66, color: string = pal.color;
-  if (scene === 'title') { key = { gong: 48, mode: 'yu' }; lead = 'qin'; bpm = 54; color = 'literati'; }
-  if (scene === 'battle') { key = { gong: pal.gong, mode: 'shang' }; lead = 'pipa'; bpm = 118; }
+  let key = { gong: pal.gong, mode: pal.mode }, lead = pal.lead, bpm = 78, color: string = pal.color;
+  if (scene === 'title') { key = { gong: 48, mode: 'yu' }; lead = 'qin'; bpm = 72; color = 'literati'; }
+  if (scene === 'pick') { key = { gong: 50, mode: 'shang' }; lead = 'pipa'; bpm = 100; color = 'folk'; }
+  if (scene === 'battle') { key = { gong: pal.gong, mode: 'shang' }; lead = 'pipa'; bpm = 138; }
+  if (scene === 'siege') { key = { gong: pal.gong - 2, mode: 'yu' }; lead = 'pipa'; bpm = 104; }
+  if (scene === 'naval') { key = { gong: pal.gong, mode: 'zhi' }; lead = 'dizi'; bpm = 116; color = 'sea'; }
   if (scene === 'victory') { key = { gong: 55, mode: 'gong' }; lead = 'zheng'; bpm = 96; }
   if (scene === 'lament') { key = { gong: 50, mode: 'yu' }; lead = 'qin'; bpm = 50; }
   const lo = lead === 'qin' ? key.gong + 2 : lead === 'dizi' ? key.gong + 14 : key.gong + 9;
   const sc = scale(key.gong, key.mode, lo, lo + 17);
   const seed = want.seed * 7 + scene.length * 131 + key.gong;
-  const mel = melody(seed, sc, scene === 'battle' ? 2 : 4, { rest: scene === 'title' || scene === 'lament' ? 0.22 : scene === 'battle' ? 0.03 : 0.12, busy: scene === 'battle' ? 0.9 : 0.3 });
-  const ambKind = scene === 'battle' ? 'battle' : scene === 'silent' ? 'none' : color === 'sea' || want.polity === 'zheng' ? 'sea' : 'wind';
+  const war = scene === 'battle' || scene === 'siege' || scene === 'naval';
+  const mel = melody(seed, sc, war ? 2 : 4, { rest: scene === 'title' || scene === 'lament' ? 0.15 : war ? 0.03 : 0.1, busy: war || scene === 'pick' ? 0.9 : 0.45 });
+  const ambKind = scene === 'battle' || scene === 'siege' ? 'battle' : scene === 'silent' ? 'none' : color === 'sea' || want.polity === 'zheng' ? 'sea' : 'wind';
   return { scene, bus, amb: ambience(ambKind, t), nextBar: t + 0.4, bar: 0, bpm, mel, key, lead, color, seed, polity: want.polity };
 }
 
@@ -375,7 +379,7 @@ function tick() {
     if (!track) return;
   }
   const tr = track;
-  const barDur = () => 4 * 60 / (tr.bpm + (tr.scene === 'map' ? intensity * 22 : tr.scene === 'battle' ? intensity * 26 : 0));
+  const barDur = () => 4 * 60 / (tr.bpm + (tr.scene === 'map' ? intensity * 24 : tr.scene === 'battle' || tr.scene === 'siege' || tr.scene === 'naval' ? intensity * 24 : 0));
   while (tr.nextBar < now + barDur() * 1.2) {
     scheduleBar(tr, tr.nextBar, barDur());
     tr.nextBar += barDur();
@@ -387,7 +391,8 @@ function tick() {
 function scheduleBar(tr: Track, t0: number, dur: number) {
   const beat = dur / 4;
   const bus = tr.bus;
-  const I = tr.scene === 'battle' ? 0.55 + intensity * 0.45 : intensity;
+  const war = tr.scene === 'battle' || tr.scene === 'siege' || tr.scene === 'naval';
+  const I = war ? 0.55 + intensity * 0.45 : intensity;
   const rng = makeRng(tr.seed + tr.bar * 977);
   // 主旋律：四句一轮；每句 bars 小节
   const sectionBars = beatsOf(tr.mel[0]) / 4;
@@ -410,7 +415,7 @@ function scheduleBar(tr: Track, t0: number, dur: number) {
       const m = n.midi + shift;
       const len = n.beats * beat;
       if (tr.lead === 'dizi') wind(when, m, len * 0.95, 'dizi', 0.18, bus, -0.15);
-      else pluck(when, m, tr.lead, (n.accent ? 0.42 : 0.32) * (tr.lead === 'pipa' ? 0.8 : 1), bus, { pan: -0.15, orn: tr.scene === 'battle' && n.beats >= 1 ? 'trem' : n.orn, dur: len + 1.5 });
+      else pluck(when, m, tr.lead, (n.accent ? 0.42 : 0.32) * (tr.lead === 'pipa' ? 0.8 : 1), bus, { pan: -0.15, orn: (war || tr.scene === 'pick') && n.beats >= 1 ? 'trem' : n.orn, dur: len + 1.5 });
       scheduledNotes++;
       // 琴的“散音”：长音下加低八度空弦
       if (tr.lead === 'qin' && n.beats >= 2 && rng.next() < 0.5) pluck(when + 0.02, m - 12, 'qin', 0.18, bus, { pan: 0.1 });
@@ -425,6 +430,43 @@ function scheduleBar(tr: Track, t0: number, dur: number) {
       if (tr.bar % 2 === 1 && tr.bar > 3) wind(t0 + beat * 0.5, root + 12 + (rng.next() < 0.5 ? 7 : 0), beat * 6, 'xiao', 0.09, bus, 0.25);
       if (tr.bar % 8 === 0) bell(t0, root + 24, 0.18, bus);
       if (tr.scene === 'lament' && tr.bar % 4 === 2) bowed(t0, root + 12, beat * 4, 0.05, bus, 0.3);
+      if (tr.scene === 'title') {
+        // 远处战鼓与号角：山雨欲来
+        drum(t0, 'big', 0.3, bus); drum(t0 + beat * 2.5, 'big', 0.18, bus); drum(t0 + beat * 3, 'big', 0.22, bus);
+        if (tr.bar % 2 === 1) for (let k = 0; k < 4; k++) drum(t0 + beat * 3 + k * beat / 4, 'tang', 0.05 + k * 0.025, bus, 0.2);
+        bowed(t0, root - 12, dur * 0.98, 0.035, bus, -0.2);
+        if (tr.bar % 8 === 4) horn(t0, root - 5, beat * 3.5, 0.08, bus);
+        if (tr.bar % 16 === 0 && tr.bar) gongHit(t0, 0.22, bus);
+      }
+      break;
+    }
+    case 'pick': {
+      // 群雄并起：琵琶轮指、堂鼓连击、唢呐一声
+      drum(t0, 'big', 0.38, bus); drum(t0 + beat * 2, 'big', 0.3, bus);
+      for (let k = 0; k < 8; k++) if (k % 2) drum(t0 + k * beat / 2, 'tang', 0.12, bus, k % 4 === 1 ? -0.25 : 0.25);
+      if (tr.bar % 4 === 3) for (let k = 0; k < 4; k++) drum(t0 + beat * 3 + k * beat / 4, 'war', 0.12 + k * 0.03, bus);
+      if (tr.bar % 4 === 0) { cymbal(t0, 0.06, bus); bowed(t0, root, beat * 4, 0.05, bus, 0.25); }
+      if (tr.bar % 8 === 6) suona(t0 + beat, root + 24, beat * 2.5, 0.05, bus);
+      break;
+    }
+    case 'siege': {
+      // 攻守城：沉重的大鼓、低号、锣声，节奏缓而压迫
+      drum(t0, 'big', 0.6, bus); drum(t0 + beat * 1.5, 'big', 0.4, bus); drum(t0 + beat * 2, 'big', 0.5, bus);
+      for (let k = 0; k < 4; k++) drum(t0 + k * beat + beat / 2, 'war', 0.12, bus, 0.3);
+      bowed(t0, root - 12, dur, 0.06, bus, -0.2); bowed(t0, root - 5, dur, 0.035, bus, 0.2);
+      if (tr.bar % 2 === 0) gongHit(t0 + beat * 3, 0.14, bus, 'big');
+      if (tr.bar % 4 === 1) horn(t0, root - 7, beat * 3, 0.1, bus);
+      if (tr.bar % 4 === 3) for (let k = 0; k < 8; k++) drum(t0 + beat * 2 + k * beat / 4, 'tang', 0.06 + k * 0.02, bus);
+      break;
+    }
+    case 'naval': {
+      // 水战：浪里的鼓点与唢呐，笛声穿过
+      drum(t0, 'big', 0.45, bus); drum(t0 + beat * 2.5, 'big', 0.35, bus);
+      for (let k = 0; k < 8; k++) if (k % 2) drum(t0 + k * beat / 2, 'war', 0.13, bus, k % 4 === 1 ? -0.3 : 0.3);
+      if (tr.bar % 4 === 0) { gongHit(t0, 0.12, bus, 'small'); cymbal(t0, 0.06, bus); }
+      if (tr.bar % 4 === 2) suona(t0 + beat, root + 19, beat * 2.5, 0.05, bus);
+      if (tr.bar % 8 === 0) horn(t0, root - 5, beat * 3, 0.08, bus);
+      bowed(t0, root - 12, dur, 0.04, bus, 0.2);
       break;
     }
     case 'map': {
@@ -433,6 +475,9 @@ function scheduleBar(tr: Track, t0: number, dur: number) {
       if (tr.bar % 2 === 1) pluck(t0 + beat * 2, root - 5, 'zheng', 0.12, bus, { pan: 0.2 });
       // 箫或二胡：和声长音
       if (tr.bar % 4 === 2) (tr.color === 'folk' ? bowed : (t: number, m: number, d: number, v: number, b: GainNode, p: number) => wind(t, m, d, 'xiao', v * 1.4, b, p))(t0, root + 7, beat * 7, 0.06, bus, 0.3);
+      // 底鼓：乱世不止，平时也有隐约的鼓点
+      drum(t0, 'tang', 0.07 + I * 0.08, bus, -0.3); drum(t0 + beat * 2, 'tang', 0.05 + I * 0.06, bus, -0.3);
+      if (tr.bar % 2 === 1) drum(t0 + beat * 3.5, 'war', 0.05, bus, 0.3);
       // 梆子计时：太平时轻敲
       if (I < 0.3 && tr.bar % 4 === 3) wood(t0 + beat * 3, 0.05, bus, 1, 0.4);
       // 鸟鸣：太平之世

@@ -173,7 +173,8 @@ export type Order =
   | { id: string; kind: 'command'; vassal: FactionId; army: ArmyId; order: ArmyOrder; silver: number }
   | { id: string; kind: 'reward'; vassal: FactionId; silver: number }
   | { id: string; kind: 'independence' }
-  | { id: string; kind: 'war'; target: FactionId };
+  | { id: string; kind: 'war'; target: FactionId }
+  | { id: string; kind: 'raise'; node: NodeId; char: CharId; troops: number; navy: boolean };
 
 /** 跨月进行中的交涉 */
 export interface Mission {
@@ -219,7 +220,7 @@ export interface BattleRecord {
   id: string;
   turn: number;
   node: NodeId;
-  kind: 'field' | 'siege';
+  kind: 'field' | 'siege' | 'naval';
   attacker: FactionId;
   defender: FactionId;
   winner: 'attacker' | 'defender';

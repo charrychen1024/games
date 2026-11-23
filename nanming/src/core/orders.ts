@@ -4,11 +4,11 @@ import { bump, report, nodeName, factionName, charName, troopsText, friendly, to
 import { setArmyOrder, capture } from './military';
 import { RECRUIT_SILVER, POLICY_NAME } from './economy';
 import { rngFor } from './rng';
-import { shortestPath, neighbors } from '../data/geography';
+import { shortestPath, neighbors, NODE } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
   policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', reinforce: '增兵',
-  envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立', war: '宣战',
+  envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立', war: '宣战', raise: '出兵',
 };
 
 /** 命令的一句话描述 */
@@ -25,6 +25,7 @@ export function describeOrder(s: GameState, o: Order): string {
     case 'command': return `号令${factionName(s, o.vassal)}：${s.armies[o.army]?.name ?? ''}${armyOrderText(o.order)}${o.silver ? `（犒银 ${o.silver} 两）` : ''}`;
     case 'reward': return `犒赏${factionName(s, o.vassal)}银 ${o.silver} 两`;
     case 'war': return `向${factionName(s, o.target)}宣战`;
+    case 'raise': return `${nodeName(o.node)}出兵 ${o.troops} 人，${charName(s, o.char)}统${o.navy ? '水师' : '领'}`;
     case 'independence': return `脱离${factionName(s, s.factions[s.player]?.overlord ?? '')}，自立门户`;
   }
 }
@@ -96,6 +97,19 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       if (!a || a.faction !== o.vassal) return '军队不属该部';
       const cap = s.cities[s.factions[f].capital];
       if (o.silver > (cap?.silver ?? 0)) return '府库不足';
+      return null;
+    }
+    case 'raise': {
+      const c = s.cities[o.node];
+      if (!c || c.controller !== f) return '不是你的城';
+      if (s.sieges[o.node]) return '城被围，出不了兵';
+      const ch = s.chars[o.char];
+      if (!ch || ch.faction !== f || ch.status !== 'active') return '此人不可统兵';
+      if (Object.values(s.armies).some(a => a.commander === o.char)) return '此人已在统兵';
+      if (s.missions.some(m => (m.order as any).char === o.char)) return '此人正在出使';
+      if (o.troops < 1000) return '至少一千人';
+      if (o.troops > c.garrison - 1000) return '城中至少留一千人';
+      if (o.navy && NODE[o.node]?.kind !== 'port' && !neighbors(o.node).some(n => n.route.kind === 'river' || n.route.kind === 'sea')) return '此城不临江海，不能编练水师';
       return null;
     }
     case 'war': {
@@ -213,6 +227,18 @@ export function applyOrder(s: GameState, f: string, o: Order) {
     case 'command':
       commandVassal(s, f, o, src);
       break;
+    case 'raise': {
+      const c = s.cities[o.node], ch = s.chars[o.char];
+      const pol = s.factions[f].polity;
+      const mix = o.navy ? { inf: 0.4, cav: 0, gun: 0.2, navy: 0.4 } : pol === 'qing' ? { inf: 0.45, cav: 0.4, gun: 0.15, navy: 0 } : pol === 'shun' || pol === 'xi' ? { inf: 0.6, cav: 0.3, gun: 0.1, navy: 0 } : { inf: 0.65, cav: 0.15, gun: 0.2, navy: 0 };
+      const aid = `a_${f}_${s.nextId++}`;
+      s.armies[aid] = { id: aid, name: `${ch.name}${o.navy ? '水师' : '部'}`, faction: f, commander: ch.id, troops: o.troops, mix, morale: Math.round(45 + c.minxin * 0.25), location: o.node, path: [], progress: 0, order: { kind: 'hold' }, supply: o.node, hunger: 0 };
+      ch.location = o.node;
+      if (c.governor === ch.id) c.governor = undefined;
+      bump(s, o.node, 'garrison', -o.troops, `编成${ch.name}${o.navy ? '水师' : '部'}出征`, src);
+      report(s, { cat: '军报', node: o.node, text: `${nodeName(o.node)}抽驻军 ${troopsText(o.troops)} 人编成${ch.name}${o.navy ? '水师' : '部'}，听候调遣。`, src });
+      break;
+    }
     case 'war': {
       const tgt = topOf(s, o.target);
       setStance(s, f, tgt, 'war');
@@ -289,6 +315,7 @@ function commandVassal(s: GameState, f: string, o: Extract<Order, { kind: 'comma
   switch (ob.result) {
     case 'comply':
       setArmyOrder(s, a, o.order);
+      if (f === s.player) s.flags['commanded_' + a.id] = o.order.kind === 'hold' ? -1 : s.turn;
       break;
     case 'delay':
       s.delayed.push({ ...o, silver: 0, id: o.id + 'd' });
@@ -302,10 +329,12 @@ function commandVassal(s: GameState, f: string, o: Extract<Order, { kind: 'comma
         s.armies[id] = { ...structuredClone(a), id, name: a.name + '分兵', troops: part, commander: deputy.id, path: [], progress: 0 };
         a.troops -= part;
         setArmyOrder(s, s.armies[id], o.order);
+        if (f === s.player) s.flags['commanded_' + id] = s.turn;
         text += `只遣${deputy.name}率半数 ${troopsText(part)} 人前往，主力仍留原地。`;
       } else {
         a.morale = Math.max(5, a.morale - 10);
         setArmyOrder(s, a, o.order);
+        if (f === s.player) s.flags['commanded_' + a.id] = s.turn;
         text += '勉强出兵，军无斗志。';
       }
       break;

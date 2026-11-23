@@ -133,7 +133,11 @@ export function buildFieldBattle(s: GameState, c: Contact): BattleState | null {
   if (!defArmies.length) return null;
   const att = combineSide(s, attArmies, { foeFaction: defArmies[0].faction });
   const def = combineSide(s, defArmies, { foeFaction: last.faction });
-  return createBattle({ id: newId(s, 'bt'), kind: 'field', node: c.node, nodeName: nodeName(c.node), terrain: terrainOf(c.node), weather: weatherFor(s, c.node),
+  // 港口、渡口，或江边相遇而两军多为水师：水战
+  const n = NODE[c.node];
+  const watery = n.kind === 'port' || n.kind === 'ferry' || neighbors(c.node).some(x => x.route.kind === 'river' || x.route.kind === 'sea');
+  const naval = watery && att.mix.navy >= 0.25 && def.mix.navy >= 0.2;
+  return createBattle({ id: newId(s, 'bt'), kind: naval ? 'naval' : 'field', node: c.node, nodeName: nodeName(c.node), terrain: naval ? 'water' : terrainOf(c.node), weather: weatherFor(s, c.node),
     att, def, seed: rngFor(s.seed, 'battle', s.turn, c.node).int(1, 2 ** 30) });
 }
 
@@ -178,10 +182,10 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
   const involved = [b.att.faction, b.def.faction].some(f => topOf(s, f) === s.player || friendly(s, f, s.player));
   const direct = [b.att.faction, b.def.faction].includes(s.player) || b.att.armies.concat(b.def.armies).some(id => s.armies[id]?.faction === s.player);
   report(s, { cat: '军报', urgent: direct, node: b.node, faction: involved ? undefined : b.att.faction,
-    text: `${nodeName(b.node)}${b.kind === 'field' ? '野战' : '攻城战'}：${b.att.commanderName}（${b.att.name}）对${b.def.commanderName}（${b.def.name}）。${summary}攻方折损 ${troopsText(attLoss)}，守方折损 ${troopsText(defLoss)}。`,
+    text: `${nodeName(b.node)}${b.kind === 'field' ? '野战' : b.kind === 'naval' ? '水战' : '攻城战'}：${b.att.commanderName}（${b.att.name}）对${b.def.commanderName}（${b.def.name}）。${summary}攻方折损 ${troopsText(attLoss)}，守方折损 ${troopsText(defLoss)}。`,
     src: { kind: 'battle', ref: b.id } });
 
-  if (b.kind === 'field') {
+  if (b.kind !== 'siege') {
     // 败方后撤
     const losers = (b.winner === 'att' ? defArmies : attArmies).filter(a => s.armies[a.id]);
     if (b.outcome === 'rout' || b.outcome === 'repulsed') for (const a of losers) retreat(s, a, b.outcome === 'rout');
@@ -385,6 +389,8 @@ export function defectFaction(s: GameState, f: string, to: string) {
 /** 围城阶段的准备：建立/维持/解除围城，空城直接占领。返回需要打攻城战的城。 */
 export function updateSieges(s: GameState): string[] {
   const assaults: string[] = [];
+  // 所围之城已归友方或第三方停战：解围待命
+  for (const a of Object.values(s.armies)) if (a.order.kind === 'siege') { const c = s.cities[a.order.target]; if (!c || !hostile(s, a.faction, c.controller)) a.order = { kind: 'hold' }; }
   for (const node of Object.keys(s.cities).sort()) {
     const city = s.cities[node];
     const here = armiesAt(s, node).filter(a => hostile(s, a.faction, city.controller) && a.order.kind === 'siege' && a.order.target === node);
