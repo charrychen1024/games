@@ -8,11 +8,13 @@ import gsap from 'gsap';
 import { playBattle } from './battle';
 import { chime, alarm, click, isMuted, setMuted, setScene, setIntensity, audioState, getVolumes, setVolume, paper, scroll, stampSfx, orderSfx, endTurnSfx, monthSfx, captureSfx, distantBattle, choiceSfx, successSfx, denySfx, introSfx, hoverPluck } from './audio';
 import { dangerOf } from './musicTheory';
+import { portrait } from './portrait';
+import { cardHand, cardArt, type GameCard, type Chip } from './cards';
 import { resolveMonth, unificationProgress, type Answer } from '../core/turn';
 import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
 import { POLITIES } from '../data/factions';
-import { NODE, VICTORY_AREAS, shortestPath, pathDays } from '../data/geography';
-import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf } from '../core/state';
+import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan } from '../data/geography';
+import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
 import { POLICY_NAME, POLICY_HINT, monthlyIncome, upkeepOf, RECRUIT_SILVER } from '../core/economy';
 import { describeOrder, validateOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
@@ -28,7 +30,7 @@ const FIELD_NAME: Record<string, string> = { grain: '仓粮', silver: '府库', 
 const FIELD_ICON: Record<string, string> = { grain: 'grain', silver: 'silver', pop: 'pop', minxin: 'minxin', garrison: 'troops', wall: 'wall', order: 'order', agri: 'agri', commerce: 'commerce', edu: 'edu' };
 const CAT_ICON: Record<ReportCat, string> = { 急报: 'urgent', 军报: 'war', 易主: 'capture', 交涉: 'envoy', 内政: 'admin', 人事: 'person', 史事: 'event', 线索: 'clue' };
 const POLICY_ICON: Record<Policy, string> = { balanced: 'order', agri: 'agri', commerce: 'commerce', fortify: 'wall', relief: 'minxin', edu: 'edu', levy: 'reward' };
-const ORDER_ICON: Record<Order['kind'], string> = { policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown' };
+const ORDER_ICON: Record<Order['kind'], string> = { policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war' };
 const HINT_KEY = 'nanming:hint';
 
 /** 选势力卡片：难度、一句处境、目标 */
@@ -42,6 +44,13 @@ const PICK: { id: string; name: string; stars: number; z: number; line: string; 
 
 /** 内联图标元素 */
 export const ic = (name: string, cls = 'ic') => { const s = h('span', { style: { display: 'contents' } }); s.innerHTML = iconSvg(name, cls); return s; };
+/** 人物像 */
+export function face(s: GameState, id: string | undefined, size = 40, cls = 'face'): HTMLElement {
+  const c = id ? s.chars[id] : undefined;
+  if (!c) return h('div', { class: cls + ' empty', style: { width: size + 'px', height: size + 'px' } });
+  const f = s.factions[c.faction];
+  return h('img', { class: cls, src: portrait(c, f?.color ?? '#6a5a48', f?.polity ?? 'none'), alt: c.name, draggable: 'false', style: { width: size + 'px', height: Math.round(size * (cls === 'face' ? 1 : 1.25)) + 'px' } });
+}
 const meter = (v: number, color: string) => h('div', { class: 'meter' }, h('i', { style: { width: Math.max(0, Math.min(100, v)) + '%', background: color } }));
 const mcol = (v: number) => (v >= 60 ? 'var(--green)' : v >= 35 ? 'var(--amber)' : 'var(--red-2)');
 
@@ -85,7 +94,7 @@ export class App {
     this.bindMap(canvas);
     window.addEventListener('keydown', e => this.onKey(e));
     try { this.hintStep = Number(localStorage.getItem(HINT_KEY) ?? 0) >= 4 ? 9 : 0; } catch { this.hintStep = 0; }
-    const loop = (t: number) => { this.map.render(t); requestAnimationFrame(loop); };
+    const loop = (t: number) => { this.map.render(t); this.placeRing(); requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
     this.bindTips();
     document.addEventListener('contextmenu', e => { if (!(e.target as HTMLElement).closest('input, textarea')) e.preventDefault(); });
@@ -93,7 +102,7 @@ export class App {
     this.showTitle();
     (window as any).NM = this; // 调试与自动化测试入口
     (window as any).NM_nodePt = nodePt;
-    (window as any).NM_presets = { createGame, yangzhouSiegeState };
+    (window as any).NM_presets = { createGame, yangzhouSiegeState, name: nodeName };
     (window as any).NM_audio = audioState;
   }
 
@@ -109,7 +118,7 @@ export class App {
     this.map.view.state = createGame('hongguang', 1);
     this.map.view.selected = null; this.map.view.highlight = null; this.map.view.beacon = null;
     this.map.focus('wuchang', 1.1);
-    for (const id of ['#panel', '#report', '#hint', '#legend', '#menu']) $(id)?.classList.add('hidden');
+    for (const id of ['#panel', '#report', '#hint', '#legend', '#menu', '#armybar', '#ring']) $(id)?.classList.add('hidden');
     clear($('#orders'));
     clear($('#topbar')).className = '';
     setScene('title');
@@ -251,7 +260,7 @@ export class App {
 
   /* ================= 地图交互 ================= */
   bindMap(canvas: HTMLCanvasElement) {
-    canvas.addEventListener('pointerdown', e => { this.drag = { x: e.clientX, y: e.clientY, moved: false }; canvas.setPointerCapture(e.pointerId); });
+    canvas.addEventListener('pointerdown', e => { if (e.button !== 0) return; this.drag = { x: e.clientX, y: e.clientY, moved: false }; canvas.setPointerCapture(e.pointerId); });
     canvas.addEventListener('pointermove', e => {
       if (!this.s) return;
       const r = canvas.getBoundingClientRect();
@@ -275,6 +284,7 @@ export class App {
       this.showTip(p, e.clientX, e.clientY);
     });
     canvas.addEventListener('pointerup', e => {
+      if (e.button !== 0) return;
       canvas.classList.remove('dragging');
       const d = this.drag; this.drag = null;
       if (d && d.moved) return;
@@ -284,6 +294,18 @@ export class App {
       if (this.targetCb) { if (p?.kind === 'node') { const cb = this.targetCb; this.endTarget(); cb(p.id); } return; }
       if (!p) { this.closePanel(); return; }
       if (p.kind === 'node') this.selectNode(p.id); else this.selectArmy(p.id);
+    });
+    // 右键：选中军队时，右键点城即出征
+    canvas.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      if (!this.s || this.resolving) return;
+      const id = this.map.view.selectedArmy;
+      const a = id ? this.s.armies[id] : null;
+      if (!a || !this.isMineOrVassal(a.faction)) return;
+      const r = canvas.getBoundingClientRect();
+      const p = this.map.pick(e.clientX - r.left, e.clientY - r.top);
+      const node = p?.kind === 'node' ? p.id : p?.kind === 'army' ? this.s.armies[p.id]?.location : null;
+      if (node) { this.endTarget(); this.issueMarch(a.id, node); }
     });
     canvas.addEventListener('pointerleave', () => { this.hideTip(); this.map.view.hover = null; });
     canvas.addEventListener('wheel', e => {
@@ -325,6 +347,9 @@ export class App {
     }
     if (!this.s || this.resolving || !$('#modal').classList.contains('hidden')) return;
     if (e.key === 'r' || e.key === 'R') this.toggleReport();
+    const sel = this.map.view.selectedArmy;
+    if (sel && (e.key === 'm' || e.key === 'M')) $('#ring-march')?.click();
+    if (sel && (e.key === 'h' || e.key === 'H')) $('#ring-hold')?.click();
     if (e.key === '+' || e.key === '=') this.map.zoomAt(this.map.w / 2, this.map.h / 2, 1.25);
     if (e.key === '-') this.map.zoomAt(this.map.w / 2, this.map.h / 2, 0.8);
   }
@@ -345,7 +370,19 @@ export class App {
         row('troops', known ? troopsText(c.garrison) : roughTroops(c.garrison)),
         row('wall', `城防 ${Math.round(c.wall)}`));
       if (s.sieges[p.id]) tip.append(row('siege', `被围 · 第 ${s.sieges[p.id].months} 月`));
-      if (this.map.view.targeting?.path) { const a = s.armies[this.map.view.targeting.army]; tip.append(row('hourglass', `行程 ${pathDays(a.location, this.map.view.targeting.path)} 日`)); }
+      if (this.map.view.targeting) {
+        const mi = this.marchInfo(this.map.view.targeting.army, p.id);
+        tip.className = 'hud march';
+        clear(tip).append(h('div', { class: 'tt-h' }, h('span', { style: { width: '12px', height: '12px', borderRadius: '50%', background: f.color, display: 'inline-block', border: '1.5px solid #fff' } }), n.name, h('small', null, `${f.short}${mi.rel === 'war' ? ' · 敌' : mi.rel === 'friend' ? ' · 友' : ' · 未交战'}`)));
+        if (!mi.path) tip.append(h('div', { class: 'mc-warn' }, ic('close'), '无路可达'));
+        else {
+          tip.append(h('div', { class: 'mc-days' }, h('b', null, String(mi.days)), ' 日', h('span', null, mi.days > 30 ? `约 ${Math.ceil(mi.days / 30)} 个月` : '本月可到')));
+          if (mi.days > 30 && mi.reach) tip.append(h('div', { class: 'tt-r' }, ic('calendar'), h('b', null, `本月行至${nodeName(mi.reach)}`)));
+          if (mi.blocked.length) tip.append(h('div', { class: 'mc-warn' }, ic('siege'), `途经敌城：${mi.blocked.map(nodeName).join('、')}，须先攻下`));
+          if (mi.rel === 'neutral') tip.append(h('div', { class: 'mc-warn' }, ic('war'), `与${s.factions[c.controller].short}未交战，进攻须宣战`));
+          tip.append(h('div', { class: 'mc-act' }, mi.rel === 'war' ? '左键：进攻' : mi.rel === 'friend' ? '左键：开赴' : '左键：宣战或开赴'));
+        }
+      }
     } else {
       const a = s.armies[p.id];
       const mine = this.isMineOrVassal(a.faction);
@@ -356,6 +393,46 @@ export class App {
     tip.style.top = Math.min(window.innerHeight - 140, y + 16) + 'px';
   }
   hideTip() { $('#tooltip').classList.add('hidden'); }
+
+  /** 行军估算：天数、本月走到哪、途经敌城、与目标的关系 */
+  marchInfo(armyId: string, node: string): { path: string[] | null; days: number; reach: string | null; blocked: string[]; rel: 'war' | 'friend' | 'neutral' } {
+    const s = this.s!, a = s.armies[armyId];
+    const start = a.progress > 0 && a.path.length ? a.path[0] : a.location;
+    const p0 = shortestPath(start, node, canSea(a));
+    const path = p0 ? (a.progress > 0 && a.path.length ? [a.path[0], ...p0] : p0) : null;
+    const ctrl = s.cities[node].controller;
+    const rel = hostile(s, a.faction, ctrl) ? 'war' : friendly(s, a.faction, ctrl) ? 'friend' : 'neutral';
+    if (!path) return { path, days: 0, reach: null, blocked: [], rel };
+    const plan = marchPlan(a.location, path, a.progress);
+    const reach = [...plan].reverse().find(x => x.day <= 30)?.node ?? null;
+    const blocked = path.slice(0, -1).filter(id => hostile(s, a.faction, s.cities[id]?.controller ?? '') && s.cities[id].garrison > 0);
+    return { path, days: plan.length ? plan[plan.length - 1].day : 0, reach, blocked, rel };
+  }
+  /** 出征：敌城即进攻，友城即开赴，未交战则问是否宣战 */
+  issueMarch(armyId: string, node: string, force?: 'move' | 'attack') {
+    const s = this.s!, a = s.armies[armyId];
+    if (!a) return;
+    const vassal = a.faction !== s.player;
+    const mi = this.marchInfo(armyId, node);
+    if (!mi.path) { this.toast('无路可达', 'close'); return; }
+    if (node === a.location && mi.rel !== 'war') { this.addOrder({ id: this.newOrderId(), kind: 'army', army: armyId, order: { kind: 'hold' } }); return; }
+    const send = (attack: boolean) => {
+      const order = node === a.location && attack ? { kind: 'siege' as const, target: node, assault: true } : { kind: 'move' as const, target: node, attack };
+      if (vassal) this.formCommand(armyId, order); else this.addOrder({ id: this.newOrderId(), kind: 'army', army: armyId, order });
+    };
+    if (mi.rel === 'war') { send(force !== 'move'); return; }
+    if (mi.rel === 'friend' || force === 'move') { send(false); return; }
+    const tgt = s.cities[node].controller, top = s.factions[tgt]?.overlord && !s.factions[s.factions[tgt].overlord!]?.defunct ? s.factions[tgt].overlord! : tgt;
+    const tf = s.factions[top];
+    this.modal('war', `向${tf.short}宣战？`, `${nodeName(node)}属${s.factions[tgt].name}，两家尚未交兵`, [
+      h('div', { class: 'war-ask' }, h('div', { class: 'wa-seal', style: { background: s.factions[s.player].color } }, polityOf(s, s.factions[s.player].polity).mark || s.factions[s.player].short), h('i', null, ic('war')), h('div', { class: 'wa-seal', style: { background: tf.color } }, polityOf(s, tf.polity).mark || tf.short)),
+      h('div', { class: 'note', style: { textAlign: 'center' } }, `宣战后${tf.name}全境与你为敌，军队行至${nodeName(node)}即攻城。行程 ${mi.days} 日${mi.days > 30 ? `（约 ${Math.ceil(mi.days / 30)} 个月）` : ''}。`),
+    ], [
+      this.cancelBtn(),
+      { label: '只开赴，不进攻', icon: 'move', onclick: () => { send(false); } },
+      { label: '宣战并进攻', icon: 'war', primary: true, id: 'war-ok', onclick: () => { this.addOrder({ id: this.newOrderId(), kind: 'war', target: top }); send(true); } },
+    ]);
+  }
 
   beginTarget(army: string, text: string, cb: (node: NodeId) => void) {
     this.map.view.targeting = { army, path: null };
@@ -390,7 +467,7 @@ export class App {
     this.orders.push(o);
     click();
     this.toast(describeOrder(s, o), ORDER_ICON[o.kind]);
-    this.renderOrders(); this.renderTop(); this.refreshPanel();
+    this.renderOrders(); this.renderTop(); this.refreshPanel(); this.renderArmyBar();
     if (this.hintStep <= 1) this.advanceHint(2);
     this.orderFx(o);
     return true;
@@ -424,7 +501,7 @@ export class App {
     const btn = $('#btn-next');
     if (btn) gsap.fromTo(btn, { scale: 1.08 }, { scale: 1, duration: 0.35, ease: 'power2.out' });
   }
-  removeOrder(id: string) { this.orders = this.orders.filter(o => o.id !== id); this.renderOrders(); this.renderTop(); this.refreshPanel(); }
+  removeOrder(id: string) { this.orders = this.orders.filter(o => o.id !== id); this.renderOrders(); this.renderTop(); this.refreshPanel(); this.renderArmyBar(); }
   toast(text: string, icon = 'info') {
     if (icon === 'close') denySfx();
     const el = h('div', { class: 'hud' }, ic(icon), text);
@@ -434,7 +511,7 @@ export class App {
   }
 
   /* ================= 顶栏 ================= */
-  renderAll() { this.renderTop(); this.renderOrders(); this.refreshPanel(); this.updatePlanned(); }
+  renderAll() { this.renderTop(); this.renderOrders(); this.refreshPanel(); this.updatePlanned(); this.renderArmyBar(); }
 
   renderTop() {
     const s = this.s!;
@@ -546,8 +623,66 @@ export class App {
     this.map.view.selectedArmy = id;
     this.map.view.selected = this.s!.armies[id]?.location ?? null;
     this.renderArmy(id);
+    this.showRing(id);
+    this.renderArmyBar();
   }
-  closePanel() { $('#panel').classList.add('hidden'); this.map.view.selected = null; this.map.view.selectedArmy = null; }
+  closePanel() { $('#panel').classList.add('hidden'); this.map.view.selected = null; this.map.view.selectedArmy = null; this.hideRing(); this.renderArmyBar(); }
+
+  /* ================= 军队栏与军令环 ================= */
+  renderArmyBar() {
+    const bar = $('#armybar');
+    if (!this.s) { bar.classList.add('hidden'); return; }
+    const s = this.s;
+    clear(bar).classList.remove('hidden');
+    const mine = Object.values(s.armies).filter(a => a.faction === s.player);
+    const vas = Object.values(s.armies).filter(a => s.factions[a.faction]?.overlord === s.player);
+    const chip = (a: typeof mine[number]) => {
+      const pend = this.orders.find(o => (o.kind === 'army' || o.kind === 'command') && o.army === a.id);
+      const st = pend ? '已下令' : a.path.length ? `行军 · 余 ${Math.max(1, pathDays(a.location, a.path) - a.progress)} 日` : a.order.kind === 'siege' ? (a.order.assault ? '攻城' : '围城') : '驻扎';
+      return h('button', { class: 'achip' + (this.map.view.selectedArmy === a.id ? ' on' : '') + (pend ? ' pend' : '') + (a.faction !== s.player ? ' vas' : ''), 'data-army': a.id, 'data-tip': `${a.name} · ${nodeName(a.location)}`,
+        onclick: () => { click(); this.selectArmy(a.id); this.map.flyTo(a.location, Math.max(this.map.cam.z, 2)); } },
+      face(s, a.commander, 34), h('div', { class: 'ac-t' }, h('b', null, a.name.replace(/部$/, '')), h('small', null, st)), h('span', { class: 'ac-n' }, wan(a.troops)));
+    };
+    bar.append(h('div', { class: 'ab-h' }, ic('army'), `我军 ${mine.length}`));
+    for (const a of mine) bar.append(chip(a));
+    if (vas.length) { bar.append(h('div', { class: 'ab-h' }, ic('urgent'), `诸镇 ${vas.length}`)); for (const a of vas) bar.append(chip(a)); }
+    if (!mine.length && !vas.length) bar.append(h('div', { class: 'ab-none' }, '尚无野战军：在城中“募兵”，驻军充足后编成新军'));
+  }
+  showRing(id: string) {
+    const s = this.s!, a = s.armies[id];
+    const ring = $('#ring');
+    if (!a || !this.isMineOrVassal(a.faction) || this.resolving) { this.hideRing(); return; }
+    const vassal = a.faction !== s.player;
+    const here = s.cities[a.location];
+    const B = (bid: string, icon: string, label: string, key: string, fn: () => void) => h('button', { class: 'rbtn', id: bid, 'data-tip': `${label}${key ? `（${key}）` : ''}`, onclick: (e: Event) => { e.stopPropagation(); click(); fn(); } }, ic(icon), h('span', null, label));
+    const btns: HTMLElement[] = [
+      B('ring-march', 'move', vassal ? '开赴' : '出征', 'M', () => this.beginTarget(id, `点选${a.name}要去的城（敌城即进攻）`, n => this.issueMarch(id, n))),
+      B('ring-hold', 'hold', '驻扎', 'H', () => vassal ? this.formCommand(id, { kind: 'hold' }) : this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'hold' } })),
+    ];
+    if (!vassal && a.progress === 0 && here && hostile(s, s.player, here.controller)) {
+      btns.push(B('ring-storm', 'storm', '攻城', '', () => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'siege', target: a.location, assault: true } })));
+      btns.push(B('ring-block', 'blockade', '围困', '', () => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'siege', target: a.location, assault: false } })));
+    } else if (!vassal && a.progress === 0 && here?.controller === s.player) btns.push(B('ring-reinforce', 'reinforce', '拨兵', '', () => this.formReinforce(id)));
+    if (vassal) btns.push(B('ring-reward', 'reward', '犒赏', '', () => this.formReward(a.faction)));
+    clear(ring).append(...btns);
+    const n = btns.length, R = 58;
+    btns.forEach((b, i) => { const ang = -Math.PI / 2 + (i - (n - 1) / 2) * 0.85; b.style.left = Math.cos(ang) * R + 'px'; b.style.top = Math.sin(ang) * R + 'px'; });
+    ring.classList.remove('hidden');
+    ring.dataset.army = id;
+    this.placeRing();
+    gsap.fromTo('#ring .rbtn', { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.25, stagger: 0.04, ease: 'back.out(2)' });
+  }
+  hideRing() { const r = $('#ring'); r.classList.add('hidden'); delete r.dataset.army; }
+  placeRing() {
+    const ring = $('#ring');
+    const id = ring.dataset.army;
+    if (!id || ring.classList.contains('hidden')) return;
+    if (this.map.view.targeting || !this.s?.armies[id]) { ring.style.opacity = '0'; ring.style.pointerEvents = 'none'; return; }
+    ring.style.opacity = ''; ring.style.pointerEvents = '';
+    const st = this.map.stacks.find(x => x.armies.includes(id));
+    if (!st) return;
+    ring.style.transform = `translate(${st.sx}px, ${st.sy}px)`;
+  }
   refreshPanel() {
     this.updatePlanned();
     if ($('#panel').classList.contains('hidden')) return;
@@ -718,7 +853,7 @@ export class App {
     const f = s.factions[a.faction];
     const mine = this.isMineOrVassal(a.faction);
     return h('div', { class: 'unit', 'data-army': id, onclick: () => this.selectArmy(id) },
-      h('div', { class: 'coin', style: { background: f.color } }, charName(s, a.commander).slice(0, 1)),
+      face(s, a.commander, 36, 'face round'),
       h('div', { class: 'nm' }, h('b', null, a.name), h('small', null, `${f.short} · ${armyOrderText(a.order)}`)),
       h('span', { class: 'chipnum' }, mine ? wan(a.troops) : roughTroops(a.troops)));
   }
@@ -738,7 +873,7 @@ export class App {
     const sec = h('div', { class: 'sec' });
     panel.append(sec);
     if (cmd) sec.append(h('div', { class: 'unit', style: { marginTop: '12px' }, onclick: () => this.openChar(cmd.id) },
-      h('div', { class: 'portrait', style: { background: f.color, width: '48px', height: '48px', fontSize: '26px' } }, cmd.name.slice(0, 1)),
+      face(s, cmd.id, 52, 'face round'),
       h('div', { class: 'nm' }, h('b', null, cmd.name), h('small', null, cmd.title)),
       h('span', { class: 'chipnum' }, `统 ${cmd.ab.tong} · 谋 ${cmd.ab.mou}`)));
     sec.append(h('div', { class: 'tiles', style: { marginTop: '8px' } },
@@ -758,8 +893,8 @@ export class App {
     if (mine) {
       sec.append(h('div', { class: 'sec-title' }, ic('war'), '军令'));
       const acts = h('div', { class: 'acts' },
-        A('act-move', 'move', '行军', () => this.beginTarget(id, `点选${a.name}要去的城`, n => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'move', target: n, attack: false } }))),
-        A('act-attack', 'attack', '进攻', () => this.beginTarget(id, `点选${a.name}要攻的城`, n => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'move', target: n, attack: true } }))),
+        A('act-move', 'move', '行军', () => this.beginTarget(id, `点选${a.name}要去的城`, n => this.issueMarch(id, n, 'move'))),
+        A('act-attack', 'attack', '进攻', () => this.beginTarget(id, `点选${a.name}要攻的城`, n => this.issueMarch(id, n, 'attack'))),
         A('act-hold', 'hold', '驻扎', () => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'hold' } })),
       );
       const here = s.cities[a.location];
@@ -772,8 +907,8 @@ export class App {
       sec.append(h('div', { class: 'sec-title' }, ic('urgent'), `号令 · 服从 ${f.loyalty}`));
       sec.append(meter(f.loyalty ?? 50, mcol(f.loyalty ?? 50)));
       sec.append(h('div', { class: 'acts', style: { marginTop: '8px' } },
-        A('act-command-move', 'move', '开赴', () => this.beginTarget(id, `点选要${f.short}部去的城`, n => this.formCommand(id, { kind: 'move', target: n, attack: false }))),
-        A('act-command-attack', 'attack', '进攻', () => this.beginTarget(id, `点选要${f.short}部攻的城`, n => this.formCommand(id, { kind: 'move', target: n, attack: true }))),
+        A('act-command-move', 'move', '开赴', () => this.beginTarget(id, `点选要${f.short}部去的城`, n => this.issueMarch(id, n, 'move'))),
+        A('act-command-attack', 'attack', '进攻', () => this.beginTarget(id, `点选要${f.short}部攻的城`, n => this.issueMarch(id, n, 'attack'))),
         A('act-command-hold', 'hold', '驻守', () => this.formCommand(id, { kind: 'hold' })),
         A('act-reward', 'reward', '犒赏', () => this.formReward(a.faction)),
       ));
@@ -781,10 +916,10 @@ export class App {
   }
 
   /* ================= 弹窗 ================= */
-  modal(icon: string, title: string, sub: string, body: (HTMLElement | string | null)[], buttons: { label: string; icon?: string; primary?: boolean; id?: string; onclick: () => void | boolean }[]) {
+  modal(icon: string, title: string, sub: string, body: (HTMLElement | string | null)[], buttons: { label: string; icon?: string; primary?: boolean; id?: string; onclick: () => void | boolean }[], size?: 'wide') {
     const m = clear($('#modal'));
     m.classList.remove('hidden');
-    const dlg = h('div', { class: 'dialog hud', role: 'dialog' },
+    const dlg = h('div', { class: 'dialog hud' + (size ? ' ' + size : ''), role: 'dialog' },
       h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic(icon)), h('div', null, h('h2', null, title), sub ? h('small', null, sub) : null)),
       h('div', { class: 'db' }, ...body));
     if (buttons.length) {
@@ -814,13 +949,21 @@ export class App {
   formPolicy(node: string) {
     const s = this.s!, c = s.cities[node];
     const cur = (this.orders.find(o => o.kind === 'policy' && o.node === node) as any)?.policy ?? c.policy;
-    const grid = h('div', { class: 'grid-opts' });
-    for (const p of Object.keys(POLICY_NAME) as Policy[]) {
-      grid.append(h('button', { class: 'gopt' + (p === cur ? ' on' : ''), 'data-policy': p, onclick: () => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'policy', node, policy: p }); } },
-        ic(POLICY_ICON[p]), h('b', null, POLICY_NAME[p]), h('small', null, POLICY_HINT[p])));
-    }
-    this.modal('policy', '方针', `${nodeName(node)} · 持续执行`, [grid], [this.cancelBtn()]);
+    const p = c.pop;
+    const COL: Record<Policy, string> = { balanced: '#8c6a35', agri: '#5f8a3a', commerce: '#b0702a', fortify: '#6d6f75', relief: '#b5342a', edu: '#3f6f8f', levy: '#7d1a12' };
+    const CH: Record<Policy, Chip[]> = {
+      balanced: [{ icon: 'order', text: '按常例征收' }],
+      agri: [{ icon: 'silver', text: `−${wan(p * 20)}/月`, tone: 'bad' }, { icon: 'agri', text: '农业 +1/月', tone: 'good' }],
+      commerce: [{ icon: 'silver', text: `−${wan(p * 15)}/月`, tone: 'bad' }, { icon: 'commerce', text: '商业 +1/月', tone: 'good' }],
+      fortify: [{ icon: 'silver', text: `−${wan(p * 40 + 2000)}/月`, tone: 'bad' }, { icon: 'wall', text: '城防 +3/月', tone: 'good' }],
+      relief: [{ icon: 'grain', text: `−${wan(p * 150)}/月`, tone: 'bad' }, { icon: 'minxin', text: '民心 +3/月', tone: 'good' }],
+      edu: [{ icon: 'silver', text: `−${wan(p * 25)}/月`, tone: 'bad' }, { icon: 'edu', text: '文教 +0.6/月', tone: 'good' }],
+      levy: [{ icon: 'silver', text: '赋税 +50%', tone: 'good' }, { icon: 'minxin', text: '民心 −3/月', tone: 'bad' }, { icon: 'order', text: '吏治 −1/月', tone: 'bad' }],
+    };
+    const cards: GameCard[] = (Object.keys(POLICY_NAME) as Policy[]).map((k, i) => ({ id: k, title: POLICY_NAME[k], art: cardArt(POLICY_ICON[k], COL[k], i), chips: CH[k], note: POLICY_HINT[k], on: k === cur, color: COL[k] }));
+    this.modal('policy', '方针', `${nodeName(node)} · 选一张，此后每月持续执行`, [cardHand(cards, k => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'policy', node, policy: k as Policy }); }, { stampText: '令' })], [this.cancelBtn()], 'wide');
   }
+
 
   formRecruit(node: string) {
     const s = this.s!, c = s.cities[node];
@@ -897,42 +1040,44 @@ export class App {
     const list = this.freeChars().filter(c => s.cities[node].governor !== c.id).sort((a, b) => b.ab.zheng - a.ab.zheng);
     if (!list.length) { this.toast('无人可用', 'close'); return; }
     const postOf = (id: string) => Object.values(s.cities).find(c => c.governor === id)?.id;
-    this.modal('appoint', '任命主官', `${nodeName(node)} · 政务越高收入越多 · 现任他城主官者调任`, [this.charPicker(list, 'zheng', id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'appoint', node, char: id }); }, c => { const p = postOf(c.id); return `政 ${c.ab.zheng}${p ? ` · 调离${nodeName(p)}` : ''}`; })], [this.cancelBtn()]);
+    const fc = s.factions[s.player].color, pol = s.factions[s.player].polity;
+    const cards: GameCard[] = list.map(c => { const p = postOf(c.id); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true, badge: `政 ${c.ab.zheng}`,
+      chips: [{ icon: 'admin', text: `收入 ${c.ab.zheng >= 60 ? '+' : ''}${Math.round((c.ab.zheng - 50) / 2)}%`, tone: c.ab.zheng >= 50 ? 'good' : 'bad' }, { icon: 'morale', text: `忠 ${Math.round(c.att.loyalty)}`, tone: c.att.loyalty >= 60 ? 'good' : 'bad' }],
+      note: p ? `调离${nodeName(p)}` : `现在${nodeName(c.location)}` }; });
+    this.modal('appoint', '任命主官', `${nodeName(node)} · 政务越高收入越多`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'appoint', node, char: id }); }, { stampText: '任' })], [this.cancelBtn()], 'wide');
   }
+
 
   formPersuade(node: string) {
     const s = this.s!;
     const list = this.freeChars().sort((a, b) => b.ab.wai - a.ab.wai);
     if (!list.length) { this.toast('无人可出使', 'close'); return; }
-    const best = persuadeChance(s, s.player, list[0].id, node);
-    this.modal('persuade', '遣使劝降', `${nodeName(node)} · 下月见分晓`, [
-      this.gauge(best.p * 100, best.factors, `最佳人选成功率 %`, ['', '', '', '']),
-      h('div', { class: 'sec-title' }, ic('person'), '选使者（右为成功率）'),
-      this.charPicker(list, 'wai', id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'persuade', char: id, node }); }, c => `${Math.round(persuadeChance(s, s.player, c.id, node).p * 100)}%`),
-    ], [this.cancelBtn()]);
+    const fc = s.factions[s.player].color, pol = s.factions[s.player].polity;
+    const cards: GameCard[] = list.map(c => { const r = persuadeChance(s, s.player, c.id, node); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true, badge: `${Math.round(r.p * 100)}%`,
+      chips: [{ icon: 'envoy', text: `外交 ${c.ab.wai}`, tone: c.ab.wai >= 60 ? 'good' : 'plain' }, { icon: 'morale', text: `威望 ${c.ab.wang}` }], note: r.factors.slice(0, 2).join(' · ') }; });
+    this.modal('persuade', '遣使劝降', `${nodeName(node)} · 右上角是成功率，下月见分晓`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'persuade', char: id, node }); }, { stampText: '使' })], [this.cancelBtn()], 'wide');
   }
 
-  formEnvoy(target: string) {
+
+  formEnvoy(target: string, aim0?: 'alliance' | 'truce' | 'peace') {
     const s = this.s!;
     const list = this.freeChars().sort((a, b) => b.ab.wai - a.ab.wai);
     if (!list.length) { this.toast('无人可出使', 'close'); return; }
     const st = stance(s, s.player, target);
-    let aim: 'alliance' | 'truce' | 'peace' = 'alliance';
-    let who = list[0].id;
-    const aims = h('div', { class: 'grid-opts' });
-    const gaugeBox = h('div');
-    const upd = () => {
-      clear(aims);
-      const opts: [typeof aim, string, string, string][] = [['alliance', 'envoy', '结盟', '各守其城'], ...(st === 'war' ? [['truce', 'hourglass', '停战', '六个月'], ['peace', 'ok', '议和', '罢兵']] as [typeof aim, string, string, string][] : [])];
-      for (const [k, icon, label, sub] of opts) aims.append(h('button', { class: 'gopt' + (aim === k ? ' on' : ''), 'data-aim': k, onclick: () => { aim = k; upd(); } }, ic(icon), h('b', null, label), h('small', null, sub)));
-      const r = envoyScore(s, s.player, { id: 'x', kind: 'envoy', char: who, target, aim });
-      clear(gaugeBox).append(this.gauge(r.score, r.factors, '把握（需 55）', ['难', '', '可望', '稳']));
-    };
-    const pick = this.charPicker(list, 'wai', id => { who = id; pick.querySelectorAll('.opt').forEach(el => { (el as HTMLElement).style.borderColor = (el as HTMLElement).dataset.char === id ? 'var(--red-2)' : ''; }); upd(); });
-    upd();
-    this.modal('envoy', `遣使 · ${s.factions[target].short}`, `关系：${STANCE_NAME[st] ?? st}`, [aims, gaugeBox, h('div', { class: 'sec-title' }, ic('person'), '使者'), pick],
-      [this.cancelBtn(), { label: '派遣', icon: 'ok', primary: true, id: 'ev-ok', onclick: () => this.addOrder({ id: this.newOrderId(), kind: 'envoy', char: who, target, aim }) }]);
+    const tf = s.factions[target];
+    if (!aim0) {
+      const aims: GameCard[] = [{ id: 'alliance', title: '结盟', art: cardArt('envoy', '#3f7a4a', 1), chips: [{ icon: 'city', text: '各守其城' }, { icon: 'factions', text: '互不相攻', tone: 'good' }], note: '盟友之城不算你的，统一时另计。' }];
+      if (st === 'war') aims.push({ id: 'truce', title: '停战', art: cardArt('hourglass', '#8c6a35', 2), chips: [{ icon: 'hourglass', text: '六个月' }], note: '期满复归交战。' },
+        { id: 'peace', title: '议和', art: cardArt('ok', '#3f6f8f', 3), chips: [{ icon: 'war', text: '罢兵', tone: 'good' }], note: '两家不再交兵。' });
+      this.modal('envoy', `遣使 · ${tf.short}`, `关系：${STANCE_NAME[st] ?? st} · 先定所求`, [cardHand(aims, k => { this.closeModal(); this.formEnvoy(target, k as 'alliance' | 'truce' | 'peace'); }, { stampText: '议' })], [this.cancelBtn()], 'wide');
+      return;
+    }
+    const fc = s.factions[s.player].color, pol = s.factions[s.player].polity;
+    const cards: GameCard[] = list.map(c => { const r = envoyScore(s, s.player, { id: 'x', kind: 'envoy', char: c.id, target, aim: aim0 }); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true,
+      badge: `把握 ${Math.round(r.score)}`, chips: [{ icon: 'envoy', text: `外交 ${c.ab.wai}`, tone: c.ab.wai >= 60 ? 'good' : 'plain' }, { icon: r.score >= 55 ? 'ok' : 'close', text: r.score >= 55 ? '可望' : '难成', tone: r.score >= 55 ? 'good' : 'bad' }], note: r.factors.slice(0, 2).join(' · ') }; });
+    this.modal('envoy', `遣使 · ${tf.short} · ${{ alliance: '结盟', truce: '停战', peace: '议和' }[aim0]}`, '选使者 · 把握需 55 以上', [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'envoy', char: id, target, aim: aim0 }); }, { stampText: '使' })], [{ label: '换一种所求', icon: 'envoy', onclick: () => { setTimeout(() => this.formEnvoy(target), 0); } }, this.cancelBtn()], 'wide');
   }
+
 
   formCommand(army: string, order: ArmyOrder) {
     const s = this.s!;
@@ -1008,17 +1153,23 @@ export class App {
     const s = this.s!;
     const tabs = h('div', { class: 'tabs', style: { margin: '0 0 10px' } }, ...([['mine', 'chars', '本方'], ['vassal', 'urgent', '诸镇'], ['others', 'factions', '他方']] as const)
       .map(([k, icon, n]) => h('button', { class: 'tab' + (k === group ? ' on' : ''), onclick: () => { this.closeModal(); this.openChars(k); } }, ic(icon), n)));
-    const list = Object.values(s.chars).filter(c => group === 'mine' ? c.faction === s.player : group === 'vassal' ? s.factions[c.faction]?.overlord === s.player : c.faction !== s.player && s.factions[c.faction]?.overlord !== s.player && s.factions[c.faction]?.leader === c.id);
-    const box = h('div', { class: 'list' });
+    const list = Object.values(s.chars).filter(c => c.status !== 'offstage' && (group === 'mine' ? c.faction === s.player : group === 'vassal' ? s.factions[c.faction]?.overlord === s.player : c.faction !== s.player && s.factions[c.faction]?.overlord !== s.player && s.factions[c.faction] && !s.factions[c.faction].defunct && (s.factions[c.faction].leader === c.id || c.ab.wang >= 60)))
+      .sort((a, b) => Number(b.status === 'active') - Number(a.status === 'active') || Number(s.factions[b.faction]?.leader === b.id) - Number(s.factions[a.faction]?.leader === a.id) || Math.max(b.ab.tong, b.ab.zheng) - Math.max(a.ab.tong, a.ab.zheng));
+    const grid = h('div', { class: 'roster' });
     for (const c of list) {
-      const own = group !== 'others';
       const f = s.factions[c.faction];
-      box.append(h('button', { class: 'opt', onclick: () => { this.closeModal(); this.openChar(c.id); } },
-        h('div', { class: 'coin', style: { background: f?.color ?? '#555' } }, c.name.slice(0, 1)),
-        h('div', { style: { flex: '1' } }, h('b', null, c.name, c.status !== 'active' ? (c.status === 'captured' ? ' · 被执' : ' · 已故') : ''), h('small', null, `${c.title} · ${nodeName(c.location)}`)),
-        own ? h('span', { class: 'chipnum', title: '忠诚 / 降意' }, `忠${Math.round(c.att.loyalty)} 降${Math.round(c.att.surrender)}`) : h('span', { class: 'chipnum' }, `统${c.ab.tong}`)));
+      const best = ([['统', c.ab.tong], ['政', c.ab.zheng], ['谋', c.ab.mou], ['外', c.ab.wai]] as const).slice().sort((x, y) => y[1] - x[1])[0];
+      const post = Object.values(s.cities).find(x => x.governor === c.id)?.id;
+      const leads = Object.values(s.armies).find(a => a.commander === c.id);
+      grid.append(h('button', { class: 'rcard' + (c.status !== 'active' ? ' gone' : ''), 'data-char': c.id, style: { '--cc': f?.color ?? '#6a5a48' } as any, onclick: () => { click(); this.openChar(c.id); } },
+        face(s, c.id, 96, 'rface'),
+        f?.leader === c.id ? h('span', { class: 'r-lead' }, ic('crown')) : null,
+        c.status !== 'active' ? h('span', { class: 'r-st' }, c.status === 'captured' ? '被执' : '已故') : null,
+        h('b', null, c.name), h('small', null, leads ? `统 ${leads.name}` : post ? `守${nodeName(post)}` : c.title),
+        h('div', { class: 'r-stat' }, h('span', null, `${best[0]} ${best[1]}`), group !== 'others' ? h('span', { class: c.att.loyalty >= 60 ? 'up' : 'down' }, `忠 ${Math.round(c.att.loyalty)}`) : null)));
     }
-    this.modal('chars', '人物', '点人物看能力与态度变化', [tabs, box], [{ label: '关闭', icon: 'close', onclick: () => {} }]);
+    this.modal('chars', '人物', `${list.length} 人 · 点人物看档案`, [tabs, list.length ? grid : h('div', { class: 'note' }, '无')], [{ label: '关闭', icon: 'close', onclick: () => {} }], 'wide');
+    gsap.from('#modal .rcard', { opacity: 0, y: 20, scale: 0.9, duration: 0.3, stagger: 0.02, ease: 'back.out(1.6)' });
   }
 
   openChar(id: string) {
@@ -1026,24 +1177,40 @@ export class App {
     const c = s.chars[id];
     const f = s.factions[c.faction];
     const own = c.faction === s.player || f?.overlord === s.player;
-    const body: HTMLElement[] = [
-      h('div', { style: { display: 'flex', gap: '14px', alignItems: 'center' } }, h('div', { class: 'portrait', style: { background: f?.color ?? '#555' } }, c.name.slice(0, 1)),
-        h('div', null, h('div', { class: 'tags', style: { marginTop: '0' } }, h('span', { class: 'tag' }, ic('factions'), f?.short ?? ''), h('span', { class: 'tag' }, ic('target'), nodeName(c.location)),
-          c.status !== 'active' ? h('span', { class: 'tag' }, ic(c.status === 'captured' ? 'prisoner' : 'dead'), c.status === 'captured' ? '被执' : '已故') : null),
-          h('div', { class: 'note' }, c.bio))),
-      h('div', { class: 'abil' }, ...([['统军', c.ab.tong], ['政务', c.ab.zheng], ['谋略', c.ab.mou], ['外交', c.ab.wai], ['威望', c.ab.wang]] as const).map(([k, v]) => h('div', null, h('b', null, String(v)), h('small', null, k)))),
-    ];
-    if (own) {
-      body.push(h('div', { class: 'tiles', style: { marginTop: '8px' } },
-        this.tile('morale', '忠诚', String(Math.round(c.att.loyalty)), { meter: c.att.loyalty }),
-        this.tile('prisoner', '降意', String(Math.round(c.att.surrender)), { meter: 100 - c.att.surrender }),
-        this.tile('war', '主战', String(Math.round(c.att.hawk)))));
-      const rows = h('div', { class: 'rows', id: 'att-log' });
-      for (const l of [...c.attLog].reverse()) rows.append(h('div', { class: 'row' }, ic(l.field === 'loyalty' ? 'morale' : l.field === 'surrender' ? 'prisoner' : 'war'),
-        h('span', { class: 't' }, `${shortDate(l.turn)} · ${l.reason}`), h('b', { class: (l.field === 'surrender' ? -l.delta : l.delta) >= 0 ? 'up' : 'down' }, `${{ loyalty: '忠', surrender: '降', hawk: '战' }[l.field]} ${signed(l.delta)}`)));
-      body.push(h('div', { class: 'sec-title' }, ic('history'), '态度变化'), c.attLog.length ? rows : h('div', { class: 'note' }, '尚无'));
+    const pol = f ? polityOf(s, f.polity) : null;
+    const post = Object.values(s.cities).find(x => x.governor === c.id)?.id;
+    const leads = Object.values(s.armies).find(a => a.commander === c.id);
+    const bar = (label: string, v: number, good: boolean, icon: string) => h('div', { class: 'p-bar' }, ic(icon), h('span', null, label), h('div', { class: 'meter' }, h('i', { style: { width: Math.max(0, Math.min(100, v)) + '%', background: good ? 'var(--green)' : 'var(--red-2)' } })), h('b', null, String(Math.round(v))));
+    const card = h('div', { class: 'profile', style: { '--cc': f?.color ?? '#6a5a48' } as any },
+      h('div', { class: 'p-left' },
+        face(s, c.id, 210, 'pface'),
+        h('div', { class: 'p-seal', style: { background: f?.color ?? '#555' } }, pol?.mark || f?.short || '?'),
+        c.status !== 'active' ? h('div', { class: 'p-ribbon' }, c.status === 'captured' ? '被 执' : '已 故') : null,
+        h('div', { class: 'p-name' }, c.name), h('div', { class: 'p-title' }, c.title)),
+      h('div', { class: 'p-right' },
+        h('div', { class: 'tags', style: { marginTop: '0' } },
+          h('span', { class: 'tag' }, ic('factions'), f?.name ?? '无所属'),
+          h('span', { class: 'tag', style: { cursor: 'pointer' }, onclick: () => { this.closeModal(); this.map.flyTo(c.location, Math.max(this.map.cam.z, 2.2)); this.selectNode(c.location); } }, ic('locate'), nodeName(c.location)),
+          f?.leader === c.id ? h('span', { class: 'tag' }, ic('crown'), '主君') : null,
+          post ? h('span', { class: 'tag' }, ic('appoint'), `主官 · ${nodeName(post)}`) : null,
+          leads ? h('span', { class: 'tag' }, ic('army'), `统 ${leads.name}`) : null),
+        h('div', { class: 'p-bio' }, '“', c.bio, '”'),
+        h('div', { class: 'p-mid' }, radar(c.ab), h('div', { class: 'p-abil' }, ...([['统军', c.ab.tong, 'army'], ['政务', c.ab.zheng, 'admin'], ['谋略', c.ab.mou, 'event'], ['外交', c.ab.wai, 'envoy'], ['威望', c.ab.wang, 'crown']] as const)
+          .map(([k, v, icon]) => h('div', { class: 'pa' }, ic(icon), h('span', null, k), h('b', { class: v >= 70 ? 'hi' : v < 40 ? 'lo' : '' }, String(v)))))),
+        own ? h('div', { class: 'p-bars' }, bar('忠诚', c.att.loyalty, c.att.loyalty >= 50, 'morale'), bar('降意', c.att.surrender, c.att.surrender < 40, 'prisoner'), bar('主战', (c.att.hawk + 100) / 2, true, 'war')) : h('div', { class: 'note' }, '敌方人物的心思不得而知。'),
+      ));
+    const body: HTMLElement[] = [card];
+    if (own && c.attLog.length) {
+      const rows = h('div', { class: 'p-log', id: 'att-log' });
+      for (const l of [...c.attLog].reverse().slice(0, 12)) rows.append(h('div', { class: 'pl' }, h('em', null, shortDate(l.turn)), h('span', null, l.reason),
+        h('b', { class: (l.field === 'surrender' ? -l.delta : l.delta) >= 0 ? 'up' : 'down' }, `${{ loyalty: '忠', surrender: '降', hawk: '战' }[l.field]} ${signed(l.delta)}`)));
+      body.push(h('div', { class: 'sec-title' }, ic('history'), '心迹'), rows);
     }
-    this.modal('person', c.name, c.title, body, [{ label: '关闭', icon: 'close', onclick: () => {} }]);
+    const dlg = this.modal('person', c.name, `${f?.name ?? ''} · ${c.title}`, body, [{ label: '人物', icon: 'chars', onclick: () => { setTimeout(() => this.openChars(c.faction === s.player ? 'mine' : f?.overlord === s.player ? 'vassal' : 'others'), 0); } }, { label: '关闭', icon: 'close', onclick: () => {} }], 'wide');
+    dlg.classList.add('pdlg');
+    gsap.fromTo(card, { rotateY: -70, opacity: 0 }, { rotateY: 0, opacity: 1, duration: 0.55, ease: 'back.out(1.3)' });
+    gsap.from(dlg.querySelector('.p-seal'), { scale: 3, rotate: -40, opacity: 0, duration: 0.45, delay: 0.35, ease: 'back.out(2)' });
+    gsap.from(dlg.querySelectorAll('.p-bar .meter i, .pa'), { scaleX: 0, opacity: 0, transformOrigin: 'left', duration: 0.4, stagger: 0.04, delay: 0.3 });
   }
 
   /* ================= 军情 ================= */
@@ -1077,6 +1244,14 @@ export class App {
     gsap.from('#report .cic', { scale: 0.3, duration: 0.4, stagger: 0.035, ease: 'back.out(2)' });
   }
 
+  /** 军情卡的小图：提到的人物用其像，易主用新主颜色作画，其余用类别图标 */
+  reportThumb(r: ReportEntry, cat: ReportCat): HTMLElement {
+    const s = this.s!;
+    const who = (cat === '人事' || cat === '史事' || cat === '交涉') ? Object.values(s.chars).filter(x => x.status !== 'offstage' && r.text.includes(x.name)).sort((a, b) => r.text.indexOf(a.name) - r.text.indexOf(b.name))[0] : undefined;
+    if (who) return h('img', { class: 'rthumb pt', src: portrait(who, s.factions[who.faction]?.color ?? '#6a5a48', s.factions[who.faction]?.polity ?? 'none'), alt: '' });
+    if (cat === '易主' && r.node && s.cities[r.node]) return h('img', { class: 'rthumb', src: cardArt('capture', s.factions[s.cities[r.node].controller]?.color ?? '#b5342a', 1), alt: '' });
+    return h('div', { class: `cic c-${cat}` }, ic(CAT_ICON[cat] ?? 'info'));
+  }
   reportCard(r: ReportEntry): HTMLElement {
     const { hl, more } = splitReport(r);
     const cat: ReportCat = r.urgent && r.cat !== '史事' && r.cat !== '线索' && r.cat !== '易主' && r.cat !== '军报' ? '急报' : r.cat;
@@ -1097,38 +1272,88 @@ export class App {
       btns.append(h('button', { class: 'mini', onclick: (e: Event) => { e.stopPropagation(); hist!.classList.toggle('hidden'); } }, ic('history'), '史实'));
     }
     return h('div', { class: 'card entry' + (r.urgent ? ' urgent' : ''), onclick: () => moreEl.classList.toggle('hidden') },
-      h('div', { class: `cic c-${cat}` }, ic(CAT_ICON[cat] ?? 'info')),
+      this.reportThumb(r, cat),
       h('div', { class: 'body' }, h('div', { class: 'hl' }, hl), h('div', { class: 'meta' }, r.cat, more ? h('span', { style: { marginLeft: 'auto', color: 'var(--gold-dim)' } }, '▾') : null), more ? moreEl : null, hist, btns.childNodes.length ? btns : null));
   }
 
   /** 每月开头的要闻：最多四条 */
+  /** 本月战报：镜头逐一飞到出事之地，插画卡片讲一句话，自动翻页；可上一条、下一条、全部跳过 */
   showSplash(): Promise<void> {
     return new Promise(resolve => {
       const s = this.s!;
       const t = this.reportTurn;
       const all = s.reports.filter(r => r.turn === t && (!r.faction || r.faction === s.player));
-      const rank = (r: ReportEntry) => (r.urgent ? 0 : r.cat === '易主' ? 1 : r.cat === '史事' ? 2 : r.cat === '军报' ? 3 : 4);
-      const top = [...all].sort((a, b) => rank(a) - rank(b)).slice(0, 4);
-      const el = h('div', { id: 'splash' });
-      const pol = POLITIES[s.factions[s.player].polity];
-      const done = () => { el.remove(); resolve(); };
-      const cards = h('div', { class: 'splash-cards' });
-      top.forEach((r, i) => {
-        const { hl } = splitReport(r);
-        const cat: ReportCat = r.urgent && r.cat !== '史事' && r.cat !== '易主' && r.cat !== '军报' ? '急报' : r.cat;
-        cards.append(h('div', { class: 'scard hud' + (r.urgent ? ' urgent' : ''), style: { animationDelay: (0.15 + i * 0.12) + 's' } },
-          h('div', { class: `cic c-${cat}` }, ic(CAT_ICON[cat] ?? 'info')), h('div', null, h('div', { style: { color: 'var(--dim)', fontSize: '11.5px' } }, r.cat), h('b', null, hl))));
-      });
-      el.append(h('div', { class: 'splash-in' },
-        h('div', { class: 'm' }, s.ended ? '本局终' : `${eraYear(pol, s.turn)}${monthName(lunarOf(s.turn))}`),
-        h('div', { class: 'y' }, `上月要闻 · 共 ${all.length} 条`), cards,
-        h('button', { class: 'btn primary splash-go', id: 'splash-go', onclick: done }, ic('report'), '查看军情')));
-      el.onclick = e => { if (e.target === el) done(); };
+      const me = topOf(s, s.player);
+      const mineNode = (n?: string) => !!n && !!s.cities[n] && topOf(s, s.cities[n].controller) === me;
+      const rank = (r: ReportEntry) => (r.cat === '易主' && (mineNode(r.node) || r.urgent) ? 0 : r.urgent ? 1 : r.cat === '易主' ? 2 : r.cat === '史事' ? 3 : r.cat === '军报' && mineNode(r.node) ? 4 : r.cat === '人事' ? 5 : r.cat === '军报' ? 6 : r.cat === '交涉' ? 6 : r.cat === '线索' ? 7 : 8);
+      const seen = new Set<string>();
+      const top = [...all].sort((a, b) => rank(a) - rank(b)).filter(r => { const k = splitReport(r).hl; if (seen.has(k)) return false; seen.add(k); return rank(r) <= 7; }).slice(0, 6);
+      if (!top.length) { resolve(); return; }
+      const home = { ...this.map.cam };
+      const COL: Record<string, string> = { 急报: '#b5342a', 军报: '#7d1a12', 史事: '#8c6a35', 线索: '#3f6f8f', 内政: '#5f8a3a', 交涉: '#2f6f8f', 人事: '#6a4a8a', 易主: '#b5342a' };
+      let i = -1, timer = 0, paused = false;
+      const bar = h('i');
+      const art = h('img', { class: 'nw-art', alt: '', draggable: 'false' }) as HTMLImageElement;
+      const cat = h('span', { class: 'nw-cat' }), count = h('span', { class: 'nw-count' });
+      const hl = h('div', { class: 'nw-hl' }), more = h('div', { class: 'nw-more' }), seals = h('div', { class: 'nw-seals' });
+      const card = h('div', { class: 'nw-card hud', onclick: () => next(), onmouseenter: () => { paused = true; }, onmouseleave: () => { paused = false; } }, art, h('div', { class: 'nw-body' }, h('div', { class: 'nw-top' }, cat, count), hl, more, seals), h('div', { class: 'nw-prog' }, bar));
+      const el = h('div', { id: 'news' },
+        h('div', { class: 'nw-head' }, h('b', null, s.ended ? '本局终' : `${shortDate(t)} · 战报`), h('small', null, `共 ${all.length} 条，择要 ${top.length} 条`)),
+        card,
+        h('div', { class: 'nw-ctl' },
+          h('button', { class: 'nw-b', id: 'news-prev', 'aria-label': '上一条', onclick: (e: Event) => { e.stopPropagation(); show(Math.max(0, i - 1)); } }, '‹'),
+          h('button', { class: 'nw-b', id: 'news-next', 'aria-label': '下一条', onclick: (e: Event) => { e.stopPropagation(); next(); } }, '›'),
+          h('button', { class: 'nw-skip', id: 'news-skip', onclick: (e: Event) => { e.stopPropagation(); done(); } }, ic('report'), '看全部军情')));
+      const onKey = (e: KeyboardEvent) => { if (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowRight') { e.preventDefault(); next(); } else if (e.key === 'ArrowLeft') show(Math.max(0, i - 1)); else if (e.key === 'Escape') done(); };
+      window.addEventListener('keydown', onKey, true);
+      let ended = false;
+      const done = () => {
+        if (ended) return; ended = true;
+        clearInterval(timer); window.removeEventListener('keydown', onKey, true);
+        gsap.to(el, { opacity: 0, y: 30, duration: 0.3, onComplete: () => { el.remove(); resolve(); } });
+        this.map.target = { x: home.x, y: home.y, z: home.z };
+      };
+      const next = () => { if (i >= top.length - 1) done(); else show(i + 1); };
+      const show = (k: number) => {
+        i = k;
+        const r = top[k];
+        const sp = splitReport(r);
+        const c: ReportCat = r.urgent && r.cat !== '史事' && r.cat !== '线索' && r.cat !== '易主' && r.cat !== '军报' ? '急报' : r.cat;
+        const node = r.node && s.cities[r.node] ? r.node : undefined;
+        const ctrl = node ? s.factions[s.cities[node].controller] : undefined;
+        // 插画：提到的人物用其像，否则按类别作画
+        const who = Object.values(s.chars).filter(x => x.status !== 'offstage' && r.text.includes(x.name)).sort((a, b) => r.text.indexOf(a.name) - r.text.indexOf(b.name))[0];
+        art.src = who && (c === '人事' || c === '史事' || c === '交涉') ? portrait(who, s.factions[who.faction]?.color ?? '#6a5a48', s.factions[who.faction]?.polity ?? 'none')
+          : cardArt(CAT_ICON[c] ?? 'info', c === '易主' && ctrl ? ctrl.color : COL[c] ?? '#8c6a35', k);
+        art.classList.toggle('pt', !!who && (c === '人事' || c === '史事' || c === '交涉'));
+        clear(cat).append(ic(CAT_ICON[c] ?? 'info'), c);
+        cat.style.background = c === '易主' && ctrl ? ctrl.color : COL[c] ?? '#8c6a35';
+        count.textContent = `${k + 1} / ${top.length}`;
+        hl.textContent = sp.hl;
+        more.textContent = (sp.more.split('。')[0] ?? '').slice(0, 70) + (sp.more ? '。' : '');
+        clear(seals);
+        const fs = Object.values(s.factions).filter(f => !f.defunct && f.id !== 'local' && (f.name.length >= 2 ? r.text.includes(f.name) || (f.short.length >= 2 && r.text.includes(f.short)) : ['军', '廷', '朝', '兵'].some(k => r.text.includes(f.name + k)))).slice(0, 3);
+        for (const f of fs) seals.append(h('span', { class: 'nw-seal', style: { background: f.color } }, polityOf(s, f.polity).mark || f.short));
+        if (node) seals.append(h('span', { class: 'nw-loc' }, ic('locate'), nodeName(node)));
+        card.classList.toggle('urgent', !!r.urgent);
+        gsap.fromTo(card, { x: 60, opacity: 0, rotateY: -25 }, { x: 0, opacity: 1, rotateY: 0, duration: 0.45, ease: 'back.out(1.5)' });
+        gsap.fromTo(art, { scale: 1.25 }, { scale: 1, duration: 3.2, ease: 'none' });
+        // 镜头与地图动效、声音
+        if (node) {
+          this.map.flyTo(node, Math.max(2.1, Math.min(2.8, this.map.cam.z)));
+          if (c === '易主') { this.map.addFx({ kind: 'capture', node, color: ctrl?.color ?? '#c8352a', text: (ctrl && polityOf(s, ctrl.polity).mark) || ctrl?.short || '易', dur: 2000, delay: 350 }); setTimeout(() => captureSfx(mineNode(node)), 350); }
+          else if (c === '军报') { this.map.addFx({ kind: 'battle', node, dur: 1500, delay: 300 }); setTimeout(distantBattle, 300); }
+          else if (c === '史事') { this.map.addFx({ kind: 'stamp', node, text: '史', color: '#8c6a35', dur: 1500, delay: 300 }); setTimeout(chime, 300); }
+          else this.map.addFx({ kind: 'ripple', node, color: c === '急报' ? '#e0503f' : '#f0cf86', dur: 1400, delay: 300 });
+        } else chime();
+        let left = 3400;
+        clearInterval(timer);
+        bar.style.width = '0%';
+        timer = window.setInterval(() => { if (paused) return; left -= 50; bar.style.width = (100 - left / 34) + '%'; if (left <= 0) next(); }, 50);
+      };
       $('#app').append(el);
-      gsap.from(el, { opacity: 0, duration: 0.3 });
-      gsap.from('#splash .m', { opacity: 0, scale: 1.6, letterSpacing: '0.6em', duration: 0.7, ease: 'power3.out' });
-      gsap.from('#splash .scard', { opacity: 0, y: 40, rotateY: -60, duration: 0.55, stagger: 0.14, delay: 0.25, ease: 'back.out(1.4)' });
-      gsap.from('#splash .splash-go', { opacity: 0, y: 14, duration: 0.4, delay: 0.7 });
+      gsap.from('#news .nw-head', { opacity: 0, y: -20, duration: 0.35 });
+      show(0);
     });
   }
 
@@ -1186,6 +1411,7 @@ export class App {
     if (!this.s || this.resolving || this.s.ended) return;
     this.resolving = true;
     endTurnSfx();
+    this.hideRing();
     gsap.fromTo('#btn-next', { scale: 0.9 }, { scale: 1, duration: 0.4, ease: 'back.out(3)' });
     this.toggleMenu(false);
     this.closePanel();
@@ -1229,7 +1455,8 @@ export class App {
     await this.showSplash();
     this.resolving = false;
     this.renderTop();
-    this.openReport();
+    $('#report').classList.add('hidden');
+    gsap.fromTo('#btn-report', { scale: 1.4 }, { scale: 1, duration: 0.6, ease: 'elastic.out(1, 0.4)' });
     if (this.hintStep === 2) this.advanceHint(3);
     if (this.s.ended) this.showEnd();
   }
@@ -1420,4 +1647,22 @@ function shade(hex: string, k: number): string {
   const n = parseInt(hex.slice(1), 16);
   const f = (c: number) => Math.max(0, Math.min(255, Math.round(c + (k < 0 ? c * k : (255 - c) * k))));
   return '#' + [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(f).map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+/** 五维能力的雷达图 */
+function radar(ab: { tong: number; zheng: number; mou: number; wai: number; wang: number }): HTMLCanvasElement {
+  const S = 170, cv = document.createElement('canvas'); cv.width = S * 2; cv.height = S * 2; cv.className = 'p-radar';
+  const g = cv.getContext('2d')!; g.scale(2, 2);
+  const cx = S / 2, cy = S / 2 + 6, R = 58;
+  const keys = ['tong', 'zheng', 'mou', 'wai', 'wang'] as const, names = ['统', '政', '谋', '外', '望'];
+  const pt = (i: number, r: number) => [cx + Math.cos(-Math.PI / 2 + i * Math.PI * 2 / 5) * r, cy + Math.sin(-Math.PI / 2 + i * Math.PI * 2 / 5) * r];
+  g.strokeStyle = 'rgba(217,173,91,0.3)'; g.lineWidth = 1;
+  for (const k of [0.25, 0.5, 0.75, 1]) { g.beginPath(); for (let i = 0; i <= 5; i++) { const [x, y] = pt(i % 5, R * k); i ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke(); }
+  for (let i = 0; i < 5; i++) { const [x, y] = pt(i, R); g.beginPath(); g.moveTo(cx, cy); g.lineTo(x, y); g.stroke(); }
+  g.beginPath(); keys.forEach((k, i) => { const [x, y] = pt(i, R * ab[k] / 100); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.closePath();
+  g.fillStyle = 'rgba(224,80,63,0.45)'; g.fill(); g.strokeStyle = '#f0cf86'; g.lineWidth = 2; g.stroke();
+  keys.forEach((k, i) => { const [x, y] = pt(i, R * ab[k] / 100); g.fillStyle = '#fff3d9'; g.beginPath(); g.arc(x, y, 2.5, 0, Math.PI * 2); g.fill(); });
+  g.fillStyle = '#e8d9b4'; g.font = '700 13px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  names.forEach((n, i) => { const [x, y] = pt(i, R + 15); g.fillText(n, x, y); });
+  return cv;
 }

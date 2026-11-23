@@ -31,7 +31,7 @@ await page.evaluate(() => NM.map.focus('nanjing', 2));
 await page.click('#btn-next');
 for (let i = 0; i < 80; i++) {
   if (await page.locator('[data-choice]').first().isVisible().catch(() => false)) { await shot('choice'); await page.click('[data-choice="0"]'); }
-  if (await page.locator('#splash-go').isVisible().catch(() => false)) { await shot('splash'); await page.click('#splash-go'); }
+  if (await page.locator('#news-skip').isVisible().catch(() => false)) { await shot('splash'); await page.click('#news-skip'); }
   if (!(await page.evaluate(() => NM.resolving))) break;
   await page.waitForTimeout(150);
 }
@@ -44,7 +44,7 @@ for (let i = 0; i < 80; i++) {
   if (await page.locator('#battle-go').isVisible().catch(() => false)) { await page.waitForTimeout(1500); await shot('battle'); await page.click('#battle-auto').catch(() => {}); }
   if (await page.locator('#battle-done').isVisible().catch(() => false)) { await shot('battle-done'); await page.click('#battle-done'); }
   if (await page.locator('[data-choice]').first().isVisible().catch(() => false)) await page.click('[data-choice="0"]');
-  if (await page.locator('#splash-go').isVisible().catch(() => false)) await page.click('#splash-go');
+  if (await page.locator('#news-skip').isVisible().catch(() => false)) await page.click('#news-skip');
   if (!(await page.evaluate(() => NM.resolving))) break;
   await page.waitForTimeout(200);
 }

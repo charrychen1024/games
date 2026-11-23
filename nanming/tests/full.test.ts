@@ -9,7 +9,7 @@ import { dateLabel, turnOf, TOTAL_TURNS } from '../src/core/calendar';
 import { EVENTS } from '../src/data/events';
 import { dueEvents, fireEvent } from '../src/core/events';
 import { citiesOf } from '../src/core/state';
-import { VICTORY_AREAS, NODE } from '../src/data/geography';
+import { VICTORY_AREAS, NODE, shortestPath, marchPlan } from '../src/data/geography';
 import type { GameState } from '../src/core/types';
 
 const PLAYABLE = ['hongguang', 'qing', 'shun', 'xi', 'zheng'];
@@ -204,4 +204,37 @@ describe('整局推进（自动）', () => {
       expect(s.events.length).toBeGreaterThan(20);
     }, 120000);
   }
+});
+
+describe('出征：宣战、行程与战斗', () => {
+  it('史事不改玩家已下的军令（督师江北不把标营调回扬州）', () => {
+    const s0 = createGame('hongguang', 1);
+    const gen = resolveMonth(s0, [{ id: 'o', kind: 'army', army: 'a_shi', order: { kind: 'move', target: 'yanzhou', attack: true } }]);
+    let r = gen.next();
+    while (!r.done) r = gen.next(r.value.type === 'choice' ? { type: 'choice', index: 0 } : undefined);
+    const a = r.value.state.armies.a_shi;
+    expect(a.order.kind === 'siege' || (a.order.kind === 'move' && a.order.target === 'yanzhou')).toBe(true);
+  });
+  it('未交战的势力：宣战后进攻，抵达当月即有攻城战', () => {
+    let s = createGame('hongguang', 1);
+    s.armies.a_shi.location = 'xuzhou'; s.armies.a_shi.troops = 30000;
+    s.cities.yanzhou.controller = 'qing';
+    expect(s.relations['hongguang|qing'].stance).toBe('neutral');
+    let battles = 0;
+    let orders: any[] = [{ id: 'w', kind: 'war', target: 'qing' }, { id: 'a', kind: 'army', army: 'a_shi', order: { kind: 'move', target: 'yanzhou', attack: true } }];
+    for (let m = 0; m < 2 && !battles; m++) {
+      const gen = resolveMonth(s, orders); orders = [];
+      let r = gen.next();
+      while (!r.done) { if (r.value.type === 'battle') battles++; r = gen.next(r.value.type === 'choice' ? { type: 'choice', index: 0 } : undefined); }
+      s = r.value.state;
+    }
+    expect(s.relations['hongguang|qing'].stance).toBe('war');
+    expect(battles).toBeGreaterThan(0);
+  });
+  it('行军有日程：南京到北京（走运河）四十日以上，跨两个月', () => {
+    const p = shortestPath('nanjing', 'beijing', false)!;
+    const plan = marchPlan('nanjing', p);
+    expect(plan[plan.length - 1].day).toBeGreaterThan(40);
+    expect(plan.some(x => x.month >= 2)).toBe(true);
+  });
 });

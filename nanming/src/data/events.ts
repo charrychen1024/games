@@ -102,7 +102,9 @@ export const EVENTS: EventDef[] = [
     effect: s => {
       s.chars.shikefa.location = 'yangzhou';
       s.chars.shikefa.title = '督师 · 东阁大学士';
-      const a = s.armies.a_shi; if (a) setArmyOrder(s, a, { kind: 'move', target: 'yangzhou', attack: false });
+      const a = s.armies.a_shi;
+      // 玩家已给标营下了别的命令，就不替玩家改
+      if (a && (a.faction !== s.player || (a.order.kind === 'hold' && !a.path.length))) setArmyOrder(s, a, { kind: 'move', target: 'yangzhou', attack: false });
       for (const f of ['gaojie', 'liuzeqing', 'liuliangzuo', 'huangdegong']) adjustLoyalty(s, f, 4, '督师调和');
       adjustAtt(s, 'mashiying', 'loyalty', 2, '独揽朝政');
     },

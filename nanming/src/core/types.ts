@@ -172,7 +172,8 @@ export type Order =
   | { id: string; kind: 'persuade'; char: CharId; node: NodeId }
   | { id: string; kind: 'command'; vassal: FactionId; army: ArmyId; order: ArmyOrder; silver: number }
   | { id: string; kind: 'reward'; vassal: FactionId; silver: number }
-  | { id: string; kind: 'independence' };
+  | { id: string; kind: 'independence' }
+  | { id: string; kind: 'war'; target: FactionId };
 
 /** 跨月进行中的交涉 */
 export interface Mission {

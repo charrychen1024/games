@@ -26,7 +26,7 @@ async function nextMonth(manualBattle = false) {
   const before = await text('#date-label');
   await page.click('#btn-next');
   const t0 = Date.now();
-  let battles = 0, choices = 0, manualDone = false, battleScene = false;
+  let battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false;
   while (Date.now() - t0 < 60000) {
     if (await visible('[data-choice]')) { await page.click('[data-choice="0"]', { timeout: 1000 }).catch(() => {}); choices++; await wait(150); continue; }
     if (await visible('#battle-done')) { await page.click('#battle-done', { timeout: 1000 }).catch(() => {}); battles++; await wait(200); continue; }
@@ -41,13 +41,13 @@ async function nextMonth(manualBattle = false) {
       await page.click('#battle-auto', { timeout: 600 }).catch(() => {});
       await wait(400); continue;
     }
-    if (await visible('#splash-go')) { await page.click('#splash-go', { timeout: 1000 }).catch(() => {}); await wait(150); continue; }
+    if (await visible('#news-skip')) { newsSeen = true; await page.click('#news-skip', { timeout: 1000 }).catch(() => {}); await wait(350); continue; }
     // 结算、翻月动画、要闻都过去之后才算这个月结束
     if (!(await page.evaluate(() => NM.resolving))) break;
     await wait(150);
   }
   await wait(200);
-  return { before, after: await text('#date-label'), battles, choices, battleScene };
+  return { before, after: await text('#date-label'), battles, choices, battleScene, newsSeen };
 }
 
 try {
@@ -84,8 +84,9 @@ try {
 
   console.log('下达命令');
   await page.click('#act-policy');
-  await page.click('[data-policy="agri"]');
-  await wait(200);
+  check('方针以卡牌呈现（七张，带插画）', (await page.locator('#modal .gcard').count()) === 7 && (await page.locator('#modal .gcard img').count()) === 7);
+  await page.click('[data-card="agri"]');
+  await wait(800);
   check('改方针加入本月命令', (await text('#orders')).includes('劝农'));
   check('下令后开局三步进到第三步', (await page.locator('#hint .q-step.done').count()) >= 2, await text('#hint'));
   await page.click('#act-recruit');
@@ -138,7 +139,10 @@ try {
   const m1 = await nextMonth();
   check('第一个月结算后日期前进', m1.after !== m1.before, `${m1.before} → ${m1.after}`);
   check('第一个月有史事抉择（高杰争扬州）', m1.choices >= 1);
-  check('月报自动展开且有内容', await visible('#report-entries .entry'));
+  check('本月战报逐条播放过', m1.newsSeen, JSON.stringify(m1));
+  await page.click('#btn-report');
+  await wait(300);
+  check('军情面板有内容', await visible('#report-entries .entry'));
   const reportText = await text('#report-entries');
   check('军情包含号令下属的结果', reportText.includes('号令黄得功部 →'), reportText.slice(0, 200));
   check('月报包含史事', reportText.includes('史可法督师江北'));
@@ -199,6 +203,46 @@ try {
   check('图例说明色块只是控制范围示意', (await text('#legend')).includes('控制范围示意'));
   await page.locator('#legend .x').click();
 
+  console.log('出征：军令环、行程、宣战（两级之内）');
+  await page.evaluate(() => NM.start(NM_presets.createGame('hongguang', 4), false));
+  await wait(600);
+  check('左下角军队栏列出我军', (await page.locator('#armybar .achip').count()) >= 1);
+  await page.click('#armybar .achip[data-army="a_shi"]');
+  await wait(500);
+  check('点军队即出现军令环', await visible('#ring-march'));
+  await page.click('#ring-march');
+  await page.evaluate(() => NM.map.focus('xuzhou', 1.3));
+  await wait(300);
+  const bd = await page.evaluate(() => { const m = NM.map; const p = NM_nodePt('baoding'); return [(p[0] - m.cam.x) * m.cam.z + m.w / 2, (p[1] - m.cam.y) * m.cam.z + m.h / 2]; });
+  await page.mouse.move(bd[0], bd[1]);
+  await wait(300);
+  check('瞄准时显示行程日数与月数', /\d+\s*日/.test(await text('#tooltip')) && (await text('#tooltip')).includes('个月'), await text('#tooltip'));
+  check('路线上标出每月行至何处', await page.evaluate(() => NM.map.monthMarks.length > 0));
+  await page.mouse.click(bd[0], bd[1]);
+  await wait(500);
+  check('目标属未交战势力时询问宣战', await visible('#war-ok'));
+  await page.click('#war-ok');
+  await wait(300);
+  check('宣战与进攻一并下令', (await page.evaluate(() => NM.orders.map(o => o.kind).join(','))) === 'war,army');
+  // 右键直接出征
+  await page.click('#armybar .achip[data-army="a_shi"]');
+  await wait(300);
+  const yzp = await page.evaluate(() => { const m = NM.map; NM.map.focus('nanjing', 2); const p = NM_nodePt('yangzhou'); return [(p[0] - m.cam.x) * m.cam.z + m.w / 2, (p[1] - m.cam.y) * m.cam.z + m.h / 2]; });
+  await wait(200);
+  const under = await page.evaluate(([x, y]) => { const p = NM.map.pick(x, y); return p?.kind === 'node' ? NM_presets.name(p.id) : ''; }, yzp);
+  await page.mouse.click(yzp[0], yzp[1], { button: 'right' });
+  await wait(300);
+  check('右键点城即开赴（友城不问宣战）', !!under && (await text('#orders')).includes('开赴' + under), `${under} | ${await text('#orders')}`);
+
+  console.log('人物档案');
+  await page.click('#btn-chars');
+  await wait(500);
+  check('人物以带画像的卡片呈现', (await page.locator('#modal .rcard img').count()) >= 5);
+  await page.locator('#modal .rcard').first().click();
+  await wait(700);
+  check('人物档案有画像、能力图与态度', (await page.locator('#modal .pface').count()) === 1 && (await page.locator('#modal .p-radar').count()) === 1);
+  await page.evaluate(() => NM.closeModal());
+
   console.log('自立（郑氏）');
   await page.evaluate(() => NM.start(NM_presets.createGame('zheng', 3), false));
   await wait(500);
@@ -225,6 +269,8 @@ try {
   const sm = await nextMonth(true);
   check('扬州攻城战进入战斗画面并完成', sm.battles >= 1, JSON.stringify(sm));
   check('战斗时切换战斗配乐', sm.battleScene === true, JSON.stringify(sm));
+  await page.click('#btn-report');
+  await wait(300);
   const rep = await text('#report-entries');
   check('月报记录扬州攻城战', rep.includes('扬州攻城战'), rep.slice(0, 200));
   await page.evaluate(() => NM.selectNode('yangzhou'));

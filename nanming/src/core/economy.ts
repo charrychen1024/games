@@ -22,6 +22,14 @@ export const POLICY_HINT: Record<Policy, string> = {
 export const GRAIN_PER_SOLDIER = 0.25; // 石/月
 export const SILVER_PER_SOLDIER = 0.6; // 两/月（驻军）
 export const SILVER_PER_FIELD_SOLDIER = 0.9; // 两/月（出征）
+/** 就地筹粮的比重：八旗有圈地与掳掠，流动作战的大顺、大西军就粮于地方；其余各家多赖粮台 */
+export function forageShare(s: GameState, faction: string): number {
+  const pol = s.factions[faction]?.polity;
+  const top = topOf(s, faction);
+  if (top === 'qing' || pol === 'qing') return 0.6;
+  if (pol === 'shun' || pol === 'xi' || faction === 'shun' || faction === 'xi') return 0.75;
+  return 0.2;
+}
 export const RECRUIT_SILVER = 3; // 两/人
 export const REMIT_RATE = 0.3; // 直辖城起运上缴比例
 
@@ -45,7 +53,7 @@ export function monthlyIncome(s: GameState, c: City): { silver: number; grain: n
 
 export function upkeepOf(s: GameState, c: City): { grain: number; silver: number } {
   let grain = c.garrison * GRAIN_PER_SOLDIER, silver = c.garrison * SILVER_PER_SOLDIER;
-  for (const a of Object.values(s.armies)) if (a.supply === c.id) { grain += a.troops * GRAIN_PER_SOLDIER; silver += a.troops * SILVER_PER_FIELD_SOLDIER; }
+  for (const a of Object.values(s.armies)) if (a.supply === c.id) { const k = 1 - forageShare(s, a.faction); grain += a.troops * GRAIN_PER_SOLDIER * k; silver += a.troops * SILVER_PER_FIELD_SOLDIER * k; }
   if (s.sieges[c.id]) grain += c.garrison * GRAIN_PER_SOLDIER * 0.5;
   return { grain: Math.round(grain), silver: Math.round(silver) };
 }
@@ -68,8 +76,12 @@ export function runEconomy(s: GameState) {
     if (s.sieges[c.id]) bump(s, c.id, 'grain', -Math.round(c.garrison * GRAIN_PER_SOLDIER * 0.5), '守城加给', { kind: 'siege', ref: c.id });
   }
   for (const a of Object.values(s.armies).sort((x, y) => x.id.localeCompare(y.id))) {
-    const needG = Math.round(a.troops * GRAIN_PER_SOLDIER), needS = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER);
     const mine = (id: string) => { const c = s.cities[id]; return !!c && (c.controller === a.faction || topOf(s, c.controller) === topOf(s, a.faction)); };
+    // 就地筹粮：一部分口粮饷银取于所过地方，所在城民心随之下降
+    const fs = forageShare(s, a.faction);
+    const where = s.cities[a.location];
+    if (fs > 0 && where) bump(s, where.id, 'minxin', -Math.min(3, Math.round(a.troops * fs / 15000 * 10) / 10), `${a.name}就粮于地方`, { kind: 'upkeep', ref: a.id });
+    const needG = Math.round(a.troops * GRAIN_PER_SOLDIER * (1 - fs)), needS = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * (1 - fs));
     let got = 0;
     const sup = s.cities[a.supply];
     if (sup && mine(a.supply)) {

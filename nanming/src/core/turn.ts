@@ -42,7 +42,8 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   // 一、命令生效（拖延的下属号令先执行）
   const delayed = s.delayed; s.delayed = [];
   for (const o of delayed) applyOrder(s, s.player, o.kind === 'command' ? { ...o, silver: 0 } : o);
-  for (const o of playerOrders) applyOrder(s, s.player, o);
+  // 宣战先于其他命令生效，本月的进攻才算数
+  for (const o of [...playerOrders].sort((a, b) => Number(b.kind === 'war') - Number(a.kind === 'war'))) applyOrder(s, s.player, o);
   aiDiplomacy(s);
   aiRaiseArmies(s);
   aiAttrition(s);

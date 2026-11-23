@@ -190,7 +190,8 @@ export const NODE: Record<string, MapNode> = Object.fromEntries(NODES.map(n => [
 /** 计入统一的主要地区 */
 export const VICTORY_AREAS = ['北直隶', '山东', '山西', '河南', '陕西', '南直隶', '浙江', '江西', '湖广', '四川', '福建', '广东', '广西', '云贵'];
 
-const SPEED: Record<RouteKind, number> = { land: 28, river: 45, canal: 40, sea: 90 };
+/** 每日行程（公里）：大军携辎重，陆路日行约三十六里 */
+const SPEED: Record<RouteKind, number> = { land: 18, river: 32, canal: 28, sea: 70 };
 export function distanceKm(a: MapNode, b: MapNode): number {
   const R = 6371, rad = Math.PI / 180;
   const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
@@ -347,6 +348,14 @@ export function shortestPath(from: string, to: string, canSea: boolean): string[
   const path: string[] = [];
   for (let c = to; c !== from; c = prev[c]) path.unshift(c);
   return path;
+}
+
+/** 行军日程：每一站的累计天数，以及每月（三十日）走到哪里 */
+export function marchPlan(from: string, path: string[], progress = 0): { node: string; day: number; month: number }[] {
+  const out: { node: string; day: number; month: number }[] = [];
+  let d = -progress, c = from;
+  for (const p of path) { const r = routeBetween(c, p); if (!r) break; d += r.days; out.push({ node: p, day: d, month: Math.max(1, Math.ceil(d / 30)) }); c = p; }
+  return out;
 }
 
 export function pathDays(from: string, path: string[]): number {

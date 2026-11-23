@@ -8,7 +8,7 @@ import { shortestPath, neighbors } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
   policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', reinforce: '增兵',
-  envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立',
+  envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立', war: '宣战',
 };
 
 /** 命令的一句话描述 */
@@ -24,6 +24,7 @@ export function describeOrder(s: GameState, o: Order): string {
     case 'persuade': return `遣${charName(s, o.char)}赴${nodeName(o.node)}劝降`;
     case 'command': return `号令${factionName(s, o.vassal)}：${s.armies[o.army]?.name ?? ''}${armyOrderText(o.order)}${o.silver ? `（犒银 ${o.silver} 两）` : ''}`;
     case 'reward': return `犒赏${factionName(s, o.vassal)}银 ${o.silver} 两`;
+    case 'war': return `向${factionName(s, o.target)}宣战`;
     case 'independence': return `脱离${factionName(s, s.factions[s.player]?.overlord ?? '')}，自立门户`;
   }
 }
@@ -95,6 +96,13 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       if (!a || a.faction !== o.vassal) return '军队不属该部';
       const cap = s.cities[s.factions[f].capital];
       if (o.silver > (cap?.silver ?? 0)) return '府库不足';
+      return null;
+    }
+    case 'war': {
+      const t = s.factions[o.target];
+      if (!t || t.defunct) return '无此势力';
+      if (topOf(s, o.target) === topOf(s, f)) return '同属一方，不能宣战';
+      if (hostile(s, f, o.target)) return '已在交战';
       return null;
     }
     case 'independence': return s.factions[f]?.overlord ? null : '本方并不奉谁号令';
@@ -205,6 +213,14 @@ export function applyOrder(s: GameState, f: string, o: Order) {
     case 'command':
       commandVassal(s, f, o, src);
       break;
+    case 'war': {
+      const tgt = topOf(s, o.target);
+      setStance(s, f, tgt, 'war');
+      if (tgt !== o.target) setStance(s, f, o.target, 'war');
+      for (const c of Object.values(s.chars)) if (c.faction === f && c.status === 'active') adjustAtt(s, c.id, 'hawk', c.att.hawk > 0 ? 3 : -3, `向${factionName(s, tgt)}宣战`);
+      report(s, { cat: '交涉', urgent: true, node: s.factions[tgt]?.capital, text: `${factionName(s, f)}向${factionName(s, tgt)}宣战，两家交兵。`, src });
+      break;
+    }
     case 'independence': {
       const fac = s.factions[f], lord = fac.overlord!;
       delete fac.overlord; delete fac.loyalty;

@@ -24,11 +24,11 @@ await page.evaluate(() => { NM.addOrder({ id: 'o0-9', kind: 'recruit', node: 'na
 await page.click('#btn-next');
 for (let i = 0; i < 80; i++) {
   if (await page.locator('[data-choice]').first().isVisible().catch(() => false)) { await shot('07-choice'); await page.click('[data-choice="0"]'); }
-  if (await page.locator('#splash-go').isVisible().catch(() => false)) break;
+  if (await page.locator('#news-skip').isVisible().catch(() => false)) break;
   await page.waitForTimeout(150);
 }
 await shot('08-splash');
-await page.click('#splash-go');
+await page.click('#news-skip');
 await page.evaluate(() => { NM.selectNode('nanjing'); NM.cityTab = 'ledger'; NM.renderCity('nanjing'); });
 await shot('06-report');
 await page.evaluate(() => NM.selectArmy('a_huang'));

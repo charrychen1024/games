@@ -375,9 +375,11 @@ export class MapRenderer {
   }
 
   routeLabels: [number, number, string][] = [];
+  monthMarks: [number, number, number][] = [];
+  etaMarks: [number, number, number][] = [];
   drawRoutes(g: CanvasRenderingContext2D, s: GameState, time: number) {
     const z = this.cam.z;
-    this.routeLabels = [];
+    this.routeLabels = []; this.monthMarks = []; this.etaMarks = [];
     const sel = this.view.selected;
     if (z >= 1.9 || sel) {
       for (const r of ROUTES) {
@@ -402,15 +404,49 @@ export class MapRenderer {
     const drawPath = (a: Army, path: string[], planned: boolean) => {
       const pts: Pt[] = [armyPt(a), ...path.map(nodePt)];
       if (pts.length < 2) return;
-      const mine = a.faction === s.player;
-      g.strokeStyle = planned ? 'rgba(181,52,42,0.95)' : mine ? 'rgba(181,52,42,0.75)' : 'rgba(30,25,20,0.6)';
+      const mine = topOfSafe(s, a.faction) === s.player;
+      const col = planned ? 'rgba(181,52,42,0.95)' : mine ? 'rgba(181,52,42,0.75)' : 'rgba(30,25,20,0.6)';
       const zz = this.cam.z;
+      // 每一段的天数，用来找“每月走到哪里”
+      const days: number[] = [];
+      let prev = a.location;
+      path.forEach((p, i) => { const r = routeBetween(prev, p); days.push((r?.days ?? 1) - (i === 0 ? a.progress : 0)); prev = p; });
+      const at = (d: number): Pt | null => {
+        let acc = 0;
+        for (let i = 0; i < days.length; i++) {
+          if (acc + days[i] >= d) { const f = Math.max(0, Math.min(1, (d - acc) / Math.max(1, days[i]))); const [x1, y1] = pts[i], [x2, y2] = pts[i + 1]; return [x1 + (x2 - x1) * f, y1 + (y2 - y1) * f]; }
+          acc += days[i];
+        }
+        return null;
+      };
+      const total = days.reduce((m, x) => m + x, 0);
+      const cut = at(30);
+      g.strokeStyle = col;
       g.lineWidth = (planned ? 3.4 : 2.4) / zz;
-      g.setLineDash([9 / zz, 6 / zz]); g.lineDashOffset = dash / zz;
-      g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke();
-      g.setLineDash([]);
+      if (mine || planned) {
+        // 本月可达：实线；以后：虚线
+        let acc = 0, done = false;
+        g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 0; i < days.length && !done; i++) {
+          if (acc + days[i] >= 30 && cut) { g.lineTo(cut[0], cut[1]); done = true; } else g.lineTo(pts[i + 1][0], pts[i + 1][1]);
+          acc += days[i];
+        }
+        g.stroke();
+        if (cut && total > 30) {
+          g.setLineDash([9 / zz, 6 / zz]); g.lineDashOffset = dash / zz;
+          g.beginPath(); g.moveTo(cut[0], cut[1]);
+          acc = 0; for (let i = 0; i < days.length; i++) { acc += days[i]; if (acc > 30) g.lineTo(pts[i + 1][0], pts[i + 1][1]); }
+          g.stroke(); g.setLineDash([]);
+        }
+        for (let m = 1; m * 30 < total; m++) { const p = at(m * 30); if (p) this.monthMarks.push([p[0], p[1], m]); }
+        if (planned || mine) this.etaMarks.push([pts[pts.length - 1][0], pts[pts.length - 1][1], total]);
+      } else {
+        g.setLineDash([9 / zz, 6 / zz]); g.lineDashOffset = dash / zz;
+        g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke();
+        g.setLineDash([]);
+      }
       const [x1, y1] = pts[pts.length - 2], [x2, y2] = pts[pts.length - 1];
-      arrowHead(g, x1, y1, x2, y2, g.strokeStyle as string, 13 / zz);
+      arrowHead(g, x1, y1, x2, y2, col, 13 / zz);
     };
     for (const a of Object.values(s.armies)) if (a.path.length && (visibleArmy(s, a))) drawPath(a, a.path, false);
     for (const p of this.view.planned) { const a = s.armies[p.army]; if (a) drawPath(a, p.path, true); }
@@ -711,6 +747,22 @@ export class MapRenderer {
         g.strokeStyle = 'rgba(14,34,44,0.6)'; g.strokeText(r.name, sx, sy);
         g.fillStyle = '#cfe9f2'; g.fillText(r.name, sx, sy);
       }
+    }
+    // 行军：每月走到哪里（圆章写“一月”“二月”），终点写总日程
+    g.textAlign = 'center';
+    for (const [wx, wy, m] of this.monthMarks) {
+      const [sx, sy] = worldToScreen(this.cam, this.w, this.h, wx, wy);
+      g.beginPath(); g.arc(sx, sy, 10, 0, Math.PI * 2); g.fillStyle = '#7d1a12'; g.fill(); g.strokeStyle = '#f0cf86'; g.lineWidth = 1.5; g.stroke();
+      g.fillStyle = '#fff3d9'; g.font = '700 10px "Noto Serif SC", serif'; g.fillText(`${m}月`, sx, sy + 0.5);
+    }
+    for (const [wx, wy, d] of this.etaMarks) {
+      const [sx, sy] = worldToScreen(this.cam, this.w, this.h, wx, wy);
+      const t = `${d} 日${d > 30 ? ` · 约 ${Math.ceil(d / 30)} 月` : ''}`;
+      g.font = '700 11px "Noto Serif SC", serif';
+      const tw = g.measureText(t).width + 12;
+      g.fillStyle = 'rgba(125,26,18,0.92)'; roundRect(g, sx - tw / 2, sy - 34, tw, 17, 8); g.fill();
+      g.strokeStyle = '#f0cf86'; g.lineWidth = 1; g.stroke();
+      g.fillStyle = '#fff3d9'; g.fillText(t, sx, sy - 25);
     }
     // 选中城的路程（几日）
     g.font = '700 11px "Noto Serif SC", serif'; g.textAlign = 'center';
