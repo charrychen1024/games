@@ -37,6 +37,25 @@ export function armyOrderText(o: ArmyOrder): string {
 }
 
 /** 校验：返回错误说明，合法返回 null */
+/* ---------- 每月政令次数 ----------
+ * 军令（调动已有军队）不占次数；定方针、任命、募兵、调拨、出兵、遣使、劝降、号令藩镇、赏赐、宣战等每道占一次。
+ * 次数随两样东西变：中枢的理政之才（君主与治所宰辅中政务、威望最高者），以及所辖城池多寡（城多则设官分治、可多发政令）。
+ * 方针一经定下逐月照行，不必每月重下；主官在任的城自会按方针治理。 */
+export const orderCost = (o: Order): number => (o.kind === 'army' ? 0 : 1);
+export function orderBudget(s: GameState, f: string): { total: number; factors: string[] } {
+  const fac = s.factions[f];
+  const capital = fac?.capital;
+  const court = Object.values(s.chars).filter(c => c.status === 'active' && c.faction === f && (c.id === fac?.leader || c.location === capital));
+  const best = court.sort((a, b) => (b.ab.zheng + b.ab.wang) - (a.ab.zheng + a.ab.wang))[0];
+  const talent = best ? Math.max(0, Math.min(3, Math.round((best.ab.zheng + best.ab.wang - 60) / 40))) : 0;
+  const cities = Object.values(s.cities).filter(c => c.controller === f).length;
+  const scale = Math.min(3, Math.floor(cities / 6));
+  const total = Math.max(3, Math.min(9, 3 + talent + scale));
+  const factors = [`底数 3`, best ? `${best.name}理政（政务 ${best.ab.zheng}、威望 ${best.ab.wang}）+${talent}` : '中枢无人 +0', `辖 ${cities} 城 +${scale}`];
+  return { total, factors };
+}
+export const ordersUsed = (orders: Order[]) => orders.reduce((n, o) => n + orderCost(o), 0);
+
 export function validateOrder(s: GameState, f: string, o: Order): string | null {
   const own = (node: string) => s.cities[node]?.controller === f;
   switch (o.kind) {

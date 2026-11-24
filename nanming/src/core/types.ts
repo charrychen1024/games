@@ -221,6 +221,8 @@ export interface ReportEntry {
   from?: FactionId;
   /** 得到一方（易主）或守方（交战、围城） */
   to?: FactionId;
+  /** 得城所获：城中存银存粮、收编的降卒、俘获的人物 */
+  spoils?: { silver: number; grain: number; troops: number; captives: string[] };
   /** 号令（遣使、劝降、号令藩镇）的成败 */
   ok?: boolean;
   /** 使者从哪里出发（演出用） */

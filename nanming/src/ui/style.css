@@ -905,3 +905,19 @@ html.reduced .bh-pips i.now { animation: none; }
 .gov-card small { display: block; font-size: 10.5px; color: var(--gold); letter-spacing: 0.15em; }
 .gov-card b { display: block; font-size: 15px; } .gov-card span { font-size: 11.5px; color: var(--dim); }
 .gov-card:not(.named) img { filter: saturate(0.4) brightness(0.85); }
+/* 顶栏：数字增减飘字、政令余数 */
+.pill { position: relative; }
+.pill-d { position: absolute; right: -4px; top: -6px; font-size: 12px; font-weight: 900; padding: 0 5px; border-radius: 6px; pointer-events: none; white-space: nowrap; text-shadow: 0 1px 2px #000; }
+.pill-d.up { color: #c9f5bc; background: rgba(40, 90, 40, 0.85); } .pill-d.down { color: #ffd0c6; background: rgba(120, 30, 20, 0.85); }
+.orders-pill b { color: var(--gold-2); } .orders-pill.full b { color: #ff9a8a; }
+.nw-spoils { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 5px; font-size: 12.5px; color: #e8d6b4; }
+.nw-spoils b { font-size: 11px; padding: 0 6px; border-radius: 3px; background: #6e5128; color: #fff3d9; letter-spacing: 0.15em; }
+.nw-spoils span { display: inline-flex; align-items: center; gap: 3px; font-weight: 700; } .nw-spoils .ic { width: 15px; height: 15px; color: var(--gold-2); }
+/* 主帅阵前之言 */
+.bbark { position: absolute; top: 112px; z-index: 7; max-width: 300px; padding: 7px 14px 8px; border-radius: 10px; background: #f3e6c8; color: #2a1606; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6); pointer-events: none; font-size: 15px; line-height: 1.4; }
+.bbark.l { left: 28px; } .bbark.r { right: 28px; text-align: right; }
+.bbark::before { content: ''; position: absolute; top: -8px; border: 8px solid transparent; border-top: 0; border-bottom-color: #f3e6c8; }
+.bbark.l::before { left: 34px; } .bbark.r::before { right: 34px; }
+.bbark b { display: block; font-size: 11px; color: #8f2015; letter-spacing: 0.15em; }
+.bbark span { font-family: var(--brush); font-size: 20px; }
+.bbark.mine { background: #fff3d9; box-shadow: 0 0 0 2px var(--gold), 0 6px 18px rgba(0, 0, 0, 0.6); }

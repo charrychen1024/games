@@ -189,6 +189,7 @@ try {
   await wait(250);
   check('点“定位”打开对应城池', await visible('#city-name'));
   check('城池面板有主官或守将头像', await visible('#city-gov img'), await text('#city-gov'));
+  check('顶栏显示本月政令余数', /\d+\s*\/\d+ 令/.test(await text('#pill-orders')), await text('#pill-orders'));
   check('左上角不显示剧本进度条', (await page.locator('#topbar .yearbar').count()) === 0);
   const eras = await page.evaluate(() => { const s = NM.s; const t0 = s.turn; const out = []; for (const y of [1644, 1647, 1652, 1658]) { s.turn = (y - 1644) * 12 + 2; NM.musicForState(); out.push(NM_audio().era); } s.turn = t0; NM.musicForState(); return out; });
   check('地图配乐随年代自动换曲（四段）', JSON.stringify(eras) === '[0,1,2,3]', JSON.stringify(eras));
@@ -328,6 +329,7 @@ try {
     await wait(150);
     check(`${kind === 'naval' ? '水战' : '野战'}选定后命令收起、令牌显示新令`, !(await visible('#battle-ui .ords2.open')));
     if (kind === 'field') check('战斗标明地点与谁在指挥', (await text('#battle-where')).includes('·') && /指挥|号令/.test(await text('#battle .bh-who')), await text('#battle .bh-mid'));
+    check(`${kind === 'naval' ? '水战' : '野战'}主帅阵前有话`, (await page.locator('#battle-stage .bbark').count()) > 0 || (await page.evaluate(() => !!document.querySelector('.bbark'))), '');
     check(`${kind === 'naval' ? '水战' : '野战'}战场两侧标出我军、敌军`, (await page.locator('#battle-stage .btag.mine').count()) === 1 && (await page.locator('#battle-stage .btag').count()) === 2 && (await text('#battle-stage .bhud .bm.mine .bm-tag')) === '我军');
     await page.click('#lead-1');
     await page.click('#battle-go');

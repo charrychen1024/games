@@ -50,12 +50,12 @@ export class BattleView {
   preview(b: BattleState, full = false) {
     const sc = this.scene;
     if (!sc) return;
-    if (full && b.weather !== sc.b.weather) { sc.b = b; sc.scene.restart(); return; }
+    if (full && b.weather !== sc.b.weather) { sc.b = b; sc.restartSafe(); return; }
     sc.b = b;
     for (let i = 0; i < 3; i++) for (const sd of ['att', 'def'] as const) sc.buildGroup(sd, i, b);
     if (full && b.kind === 'siege') { sc.drawWall(b); sc.buildDefenders(b); }
   }
-  destroy() { this.game.destroy(true); }
+  destroy() { clearTimeout(this.scene?.resizeTimer); this.game.destroy(true); }
 }
 
 class WarScene extends Phaser.Scene {
@@ -122,7 +122,7 @@ class WarScene extends Phaser.Scene {
       // 动画进行中不重启（重启会丢掉正在等待的动画），等本回合演完再按新尺寸重画
       if (this.playing) { this.pendingResize = true; return; }
       clearTimeout(this.resizeTimer);
-      this.resizeTimer = setTimeout(() => { if (this.playing) this.pendingResize = true; else this.scene.restart(); }, 120);
+      this.resizeTimer = setTimeout(() => { if (this.playing) this.pendingResize = true; else this.restartSafe(); }, 120);
     });
     if (this.result) this.showResult(...this.result);
   }
@@ -136,9 +136,11 @@ class WarScene extends Phaser.Scene {
     const weatherChanged = to.weather !== this.b.weather;
     this.b = to;
     // 天候在这一合里变了（转雨、起雾）：立刻按新天候重画，不等窗口变化
-    if (this.pendingResize || weatherChanged) { this.pendingResize = false; this.quietFade = true; this.scene.restart(); }
+    if (this.pendingResize || weatherChanged) { this.pendingResize = false; this.quietFade = true; this.restartSafe(); }
   }
   quietFade = false;
+  /** 战斗已收场（游戏已销毁）时不再重启场景，免得迟到的定时器报错 */
+  restartSafe() { if (!this.scene || !(this.scene as any).manager || !this.sys?.game) return; this.scene.restart(); }
 
   /* ---------- 贴图 ---------- */
   canvasTex(key: string, w: number, h: number, draw: (g: CanvasRenderingContext2D) => void, ox: number, oy: number) {

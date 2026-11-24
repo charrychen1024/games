@@ -13,6 +13,7 @@ import { h, $, clear, wan } from './dom';
 import { iconSvg } from './icons';
 import { beat, gong, setScene, setIntensity, click } from './audio';
 import { POLITIES } from '../data/factions';
+import { barkLine, type BarkWhen } from './barks';
 import type { SideLook } from './battleScene';
 
 const ic = (name: string) => { const sp = h('span', { style: { display: 'contents' } }); sp.innerHTML = iconSvg(name); return sp; };
@@ -90,6 +91,18 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       const tag = (mine: boolean, left: boolean) => h('div', { class: 'btag ' + (left ? 'l' : 'r') + (mine ? ' mine' : ''), style: { '--fc': colorOf(cur[mine ? side : foe].faction) } as any },
         h('b', null, mine ? '我' : '敌'), h('span', null, cur[mine ? side : foe].name));
       return h('div', { class: 'btags' }, tag(myLeft, true), tag(!myLeft, false));
+    }
+    /** 主帅阵前之言：话泡出在说话一方的主将像下 */
+    function bark(who: 'me' | 'foe', when: BarkWhen, salt = cur.round) {
+      const sd = who === 'me' ? side : foe;
+      const left = (sd === 'att') === true;
+      const ch = s.chars[cur[sd].commander];
+      const text = barkLine(ch, when, salt);
+      stage.querySelector('.bbark.' + (left ? 'l' : 'r'))?.remove();
+      const el = h('div', { class: 'bbark ' + (left ? 'l' : 'r') + (who === 'me' ? ' mine' : '') }, h('b', null, cur[sd].commanderName), h('span', null, text));
+      stage.append(el);
+      gsap.fromTo(el, { scale: 0.6, opacity: 0, y: -8 }, { scale: 1, opacity: 1, y: 0, duration: 0.3, ease: 'back.out(2)' });
+      gsap.to(el, { opacity: 0, delay: 2.8, duration: 0.4, onComplete: () => el.remove() });
     }
     function paintStage() {
       stage.querySelector('.bhud')?.remove(); stage.querySelector('.btags')?.remove();
@@ -203,6 +216,7 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       const next = resolveRound(cur, attC, defC);
       busy = true;
       beat();
+      if (c.lead !== undefined) bark('me', 'lead');
       const mine = sideTroops(next[side]), start = sideTroops(b0[side]) || 1;
       setIntensity(Math.min(1, next.round / next.maxRounds * 0.7 + (1 - mine / start) * 0.6));
       render();
@@ -210,10 +224,24 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       const prev = cur;
       cur = next;
       ticker(next.log[next.log.length - 1].text, prev);
+      // 一合之后，最要紧的一件事由当事主帅说一句
+      const lg = next.log[next.log.length - 1];
+      const st = lg.stratagems[0];
+      const newRouted = (sd: 'att' | 'def') => [0, 1, 2].some(i => next[sd].lanes[i].routed && !prev[sd].lanes[i].routed);
+      const myLoss = sideTroops(prev[side]) - sideTroops(next[side]), foeLoss = sideTroops(prev[foe]) - sideTroops(next[foe]);
+      if (!next.over) {
+        if (next.kind === 'siege' && next.wall < prev.wall - 15) bark(side === 'att' ? 'me' : 'foe', 'breach');
+        else if (st) bark(st.side === side ? 'me' : 'foe', st.ok ? 'stratOk' : 'stratFail');
+        else if (newRouted(foe)) bark('me', 'routedFoe');
+        else if (newRouted(side)) bark('me', 'routedMine');
+        else if (foeLoss > myLoss * 1.4) bark('me', 'ahead');
+        else if (myLoss > foeLoss * 1.4) bark('foe', 'ahead');
+        else if (next.kind === 'siege') bark(side === 'def' ? 'me' : 'foe', 'hold');
+      }
       busy = false;
       choice = { lanes: [...choice.lanes], stratagem: undefined, lead: undefined };
       render();
-      if (cur.over) { gong(cur.winner === side); void view.showResult(cur.winner === side, `${b0.nodeName}之战：${outcomeText(cur)}`); }
+      if (cur.over) { bark('me', cur.winner === side ? 'win' : 'lose'); setTimeout(() => { if (!finished) bark('foe', cur.winner === foe ? 'win' : 'lose'); }, 1400); gong(cur.winner === side); void view.showResult(cur.winner === side, `${b0.nodeName}之战：${outcomeText(cur)}`); }
     }
     function go() {
       if (busy || cur.over) return;
@@ -239,6 +267,7 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       busy = false;
       render();
       gong(cur.winner === side);
+      bark('me', cur.winner === side ? 'win' : 'lose');
       void view.showResult(cur.winner === side, `${b0.nodeName}之战：${outcomeText(cur)}`);
       if (fast) setTimeout(() => { if (!finished) done(); }, 1600);
     }
@@ -258,6 +287,9 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
     // 面板排好之后再按舞台实际大小建场景
     requestAnimationFrame(() => requestAnimationFrame(() => {
       view = new BattleView(stage, b0, { att: lookOf(s, b0.att.faction), def: lookOf(s, b0.def.faction) });
+      // 开战：两军主帅各喊一句
+      setTimeout(() => { if (!finished) bark('me', b0.kind === 'siege' && side === 'def' ? 'openDef' : 'open', 0); }, 700);
+      setTimeout(() => { if (!finished) bark('foe', b0.kind === 'siege' && foe === 'def' ? 'openDef' : 'open', 0); }, 2300);
       if (fast) setTimeout(() => void auto(), 900);
     }));
   });

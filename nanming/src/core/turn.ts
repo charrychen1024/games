@@ -4,7 +4,7 @@
 import type { GameState, Order } from './types';
 import type { BattleState } from './battle';
 import { autoResolve } from './battle';
-import { applyOrder, resolveMissions } from './orders';
+import { applyOrder, resolveMissions, orderBudget, orderCost } from './orders';
 import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects } from './military';
 import { runEconomy } from './economy';
 import { aiOrders, aiFixSupply, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy } from './ai';
@@ -53,7 +53,14 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   const delayed = s.delayed; s.delayed = [];
   for (const o of delayed) applyOrder(s, s.player, o.kind === 'command' ? { ...o, silver: 0 } : o);
   // 宣战先于其他命令生效，本月的进攻才算数
-  for (const o of [...playerOrders].sort((a, b) => Number(b.kind === 'war') - Number(a.kind === 'war'))) applyOrder(s, s.player, o);
+  // 政令有数：超出本月次数的政令不行（界面已拦，这里再守一道）
+  const budget = orderBudget(s, s.player).total;
+  let used = 0;
+  for (const o of [...playerOrders].sort((a, b) => Number(b.kind === 'war') - Number(a.kind === 'war'))) {
+    if (used + orderCost(o) > budget) { report(s, { cat: '内政', text: `本月政令已满（${budget} 道），“${o.kind}”一道未能施行。` }); continue; }
+    used += orderCost(o);
+    applyOrder(s, s.player, o);
+  }
   aiDiplomacy(s);
   aiRaiseArmies(s);
   aiAttrition(s);

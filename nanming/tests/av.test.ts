@@ -153,3 +153,64 @@ describe('史事不替玩家势力做决定', () => {
     expect(s.reports.some(r => r.text.includes('张献忠破成都') && !r.text.includes('由你作主') && s.flags.lost_how_chengdu === undefined)).toBe(false);
   });
 });
+
+import { orderBudget, orderCost } from '../src/core/orders';
+
+import { barkLine, temperOf } from '../src/ui/barks';
+
+describe('每月政令有数', () => {
+  it('次数在 3 到 9 之间，随中枢理政之才与辖城多寡而变', () => {
+    const big = createGame('qing', 3), small = createGame('xi', 3);
+    const b1 = orderBudget(big, 'qing'), b2 = orderBudget(small, 'xi');
+    for (const b of [b1, b2]) { expect(b.total).toBeGreaterThanOrEqual(3); expect(b.total).toBeLessThanOrEqual(9); }
+    expect(b1.total).toBeGreaterThan(b2.total);
+    expect(b1.factors.join('')).toContain('辖');
+  });
+  it('调动军队不占政令', () => {
+    expect(orderCost({ id: 'x', kind: 'army', army: 'a', order: { kind: 'hold' } })).toBe(0);
+    expect(orderCost({ id: 'x', kind: 'policy', node: 'nanjing', policy: 'agri' })).toBe(1);
+  });
+  it('超出次数的政令不施行，并在军情里说明', () => {
+    const s = createGame('hongguang', 3);
+    const n = orderBudget(s, 'hongguang').total;
+    const own = citiesOf(s, 'hongguang').slice(0, n + 2);
+    const orders = own.map((c, i) => ({ id: 'p' + i, kind: 'policy' as const, node: c.id, policy: 'agri' as const }));
+    const after = runMonthAuto(s, orders);
+    const applied = own.filter(c => after.cities[c.id].policy === 'agri').length;
+    expect(applied).toBe(n);
+    expect(after.reports.some(r => r.text.includes('政令已满'))).toBe(true);
+  });
+});
+
+describe('攻破城池有所得', () => {
+  it('陷城：得城中钱粮、收降卒、俘守将，军报写明所获', () => {
+    const s = createGame('hongguang', 3);
+    const node = 'zhenjiang';
+    s.cities[node].garrison = 5000;
+    const army = Object.values(s.armies).find(a => a.faction === 'qing')!;
+    army.location = node; army.path = []; army.progress = 0;
+    const t0 = army.troops;
+    capture(s, node, 'qing', '陷城');
+    const r = last(s);
+    expect(r.spoils?.troops).toBeGreaterThan(0);
+    expect(army.troops).toBeGreaterThan(t0 - 4000);
+    expect(r.text).toContain('所获');
+    expect(planNews(s, r, 'qing').persp).toBe('gain');
+  });
+  it('献城：守军随城归附', () => {
+    const s = createGame('hongguang', 3);
+    s.cities.zhenjiang.garrison = 3000;
+    capture(s, 'zhenjiang', 'qing', '献城');
+    expect(last(s).spoils?.troops).toBe(3000);
+  });
+});
+
+describe('主帅阵前之言', () => {
+  it('按性情取话，同一情形取法固定；史可法守城有其本人之言', () => {
+    const s = createGame('hongguang', 3);
+    expect(barkLine(s.chars.shikefa, 'openDef')).toBe('城存与存，城亡与亡！');
+    expect(barkLine(s.chars.gaojie, 'open', 1)).toBe(barkLine(s.chars.gaojie, 'open', 1));
+    expect(temperOf(s.chars.liuzeqing)).toBe('wavering');
+    for (const w of ['open', 'lead', 'stratOk', 'routedMine', 'win', 'lose'] as const) expect(barkLine(s.chars.huangdegong, w).length).toBeGreaterThan(1);
+  });
+});

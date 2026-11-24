@@ -19,7 +19,7 @@ import { planNews, type NewsPlan } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
 import { POLICY_NAME, POLICY_HINT, monthlyIncome, upkeepOf, RECRUIT_SILVER, storeOf } from '../core/economy';
-import { describeOrder, validateOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
+import { orderBudget, orderCost, ordersUsed, describeOrder, validateOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { yangzhouSiegeState } from '../data/presets';
 import { createGame } from '../data/scenario1644';
@@ -513,9 +513,16 @@ export class App {
   newOrderId() { return `o${this.s!.turn}-${++this.seq}`; }
   addOrder(o: Order) {
     const s = this.s!;
-    this.orders = this.orders.filter(x => !(x.kind === o.kind && sameTarget(x, o)));
+    const rest = this.orders.filter(x => !(x.kind === o.kind && sameTarget(x, o)));
     const err = validateOrder(s, s.player, o);
     if (err) { this.toast(err, 'close'); return false; }
+    const bud = orderBudget(s, s.player);
+    if (ordersUsed(rest) + orderCost(o) > bud.total) {
+      this.toast(`本月政令已满（${bud.total} 道）。可撤下一道再下；调动军队不占政令。`, 'close');
+      gsap.fromTo('#pill-orders', { scale: 1.3 }, { scale: 1, duration: 0.5, ease: 'elastic.out(1, 0.4)' });
+      return false;
+    }
+    this.orders = rest;
     this.orders.push(o);
     click();
     this.toast(describeOrder(s, o), ORDER_ICON[o.kind]);
@@ -567,6 +574,8 @@ export class App {
   /* ================= 顶栏 ================= */
   renderAll() { this.renderTop(); this.renderOrders(); this.refreshPanel(); this.updatePlanned(); this.renderArmyBar(); }
 
+  /** 月末结算期间按住顶栏旧数 */
+  holdPills = false;
   renderTop() {
     const s = this.s!;
     const top = clear($('#topbar'));
@@ -584,16 +593,25 @@ export class App {
     const ib = (id: string, icon: string, tip: string, onclick: () => void, extra?: { on?: boolean; badge?: number }) =>
       h('button', { class: 'ibtn' + (extra?.on ? ' on' : ''), id, 'data-tip': tip, 'aria-label': tip, onclick: () => { click(); onclick(); } }, ic(icon), extra?.badge ? h('span', { class: 'badge' }, String(extra.badge)) : null);
     const pill = (icon: string, val: string, label: string, tip: string, raw?: number) => {
-      const b = h('b', null, val);
+      const fmt = (v: number) => (icon === 'city' ? String(Math.round(v)) : wan(v));
       const key = 'pill:' + icon;
       const prev = this.lastPills[key];
-      if (raw !== undefined && prev !== undefined && prev !== raw) {
-        const o = { v: prev };
-        gsap.to(o, { v: raw, duration: 0.9, ease: 'power2.out', onUpdate: () => { b.textContent = icon === 'city' ? String(Math.round(o.v)) : wan(o.v); } });
-        gsap.fromTo(b, { color: raw > prev ? '#9fe08f' : '#ff9a8a', scale: 1.25 }, { color: '#f3e6c8', scale: 1, duration: 1.2 });
+      // 月末结算时先按住旧数，等翻月与号令回报演完再滚到新数（见 endTurn）
+      if (this.holdPills && prev !== undefined) return h('div', { class: 'pill', 'data-tip': tip }, ic(icon), h('b', null, fmt(prev)), h('small', null, label));
+      const b = h('b', null, val);
+      const el = h('div', { class: 'pill', 'data-tip': tip }, ic(icon), b, h('small', null, label));
+      if (raw !== undefined && prev !== undefined && Math.round(prev) !== Math.round(raw)) {
+        const o = { v: prev }, up = raw > prev;
+        gsap.to(o, { v: raw, duration: isReduced() ? 0.01 : 1.2, ease: 'power2.out', onUpdate: () => { b.textContent = fmt(o.v); }, onComplete: () => { b.textContent = val; } });
+        gsap.fromTo(b, { color: up ? '#9fe08f' : '#ff9a8a', scale: 1.3 }, { color: '#f3e6c8', scale: 1, duration: 1.4 });
+        const d = raw - prev;
+        const tag = h('span', { class: 'pill-d ' + (up ? 'up' : 'down') }, (up ? '+' : '−') + fmt(Math.abs(d)));
+        el.append(tag);
+        gsap.fromTo(tag, { y: 6, opacity: 0 }, { y: -14, opacity: 1, duration: 0.4, ease: 'back.out(2)' });
+        gsap.to(tag, { opacity: 0, y: -24, delay: isReduced() ? 1 : 2.4, duration: 0.6, onComplete: () => tag.remove() });
       }
       if (raw !== undefined) this.lastPills[key] = raw;
-      return h('div', { class: 'pill', 'data-tip': tip }, ic(icon), b, h('small', null, label));
+      return el;
     };
     const u = unificationProgress(s);
     const store = storeOf(s, s.player);
@@ -606,6 +624,7 @@ export class App {
         pill('silver', wan(store.silver - spendAll('silver')), '两', `${me.short}府库：所辖 ${store.cities} 城存银之和（各城钱粮分存，调拨须走粮道）· ${nodeName(me.capital)}存 ${wan(cap?.silver ?? 0)}`, store.silver - spendAll('silver')),
         pill('grain', wan(store.grain - spendAll('grain')), '石', `${me.short}仓粮：所辖 ${store.cities} 城存粮之和 · ${nodeName(me.capital)}存 ${wan(cap?.grain ?? 0)}`, store.grain - spendAll('grain')),
         pill('city', String(own.length), '城', `直辖城池 · 统一进度 ${u.held}/${u.total}`, own.length),
+        (() => { const b = orderBudget(s, s.player), used = ordersUsed(this.orders); const el = h('div', { class: 'pill orders-pill' + (used >= b.total ? ' full' : ''), id: 'pill-orders', 'data-tip': `本月政令 ${used} / ${b.total} 道（${b.factors.join('，')}）。调动军队不占政令；方针定下后逐月照行，不必每月重下。` }, ic('policy'), h('b', null, `${b.total - used}`), h('small', null, `/${b.total} 令`)); return el; })(),
         pill('troops', wan(troops), '兵', '直辖兵力', troops),
       ),
       h('div', { class: 'spacer' }),
@@ -1481,6 +1500,12 @@ export class App {
         const fs = Object.values(s.factions).filter(f => !f.defunct && f.id !== 'local' && (f.name.length >= 2 ? r.text.includes(f.name) || (f.short.length >= 2 && r.text.includes(f.short)) : ['军', '廷', '朝', '兵'].some(k => r.text.includes(f.name + k)))).slice(0, 3);
         for (const f of fs) seals.append(h('span', { class: 'nw-seal', style: { background: f.color } }, polityOf(s, f.polity).mark || f.short));
         if (node) seals.append(h('span', { class: 'nw-loc' }, ic('locate'), nodeName(node)));
+        const spl = r.spoils;
+        if (spl && (spl.silver >= 1000 || spl.grain >= 1000 || spl.troops >= 100 || spl.captives.length)) {
+          more.append(h('div', { class: 'nw-spoils' }, h('b', null, '所获'),
+            spl.silver >= 1000 ? h('span', null, ic('silver'), wan(spl.silver)) : null, spl.grain >= 1000 ? h('span', null, ic('grain'), wan(spl.grain)) : null,
+            spl.troops >= 100 ? h('span', null, ic('troops'), wan(spl.troops)) : null, ...spl.captives.map(n => h('span', null, ic('prisoner'), n))));
+        }
         card.classList.toggle('urgent', !!r.urgent);
         if (isReduced()) gsap.fromTo(card, { opacity: 0 }, { opacity: 1, duration: 0.15 });
         else {
@@ -1518,8 +1543,8 @@ export class App {
         m.addFx({ kind: 'verdict', node, ok: !!r?.ok, stamp: plan.stamp, color: this.s!.factions[this.s!.player].color, text: verdictLine(r), dur: 2200, delay: isReduced() ? 0 : ride });
         break;
       }
-      case 'breach': m.addFx({ kind: 'capture', node, color, color2, text: mark, dur: 2600, delay: 350 }); break;
-      case 'handover': m.addFx({ kind: 'capture', node, color, color2, text: mark, quiet: true, stamp: plan.stamp, dur: 2400, delay: 300 }); break;
+      case 'breach': m.addFx({ kind: 'capture', node, color, color2, text: mark, dur: 2600, delay: 350 }); this.spoilFx(node, r, plan, 1700); break;
+      case 'handover': m.addFx({ kind: 'capture', node, color, color2, text: mark, quiet: true, stamp: plan.stamp, dur: 2400, delay: 300 }); this.spoilFx(node, r, plan, 1500); break;
       case 'clash': m.addFx({ kind: 'clash', node, dur: 1700, delay: 300 }); break;
       case 'siege': m.addFx({ kind: 'ripple', node, color: '#e0503f', dur: 1600, delay: 250 }); m.addFx({ kind: 'stamp', node, text: '围', color: '#a0301f', dur: 1500, delay: 450 }); break;
       case 'lift': m.addFx({ kind: 'ripple', node, color: '#9fd18f', dur: 1600, delay: 250 }); m.addFx({ kind: 'stamp', node, text: '解', color: '#3f7a4a', dur: 1500, delay: 450 }); break;
@@ -1637,6 +1662,14 @@ export class App {
     await new Promise(res => setTimeout(res, fast ? 150 : 650));
   }
 
+  /** 得城所获飘在城上：银、粮、降卒、俘将（只给得城一方看） */
+  spoilFx(node: string, r: ReportEntry | undefined, plan: NewsPlan, delay: number) {
+    const sp = r?.spoils;
+    if (!sp || plan.persp !== 'gain') return;
+    const items = [sp.silver >= 1000 ? `+${wan(sp.silver)} 两` : '', sp.grain >= 1000 ? `+${wan(sp.grain)} 石` : '', sp.troops >= 100 ? `+${wan(sp.troops)} ${plan.act === 'breach' ? '降卒' : '兵'}` : '', ...sp.captives.map(n => `俘 ${n}`)].filter(Boolean);
+    items.forEach((text, i) => this.map.addFx({ kind: 'float', node, text, color: text.startsWith('俘') ? '#ffd27a' : text.includes('石') ? '#e8d48a' : '#bfe6b7', dur: 2000, delay: isReduced() ? 0 : delay + i * 260, dy: -i * 17 }));
+  }
+
   /* ================= 月度推进 ================= */
   /** 翻月：旧月翻过，新月落下 */
   monthFlip(before: GameState, after: GameState): Promise<void> {
@@ -1738,12 +1771,17 @@ export class App {
     if (Object.keys(marchPaths).some(id => this.s!.armies[id] && topOf(this.s!, this.s!.armies[id].faction) === topOf(this.s!, this.s!.player))) marchSfx(Object.values(this.s.armies).some(a => a.faction === this.s!.player && a.mix.cav >= 0.35));
     this.autoSave();
     this.reportTurn = this.s.turn - (this.s.ended ? 0 : 1);
+    this.holdPills = true;
     this.renderAll();
     const urgent = this.s.reports.some(x => x.turn === this.reportTurn && x.urgent && (!x.faction || x.faction === this.s!.player));
     if (urgent) alarm(); else chime();
     this.monthFx(before, this.s);
     await this.monthFlip(before, this.s);
     await this.resultFx(before, this.s, issued);
+    // 顶栏关键数字：此刻才从上月滚到本月，并飘出增减
+    this.holdPills = false;
+    this.renderTop();
+    if (!isReduced()) await new Promise(res => setTimeout(res, 900));
     await new Promise(res => setTimeout(res, isReduced() ? 150 : 500));
     const wantAll = await this.showSplash();
     this.resolving = false;
