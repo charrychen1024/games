@@ -921,3 +921,6 @@ html.reduced .bh-pips i.now { animation: none; }
 .bbark b { display: block; font-size: 11px; color: #8f2015; letter-spacing: 0.15em; }
 .bbark span { font-family: var(--brush); font-size: 20px; }
 .bbark.mine { background: #fff3d9; box-shadow: 0 0 0 2px var(--gold), 0 6px 18px rgba(0, 0, 0, 0.6); }
+.nw-also { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.nw-also-i { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; color: #cdb894; padding: 1px 7px; border-radius: 9px; background: rgba(0, 0, 0, 0.35); }
+.nw-also-i .ic { width: 13px; height: 13px; color: var(--gold); }

@@ -214,3 +214,29 @@ describe('主帅阵前之言', () => {
     for (const w of ['open', 'lead', 'stratOk', 'routedMine', 'win', 'lose'] as const) expect(barkLine(s.chars.huangdegong, w).length).toBeGreaterThan(1);
   });
 });
+
+import { groupNews } from '../src/ui/newsFx';
+describe('攻破一城只播一张战报', () => {
+  it('同城同月的攻城战、易主、史事合成一张，以易主领头', () => {
+    const rs = [
+      { turn: 1, cat: '军报' as const, act: 'battle' as const, node: 'chongqing', text: '重庆攻城战：张献忠对曾英。' },
+      { turn: 1, cat: '易主' as const, act: 'breach' as const, node: 'chongqing', text: '重庆易主（陷城）：张献忠攻破重庆。' },
+      { turn: 1, cat: '史事' as const, node: 'chongqing', text: '【张献忠破重庆】西营溯江而上。' },
+      { turn: 1, cat: '内政' as const, text: '某事。' },
+    ];
+    const g = groupNews(rs);
+    expect(g.length).toBe(2);
+    const cq = g.find(x => x.lead.node === 'chongqing')!;
+    expect(cq.lead.cat).toBe('易主');
+    expect(cq.rest.map(r => r.cat).sort()).toEqual(['军报', '史事'].sort());
+  });
+  it('真实一局里，任一个月的战报卡片不会有两张指向同一城', () => {
+    let s = createGame('hongguang', 7);
+    for (let m = 0; m < 8; m++) {
+      const t = s.turn;
+      s = runMonthAuto(s, []);
+      const nodes = groupNews(s.reports.filter(r => r.turn === t)).map(x => x.lead.node).filter(Boolean);
+      expect(new Set(nodes).size).toBe(nodes.length);
+    }
+  });
+});

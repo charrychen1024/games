@@ -15,7 +15,7 @@ import { resolveMonth, unificationProgress, type Answer } from '../core/turn';
 import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
 import { POLITIES } from '../data/factions';
 import { isReduced, setReducedMotion, reducedSystem } from './motion';
-import { planNews, type NewsPlan } from './newsFx';
+import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
 import { POLICY_NAME, POLICY_HINT, monthlyIncome, upkeepOf, RECRUIT_SILVER, storeOf } from '../core/economy';
@@ -1433,9 +1433,9 @@ export class App {
       const me = topOf(s, s.player);
       const mineNode = (n?: string) => !!n && !!s.cities[n] && topOf(s, s.cities[n].controller) === me;
       const rank = (r: ReportEntry) => (r.cat === '易主' && (mineNode(r.node) || r.urgent) ? 0 : r.urgent ? 1 : r.cat === '易主' ? 2 : r.cat === '史事' ? 3 : r.cat === '军报' && mineNode(r.node) ? 4 : r.cat === '人事' ? 5 : r.cat === '军报' ? 6 : r.cat === '交涉' ? 6 : r.cat === '线索' ? 7 : 8);
-      const seen = new Set<string>();
-      const cap = this.newsMode === 'major' ? 1 : 7;
-      const top = [...all].sort((a, b) => rank(a) - rank(b)).filter(r => { const k = splitReport(r).hl; if (seen.has(k)) return false; seen.add(k); return rank(r) <= cap; }).slice(0, 6);
+      const groups = this.splashGroups();
+      const top = groups.map(g => g.lead);
+      void rank;
       if (!top.length) { resolve(false); return; }
       const home = { ...this.map.cam };
       const COL: Record<string, string> = { 急报: '#b5342a', 军报: '#7d1a12', 史事: '#8c6a35', 线索: '#3f6f8f', 内政: '#5f8a3a', 交涉: '#2f6f8f', 人事: '#6a4a8a', 易主: '#b5342a' };
@@ -1496,6 +1496,9 @@ export class App {
         count.textContent = `${k + 1} / ${top.length}`;
         hl.textContent = sp.hl;
         more.textContent = (sp.more.split('。')[0] ?? '').slice(0, 70) + (sp.more ? '。' : '');
+        // 同城同月的其余军报：一行附注（攻城战的伤亡、相应的史事），不再各自成卡
+        const rest = groups[k].rest;
+        if (rest.length) more.append(h('div', { class: 'nw-also' }, ...rest.slice(0, 3).map(x => h('span', { class: 'nw-also-i' }, ic(CAT_ICON[x.cat] ?? 'info'), x.cat === '史事' || x.cat === '线索' ? (x.text.match(/【([^】]+)】/)?.[1] ?? x.text.slice(0, 16)) : splitReport(x).hl.slice(0, 26)))));
         clear(seals);
         const fs = Object.values(s.factions).filter(f => !f.defunct && f.id !== 'local' && (f.name.length >= 2 ? r.text.includes(f.name) || (f.short.length >= 2 && r.text.includes(f.short)) : ['军', '廷', '朝', '兵'].some(k => r.text.includes(f.name + k)))).slice(0, 3);
         for (const f of fs) seals.append(h('span', { class: 'nw-seal', style: { background: f.color } }, polityOf(s, f.polity).mark || f.short));
@@ -1529,6 +1532,23 @@ export class App {
       gsap.from('#news .nw-head', { opacity: 0, y: -20, duration: 0.35 });
       show(0);
     });
+  }
+
+  /** 本月战报要播哪几张卡：先按城合并，再按轻重挑前六张（“只播要紧”只留易主与急报） */
+  splashGroups(): NewsGroup[] {
+    const s = this.s!;
+    const t = this.reportTurn;
+    const all = s.reports.filter(r => r.turn === t && (!r.faction || r.faction === s.player));
+    const me = topOf(s, s.player);
+    const mineNode = (n?: string) => !!n && !!s.cities[n] && topOf(s, s.cities[n].controller) === me;
+    // “由你作主”的史实提示只进军情面板，不占战报
+    const rank = (r: ReportEntry) => (r.cat === '易主' && (mineNode(r.node) || r.urgent) ? 0 : r.urgent ? 1 : r.cat === '易主' ? 2 : r.ok !== undefined ? 2 : r.cat === '史事' ? 3 : r.cat === '军报' && mineNode(r.node) ? 4 : r.cat === '人事' ? 5 : r.cat === '军报' ? 6 : r.cat === '交涉' ? 6 : r.cat === '线索' && !r.text.includes('由你作主') ? 7 : 9);
+    const cap = this.newsMode === 'major' ? 1 : 7;
+    const seen = new Set<string>();
+    return groupNews(all.filter(r => rank(r) <= 8))
+      .sort((a, b) => rank(a.lead) - rank(b.lead))
+      .filter(g => { const k = splitReport(g.lead).hl; if (seen.has(k)) return false; seen.add(k); return rank(g.lead) <= cap; })
+      .slice(0, 6);
   }
 
   /** 军报在地图上的动效：陷城有火烟与“破”印；献城、归附、反正只换旗落印；交战才有刀光；围城、解围、退兵、行军各有其形 */
@@ -1576,7 +1596,8 @@ export class App {
     }
     // 2. 结果：使者成败、藩镇奉令（同一结果在战报里还会再讲一遍）
     let k = 0;
-    for (const r of after.reports.filter(x => x.turn === t && x.ok !== undefined && x.node && (!x.faction || x.faction === me))) {
+    const told = new Set(this.splashGroups().map(g => g.lead.node).filter(Boolean) as string[]);
+    for (const r of after.reports.filter(x => x.turn === t && x.ok !== undefined && x.node && !told.has(x.node) && (!x.faction || x.faction === me))) {
       const plan = planNews(after, r);
       const delay = fast ? 0 : 300 + k++ * 500;
       m.addFx({ kind: 'verdict', node: r.node, ok: !!r.ok, stamp: plan.stamp, color: col, text: verdictLine(r), dur: 2200, delay });
@@ -1697,14 +1718,15 @@ export class App {
     const m = this.map;
     const t = before.turn;
     let k = 0;
+    const told = new Set(this.splashGroups().map(g => g.lead.node).filter(Boolean) as string[]);
     for (const r of after.reports.filter(x => x.turn === t && x.cat === '易主' && x.node)) {
       const c = after.cities[r.node!];
       const f = after.factions[c?.controller ?? ''];
-      if (!c || before.cities[r.node!]?.controller === c.controller) continue;
+      if (!c || before.cities[r.node!]?.controller === c.controller || told.has(r.node!)) continue;
       const plan = planNews(after, r);
       m.addFx({ kind: 'capture', node: r.node, color: f?.color ?? '#c8352a', color2: before.factions[before.cities[r.node!]?.controller ?? '']?.color, text: polityOf(after, f?.polity ?? 'none').mark || f?.short || '易', quiet: plan.visual === 'handover', stamp: plan.stamp, dur: 2600, delay: 500 + (k++ % 8) * 260 });
     }
-    after.battles.filter(b => b.turn === t).slice(-12).forEach((b, i) => m.addFx({ kind: 'clash', node: b.node, dur: 1700, delay: 200 + i * 160 }));
+    after.battles.filter(b => b.turn === t && !told.has(b.node)).slice(-12).forEach((b, i) => m.addFx({ kind: 'clash', node: b.node, dur: 1700, delay: 200 + i * 160 }));
     for (const r of after.reports.filter(x => x.turn === t && x.cat === '交涉' && /结盟|停战|议和|和好/.test(x.text) && !/未成|拒/.test(x.text))) {
       const fs = Object.values(after.factions).filter(f => r.text.includes(f.name)).slice(0, 2);
       const node = fs[1]?.capital ?? fs[0]?.capital;

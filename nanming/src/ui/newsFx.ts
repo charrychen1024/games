@@ -77,3 +77,21 @@ export function verdictStamp(r: ReportEntry): string {
   if (t.includes('号令')) return t.includes('只遣') || t.includes('勉强') ? '半' : r.ok ? '奉' : t.includes('下月') ? '缓' : '拒';
   return r.ok ? '成' : '败';
 }
+
+/** 战报分组：同一城同一月的几条军报（攻城战、易主、史事、劝降结果……）合成一张卡，只飞一次镜头、只演一次、只响一次。
+ * 领头的一条按轻重取：易主 > 号令结果 > 交战 > 史事 > 其余；其余作附注。没有地点的各自成卡。 */
+export interface NewsGroup { lead: ReportEntry; rest: ReportEntry[] }
+const LEAD_RANK = (r: ReportEntry) => (r.cat === '易主' ? 0 : r.ok !== undefined ? 1 : actOf(r) === 'battle' ? 2 : r.cat === '史事' ? 3 : r.urgent ? 4 : 5);
+export function groupNews(reports: ReportEntry[]): NewsGroup[] {
+  const byNode = new Map<string, ReportEntry[]>();
+  const out: NewsGroup[] = [];
+  for (const r of reports) {
+    if (!r.node) { out.push({ lead: r, rest: [] }); continue; }
+    (byNode.get(r.node) ?? byNode.set(r.node, []).get(r.node)!).push(r);
+  }
+  for (const list of byNode.values()) {
+    const sorted = [...list].sort((a, b) => LEAD_RANK(a) - LEAD_RANK(b));
+    out.push({ lead: sorted[0], rest: sorted.slice(1) });
+  }
+  return out;
+}
