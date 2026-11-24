@@ -2,7 +2,7 @@
 import type { ArmyOrder, GameState, Order } from './types';
 import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance } from './state';
 import { setArmyOrder, capture } from './military';
-import { RECRUIT_SILVER, POLICY_NAME } from './economy';
+import { RECRUIT_SILVER, POLICY_NAME, supplyBlock } from './economy';
 import { rngFor } from './rng';
 import { shortestPath, neighbors, NODE } from '../data/geography';
 
@@ -142,24 +142,7 @@ export function recruitLeft(s: GameState, node: string): number {
  * 粮道：钱粮沿道路运送，被围之城送不进也运不出；途中必须经过非敌方城池。
  * 返回阻断原因，畅通返回 null。
  */
-export function supplyBlock(s: GameState, f: string, from: string, to: string): string | null {
-  if (s.sieges[to]) return `${nodeName(to)}被围，粮道不通`;
-  if (s.sieges[from]) return `${nodeName(from)}被围，运不出城`;
-  const seen = new Set([from]);
-  const queue = [from];
-  while (queue.length) {
-    const u = queue.shift()!;
-    for (const { to: v } of neighbors(u)) {
-      if (seen.has(v)) continue;
-      if (v === to) return null;
-      seen.add(v);
-      const c = s.cities[v];
-      if (!c || s.sieges[v] || hostile(s, f, c.controller)) continue;
-      queue.push(v);
-    }
-  }
-  return `去${nodeName(to)}的路被敌方隔断`;
-}
+export { supplyBlock } from './economy';
 
 export const maxRecruit = (c: { pop: number; minxin: number }) => Math.max(0, Math.round(c.pop * 10000 * 0.004 * (0.5 + c.minxin / 100) / 100) * 100);
 
@@ -235,9 +218,11 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       const aid = `a_${f}_${s.nextId++}`;
       s.armies[aid] = { id: aid, name: `${ch.name}${o.navy ? '水师' : '部'}`, faction: f, commander: ch.id, troops: o.troops, mix, morale: Math.round(45 + c.minxin * 0.25), location: o.node, path: [], progress: 0, order: { kind: 'hold' }, supply: o.node, hunger: 0 };
       ch.location = o.node;
-      if (c.governor === ch.id) c.governor = undefined;
+      // 领兵即离任：原任何城主官都卸去，该城不再得其治理
+      const posts = Object.values(s.cities).filter(x => x.governor === ch.id);
+      for (const x of posts) x.governor = undefined;
       bump(s, o.node, 'garrison', -o.troops, `编成${ch.name}${o.navy ? '水师' : '部'}出征`, src);
-      report(s, { cat: '军报', node: o.node, text: `${nodeName(o.node)}抽驻军 ${troopsText(o.troops)} 人编成${ch.name}${o.navy ? '水师' : '部'}，听候调遣。`, src });
+      report(s, { cat: '军报', node: o.node, text: `${nodeName(o.node)}抽驻军 ${troopsText(o.troops)} 人编成${ch.name}${o.navy ? '水师' : '部'}，听候调遣。${posts.length ? `${ch.name}卸去${posts.map(x => nodeName(x.id)).join('、')}主官。` : ''}`, src });
       break;
     }
     case 'war': {

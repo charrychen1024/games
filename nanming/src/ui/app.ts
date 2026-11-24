@@ -13,7 +13,7 @@ import { cardHand, cardArt, type GameCard, type Chip } from './cards';
 import { resolveMonth, unificationProgress, type Answer } from '../core/turn';
 import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
 import { POLITIES } from '../data/factions';
-import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors } from '../data/geography';
+import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
 import { POLICY_NAME, POLICY_HINT, monthlyIncome, upkeepOf, RECRUIT_SILVER } from '../core/economy';
 import { describeOrder, validateOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
@@ -406,6 +406,7 @@ export class App {
           tip.append(h('div', { class: 'mc-days' }, h('b', null, String(mi.days)), ' 日', h('span', null, mi.days > 30 ? `约 ${Math.ceil(mi.days / 30)} 个月` : '本月可到')));
           if (mi.days > 30 && mi.reach) tip.append(h('div', { class: 'tt-r' }, ic('calendar'), h('b', null, `本月行至${nodeName(mi.reach)}`)));
           if (mi.blocked.length) tip.append(h('div', { class: 'mc-warn' }, ic('siege'), `途经敌城：${mi.blocked.map(nodeName).join('、')}，须先攻下`));
+          if (mi.land) tip.append(h('div', { class: 'mc-warn' }, ic('navy'), `须在${nodeName(mi.land)}舍舟登岸，水师改为步卒`));
           if (mi.rel === 'neutral') tip.append(h('div', { class: 'mc-warn' }, ic('war'), `与${s.factions[c.controller].short}未交战，进攻须宣战`));
           tip.append(h('div', { class: 'mc-act' }, mi.rel === 'war' ? '左键：进攻' : mi.rel === 'friend' ? '左键：开赴' : '左键：宣战或开赴'));
         }
@@ -422,7 +423,7 @@ export class App {
   hideTip() { $('#tooltip').classList.add('hidden'); }
 
   /** 行军估算：天数、本月走到哪、途经敌城、与目标的关系 */
-  marchInfo(armyId: string, node: string): { path: string[] | null; days: number; reach: string | null; blocked: string[]; rel: 'war' | 'friend' | 'neutral' } {
+  marchInfo(armyId: string, node: string): { path: string[] | null; days: number; reach: string | null; blocked: string[]; rel: 'war' | 'friend' | 'neutral'; land?: string | null } {
     const s = this.s!, a = s.armies[armyId];
     const start = a.progress > 0 && a.path.length ? a.path[0] : a.location;
     const p0 = shortestPath(start, node, canSea(a));
@@ -433,7 +434,10 @@ export class App {
     const plan = marchPlan(a.location, path, a.progress);
     const reach = [...plan].reverse().find(x => x.day <= 30)?.node ?? null;
     const blocked = path.slice(0, -1).filter(id => hostile(s, a.faction, s.cities[id]?.controller ?? '') && s.cities[id].garrison > 0);
-    return { path, days: plan.length ? plan[plan.length - 1].day : 0, reach, blocked, rel };
+    // 水师途经陆路：要舍舟登岸
+    let land: string | null = null;
+    if (a.mix.navy > 0) { let c = a.location; for (const p of path) { if (routeBetween(c, p)?.kind === 'land') { land = c; break; } c = p; } }
+    return { path, days: plan.length ? plan[plan.length - 1].day : 0, reach, blocked, rel, land };
   }
   /** 出征：敌城即进攻，友城即开赴，未交战则问是否宣战 */
   issueMarch(armyId: string, node: string, force?: 'move' | 'attack') {
@@ -1346,7 +1350,10 @@ export class App {
 
   /** 每月开头的要闻：最多四条 */
   /** 本月战报：镜头逐一飞到出事之地，插画卡片讲一句话，自动翻页；可上一条、下一条、全部跳过 */
-  showSplash(): Promise<void> {
+  /** 战报播放偏好：all 择要播放；major 只播与我方相关的要紧事（易主、急报） */
+  newsMode: 'all' | 'major' = (() => { try { return localStorage.getItem('nanming:news') === 'major' ? 'major' : 'all'; } catch { return 'all'; } })();
+  /** 返回 true 表示玩家要看全部军情 */
+  showSplash(): Promise<boolean> {
     return new Promise(resolve => {
       const s = this.s!;
       const t = this.reportTurn;
@@ -1355,8 +1362,9 @@ export class App {
       const mineNode = (n?: string) => !!n && !!s.cities[n] && topOf(s, s.cities[n].controller) === me;
       const rank = (r: ReportEntry) => (r.cat === '易主' && (mineNode(r.node) || r.urgent) ? 0 : r.urgent ? 1 : r.cat === '易主' ? 2 : r.cat === '史事' ? 3 : r.cat === '军报' && mineNode(r.node) ? 4 : r.cat === '人事' ? 5 : r.cat === '军报' ? 6 : r.cat === '交涉' ? 6 : r.cat === '线索' ? 7 : 8);
       const seen = new Set<string>();
-      const top = [...all].sort((a, b) => rank(a) - rank(b)).filter(r => { const k = splitReport(r).hl; if (seen.has(k)) return false; seen.add(k); return rank(r) <= 7; }).slice(0, 6);
-      if (!top.length) { resolve(); return; }
+      const cap = this.newsMode === 'major' ? 1 : 7;
+      const top = [...all].sort((a, b) => rank(a) - rank(b)).filter(r => { const k = splitReport(r).hl; if (seen.has(k)) return false; seen.add(k); return rank(r) <= cap; }).slice(0, 6);
+      if (!top.length) { resolve(false); return; }
       const home = { ...this.map.cam };
       const COL: Record<string, string> = { 急报: '#b5342a', 军报: '#7d1a12', 史事: '#8c6a35', 线索: '#3f6f8f', 内政: '#5f8a3a', 交涉: '#2f6f8f', 人事: '#6a4a8a', 易主: '#b5342a' };
       let i = -1, timer = 0, paused = false;
@@ -1371,14 +1379,21 @@ export class App {
         h('div', { class: 'nw-ctl' },
           h('button', { class: 'nw-b', id: 'news-prev', 'aria-label': '上一条', onclick: (e: Event) => { e.stopPropagation(); show(Math.max(0, i - 1)); } }, '‹'),
           h('button', { class: 'nw-b', id: 'news-next', 'aria-label': '下一条', onclick: (e: Event) => { e.stopPropagation(); next(); } }, '›'),
-          h('button', { class: 'nw-skip', id: 'news-skip', onclick: (e: Event) => { e.stopPropagation(); done(); } }, ic('report'), '看全部军情')));
+          h('button', { class: 'nw-b nw-mode' + (this.newsMode === 'major' ? ' on' : ''), id: 'news-mode', 'data-tip': '以后只播与我方相关的要紧事（城池易主、急报）；其余可在军情里看', onclick: (e: Event) => {
+            e.stopPropagation();
+            this.newsMode = this.newsMode === 'major' ? 'all' : 'major';
+            try { localStorage.setItem('nanming:news', this.newsMode); } catch { /* 偏好只在本次有效 */ }
+            (e.currentTarget as HTMLElement).classList.toggle('on', this.newsMode === 'major');
+            this.toast(this.newsMode === 'major' ? '以后只播要紧战报' : '以后照常择要播放', 'report');
+          } }, ic('urgent'), '只播要紧'),
+          h('button', { class: 'nw-skip', id: 'news-skip', onclick: (e: Event) => { e.stopPropagation(); done(true); } }, ic('report'), '看全部军情')));
       const onKey = (e: KeyboardEvent) => { if (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowRight') { e.preventDefault(); next(); } else if (e.key === 'ArrowLeft') show(Math.max(0, i - 1)); else if (e.key === 'Escape') done(); };
       window.addEventListener('keydown', onKey, true);
       let ended = false;
-      const done = () => {
+      const done = (all = false) => {
         if (ended) return; ended = true;
         clearInterval(timer); window.removeEventListener('keydown', onKey, true);
-        gsap.to(el, { opacity: 0, y: 30, duration: 0.3, onComplete: () => { el.remove(); resolve(); } });
+        gsap.to(el, { opacity: 0, y: 30, duration: 0.3, onComplete: () => { el.remove(); resolve(all); } });
         this.map.target = { x: home.x, y: home.y, z: home.z };
       };
       const next = () => { if (i >= top.length - 1) done(); else show(i + 1); };
@@ -1525,10 +1540,11 @@ export class App {
     this.monthFx(before, this.s);
     await this.monthFlip(before, this.s);
     await new Promise(res => setTimeout(res, 700));
-    await this.showSplash();
+    const wantAll = await this.showSplash();
     this.resolving = false;
     this.renderTop();
     $('#report').classList.add('hidden');
+    if (wantAll && !this.s.ended) this.toggleReport();
     gsap.fromTo('#btn-report', { scale: 1.4 }, { scale: 1, duration: 0.6, ease: 'elastic.out(1, 0.4)' });
     if (this.hintStep === 2) this.advanceHint(3);
     if (this.s.ended) this.showEnd();
@@ -1542,7 +1558,8 @@ export class App {
       m.onclick = null;
       this.forcedModal = true;   // 史事决断必须作答：Esc、点背景都不关
       const opts = h('div', { class: 'opts' });
-      c.options.forEach((o, i) => opts.append(h('button', { class: 'opt', 'data-choice': i, onclick: () => { this.closeModal(); resolve(i); } }, h('span', { class: 'num' }, String(i + 1)), h('div', null, h('b', null, o.label), h('small', null, o.desc)))));
+      c.options.forEach((o, i) => opts.append(h('button', { class: 'opt' + (o.disabled ? ' off' : ''), 'data-choice': i, disabled: o.disabled ? true : undefined, onclick: () => { if (o.disabled) return; this.closeModal(); resolve(i); } },
+        h('span', { class: 'num' }, String(i + 1)), h('div', null, h('b', null, o.label), h('small', null, o.desc), o.disabled ? h('small', { class: 'opt-why' }, ic('close'), o.disabled) : null))));
       choiceSfx();
       m.append(h('div', { class: 'dialog hud', role: 'dialog' },
         h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic('event')), h('div', null, h('h2', null, c.title), h('small', null, `史事 · ${this.s?.factions[this.s.player]?.name ?? ''}决断`))),

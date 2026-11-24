@@ -36,6 +36,14 @@ export function moveArmies(s: GameState): Contact[] {
       const r = routeBetween(a.location, next);
       if (!r) { a.path = []; a.progress = 0; continue; }
       a.progress++;
+      // 船走不了陆路：水师踏上陆路即舍舟登岸，船只留在岸边，水手改作步卒
+      if (a.progress === 1 && r.kind === 'land' && a.mix.navy > 0) {
+        const nv = a.mix.navy;
+        a.mix = { ...a.mix, inf: a.mix.inf + nv, navy: 0 };
+        if (a.name.endsWith('水师')) a.name = a.name.slice(0, -2) + '部';
+        a.morale = Math.max(10, a.morale - 4);
+        if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', node: a.location, text: `${a.name}行至${nodeName(a.location)}舍舟登岸，船只留泊，水师改为步卒。`, src: { kind: 'order', ref: a.id } });
+      }
       if (a.progress < r.days) continue;
       a.location = next; a.path.shift(); a.progress = 0;
       arrivedDay[a.id] = day;
@@ -126,10 +134,12 @@ function combineSide(s: GameState, armies: Army[], opts: { garrison?: { node: st
 export function buildFieldBattle(s: GameState, c: Contact): BattleState | null {
   const here = armiesAt(s, c.node);
   if (here.length < 2) return null;
-  // 攻方：最后抵达的一方
-  const last = [...here].sort((x, y) => (c.arrivals[y.id] ?? 0) - (c.arrivals[x.id] ?? 0) || x.id.localeCompare(y.id))[0];
-  const attArmies = here.filter(a => friendly(s, a.faction, last.faction));
-  const defArmies = here.filter(a => hostile(s, a.faction, last.faction));
+  // 攻方：敌对双方中最后抵达的一方。同处的中立军队不参与配对，免得因它取消应有的野战
+  const engaged = here.filter(a => here.some(o => hostile(s, a.faction, o.faction)));
+  if (engaged.length < 2) return null;
+  const last = [...engaged].sort((x, y) => (c.arrivals[y.id] ?? 0) - (c.arrivals[x.id] ?? 0) || x.id.localeCompare(y.id))[0];
+  const defArmies = engaged.filter(a => hostile(s, a.faction, last.faction));
+  const attArmies = engaged.filter(a => friendly(s, a.faction, last.faction) && defArmies.some(d => hostile(s, a.faction, d.faction)));
   if (!defArmies.length) return null;
   const att = combineSide(s, attArmies, { foeFaction: defArmies[0].faction });
   const def = combineSide(s, defArmies, { foeFaction: last.faction });

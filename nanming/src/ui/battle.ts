@@ -45,6 +45,10 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
     let choice: Choice = aiChoice(cur, side);
     choice.stratagem = undefined;
     const kindName = cur.kind === 'siege' ? (side === 'att' ? '攻城' : '守城') : cur.kind === 'naval' ? '水战' : '野战';
+    // 战场定位：何地、谁攻谁、你凭什么指挥这一方
+    const where = `${b0.nodeName} · ${kindName}`;
+    const who = `${b0.att.name}${b0.kind === 'siege' ? '攻' : '击'}${b0.def.name}`;
+    const auth = b0[side].faction === s.player ? '你亲自指挥' : `${b0[side].name}奉你号令出战`;
 
     /** 对垒头：双方主将像、兵力、士气、天候 */
     function head(): HTMLElement {
@@ -55,7 +59,7 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       const ratio = tot(me) / Math.max(1, tot(me) + tot(them));
       return h('div', { class: 'bhead2' },
         h('div', { class: 'bh-side me', style: { '--fc': colorOf(me.faction) } as any }, faceOf(me.commander, 54), h('div', null, h('b', null, me.commanderName, me.wounded ? h('em', null, '负伤') : null), h('small', null, `${me.name} · 统${me.tong} 谋${me.mou}`)), h('div', { class: 'bh-num' }, h('b', null, wan(tot(me))), h('small', null, `士气 ${mm}`))),
-        h('div', { class: 'bh-mid' }, h('div', { class: 'bh-kind' }, kindName), h('div', { class: 'bh-bar' }, h('i', { style: { width: (ratio * 100) + '%', background: colorOf(me.faction) } }), h('span', { style: { background: colorOf(them.faction) } })),
+        h('div', { class: 'bh-mid' }, h('div', { class: 'bh-kind', id: 'battle-where' }, where), h('div', { class: 'bh-who' }, who, ' · ', h('em', null, auth)), h('div', { class: 'bh-bar' }, h('i', { style: { width: (ratio * 100) + '%', background: colorOf(me.faction) } }), h('span', { style: { background: colorOf(them.faction) } })),
           h('div', { class: 'bh-info' }, h('span', null, ic('hourglass'), `${Math.min(cur.round + 1, cur.maxRounds)}/${cur.maxRounds}`), h('span', null, ic(WEATHER_ICON[cur.weather]), WEATHER_NAME[cur.weather]), cur.kind === 'siege' ? h('span', null, ic('wall'), `城防 ${Math.round(cur.wall)}`) : h('span', null, ic('map'), TERRAIN_NAME[cur.terrain]))),
         h('div', { class: 'bh-side them', style: { '--fc': colorOf(them.faction) } as any }, h('div', { class: 'bh-num' }, h('b', null, wan(tot(them))), h('small', null, `士气 ${tm}`)), h('div', null, h('b', null, them.commanderName, them.wounded ? h('em', null, '负伤') : null), h('small', null, `${them.name} · 统${them.tong} 谋${them.mou}`)), faceOf(them.commander, 54)));
     }
@@ -162,7 +166,7 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       busy = false;
       choice = { lanes: [...choice.lanes], stratagem: undefined, lead: undefined };
       render();
-      if (cur.over) { gong(cur.winner === side); void view.showResult(cur.winner === side, outcomeText(cur)); }
+      if (cur.over) { gong(cur.winner === side); void view.showResult(cur.winner === side, `${b0.nodeName}之战：${outcomeText(cur)}`); }
     }
     function go() {
       if (busy || cur.over) return;
@@ -187,7 +191,7 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       busy = false;
       render();
       gong(cur.winner === side);
-      void view.showResult(cur.winner === side, outcomeText(cur));
+      void view.showResult(cur.winner === side, `${b0.nodeName}之战：${outcomeText(cur)}`);
       if (fast) setTimeout(() => { if (!finished) done(); }, 1600);
     }
     let finished = false;

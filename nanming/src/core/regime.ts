@@ -38,7 +38,8 @@ export function royalCandidates(s: GameState, f: string) {
     .sort((a, b) => b.royal!.claim - a.royal!.claim || b.ab.wang - a.ab.wang);
 }
 
-export interface SuccessionOpt { kind: 'enthrone' | 'regent' | 'ransom' | 'minister'; char: string; label: string; desc: string }
+export interface SuccessionOpt { kind: 'enthrone' | 'regent' | 'ransom' | 'minister'; char: string; label: string; desc: string; disabled?: string }
+export const RANSOM_SILVER = 150000;
 
 /** 继统方案：说明支持者与代价 */
 export function successionOptions(s: GameState, f: string): SuccessionOpt[] {
@@ -54,7 +55,9 @@ export function successionOptions(s: GameState, f: string): SuccessionOpt[] {
   if (royals[0] && old?.status === 'captured') out.push({ kind: 'regent', char: royals[0].id, label: `请${royals[0].name}监国，待迎旧君`, desc: `支持：${doves.join('、') || '持重诸臣'}。代价：名分未定，号令稍弱（服从 −8）。` });
   if (old?.status === 'captured') {
     const cap = s.cities[fac.capital];
-    out.push({ kind: 'ransom', char: old.id, label: `遣使议赎，迎回${old.name}`, desc: `需银 15 万两（府库现有 ${Math.round((cap?.silver ?? 0) / 10000)} 万）。对方未必肯放，成败下月见分晓；其间由重臣主事。` });
+    const have = cap?.silver ?? 0;
+    out.push({ kind: 'ransom', char: old.id, label: `遣使议赎，迎回${old.name}`, desc: `需银 15 万两（府库现有 ${Math.round(have / 10000)} 万）。对方未必肯放，成败当月即见分晓；不成则由重臣主事。`,
+      disabled: have < RANSOM_SILVER ? `府库不足：尚缺 ${Math.ceil((RANSOM_SILVER - have) / 10000)} 万两` : undefined });
   }
   const minister = Object.values(s.chars).filter(c => c.faction === f && c.status === 'active' && !c.royal).sort((a, b) => b.ab.wang - a.ab.wang)[0];
   if (minister) out.push({ kind: 'minister', char: minister.id, label: `由${minister.name}主事`, desc: `不立新君。号令出自权臣，下属服从 −12，${minister.name}威望日重。` });
@@ -65,6 +68,8 @@ export function successionOptions(s: GameState, f: string): SuccessionOpt[] {
 export function applySuccession(s: GameState, f: string, opt: SuccessionOpt): string {
   const fac = s.factions[f];
   const c = s.chars[opt.char];
+  // 议赎银两不足：方案不成立，继统仍待议定（不清标记，下回仍可改选）
+  if (opt.kind === 'ransom' && (s.cities[fac.capital]?.silver ?? 0) < RANSOM_SILVER) return '府库不足，议赎未成。';
   delete s.flags['need_succession_' + f];
   const vassals = Object.values(s.factions).filter(x => x.overlord === f);
   switch (opt.kind) {
@@ -89,8 +94,8 @@ export function applySuccession(s: GameState, f: string, opt: SuccessionOpt): st
     }
     case 'ransom': {
       const cap = s.cities[fac.capital];
-      if (!cap || cap.silver < 150000) return '府库不足，议赎未成。';
-      cap.silver -= 150000;
+      if (!cap) return '议赎未成。';
+      cap.silver -= RANSOM_SILVER;
       s.ledger.push({ turn: s.turn, node: cap.id, field: 'silver', delta: -150000, text: `议赎${c.name}`, src: { kind: 'order', ref: 'ransom:' + f } });
       const keeper = Object.values(s.factions).find(x => x.capital === c.location) ?? null;
       const ok = !keeper || keeper.id !== 'qing' || rngFor(s.seed, 'ransom', f, s.turn).chance(0.35);

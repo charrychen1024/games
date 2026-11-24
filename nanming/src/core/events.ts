@@ -24,7 +24,7 @@ export interface EventDef {
   choices?: (s: GameState, v: 'history' | 'altered') => EventChoice[];
 }
 
-export interface PendingChoice { eventId: string; title: string; text: string; options: { label: string; desc: string }[] }
+export interface PendingChoice { eventId: string; title: string; text: string; options: { label: string; desc: string; disabled?: string }[] }
 
 export function dueEvents(s: GameState, defs: EventDef[]): { def: EventDef; variant: 'history' | 'altered' }[] {
   const fired = new Set(s.events.map(e => e.id));

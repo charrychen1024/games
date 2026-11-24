@@ -2,7 +2,8 @@
  * 收入：赋税（人口 × 商业 × 吏治）、田粮（人口 × 农业 × 民心，秋收加成）、海贸。
  * 支出：驻军粮饷、以本城为粮台的军队粮饷、方针开销、起运上缴。 */
 import type { City, GameState, LedgerEntry, Policy } from './types';
-import { bump, report, nodeName, topOf, troopsText, charName } from './state';
+import { bump, report, nodeName, topOf, troopsText, charName, hostile } from './state';
+import { neighbors } from '../data/geography';
 import { lunarOf } from './calendar';
 import { shortDate } from './calendar';
 
@@ -84,7 +85,8 @@ export function runEconomy(s: GameState) {
     const needG = Math.round(a.troops * GRAIN_PER_SOLDIER * (1 - fs)), needS = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * (1 - fs));
     let got = 0;
     const sup = s.cities[a.supply];
-    if (sup && mine(a.supply)) {
+    const cut = sup && a.location !== a.supply ? supplyBlock(s, a.faction, a.supply, a.location) : null;
+    if (sup && mine(a.supply) && !cut) {
       got = Math.min(sup.grain, needG);
       bump(s, sup.id, 'grain', -got, `${a.name} ${troopsText(a.troops)} 人支粮${got < needG ? '（不足）' : ''}`, { kind: 'upkeep', ref: a.id });
       bump(s, sup.id, 'silver', -Math.min(sup.silver, needS), `${a.name}关饷`, { kind: 'upkeep', ref: a.id });
@@ -104,7 +106,7 @@ export function runEconomy(s: GameState) {
       const lost = Math.round(a.troops * 0.05);
       a.troops -= lost;
       if (a.faction === s.player || topOf(s, a.faction) === s.player) report(s, { cat: '急报', urgent: a.faction === s.player, node: a.location,
-        text: `${a.name}断粮${sup && mine(a.supply) ? `：粮台${nodeName(a.supply)}仓粮不足` : '：粮台已失'}，军心浮动，逃散 ${lost} 人。`, src: { kind: 'upkeep', ref: a.id } });
+        text: `${a.name}断粮${cut ? `：${cut}` : sup && mine(a.supply) ? `：粮台${nodeName(a.supply)}仓粮不足` : '：粮台已失'}，军心浮动，逃散 ${lost} 人。`, src: { kind: 'upkeep', ref: a.id } });
       continue;
     }
     a.hunger = 0;
@@ -129,7 +131,7 @@ export function runEconomy(s: GameState) {
     if (!f) continue;
     const cap = s.cities[f.capital];
     const income = s.ledger.filter(e => e.turn === s.turn && e.node === c.id && e.field === 'silver' && e.src.kind === 'income').reduce((n, e) => n + e.delta, 0);
-    if (c.id !== f.capital && cap && cap.controller === f.id && income > 0 && !s.sieges[c.id]) {
+    if (c.id !== f.capital && cap && cap.controller === f.id && income > 0 && !supplyBlock(s, f.id, c.id, f.capital)) {
       const amt = Math.min(c.silver, Math.round(income * REMIT_RATE));
       if (amt > 0) {
         bump(s, c.id, 'silver', -amt, `起运${nodeName(f.capital)}`, { kind: 'remit' });
@@ -140,7 +142,7 @@ export function runEconomy(s: GameState) {
     if (f.overlord && f.id === 'mingprov' && income > 0) {
       const lord = s.factions[f.overlord];
       const lcap = lord && s.cities[lord.capital];
-      if (lcap && lcap.controller === lord.id) {
+      if (lcap && lcap.controller === lord.id && !supplyBlock(s, f.id, c.id, lord.capital)) {
         const amt = Math.min(c.silver, Math.round(income * 0.08));
         if (amt > 0) {
           bump(s, c.id, 'silver', -amt, `解饷${nodeName(lord.capital)}`, { kind: 'remit' });
@@ -223,3 +225,23 @@ export function explain(s: GameState, node: string, field: LedgerEntry['field'],
 }
 
 export function governorText(s: GameState, c: City): string { return charName(s, c.governor); }
+
+/** 粮道：手动调拨、粮台支给、起运解饷共用。被围之城运不进也运不出，敌城阻隔。返回不通的原因，通则 null。 */
+export function supplyBlock(s: GameState, f: string, from: string, to: string): string | null {
+  if (s.sieges[to]) return `${nodeName(to)}被围，粮道不通`;
+  if (s.sieges[from]) return `${nodeName(from)}被围，运不出城`;
+  const seen = new Set([from]);
+  const queue = [from];
+  while (queue.length) {
+    const u = queue.shift()!;
+    for (const { to: v } of neighbors(u)) {
+      if (seen.has(v)) continue;
+      if (v === to) return null;
+      seen.add(v);
+      const c = s.cities[v];
+      if (!c || s.sieges[v] || hostile(s, f, c.controller)) continue;
+      queue.push(v);
+    }
+  }
+  return `去${nodeName(to)}的路被敌方隔断`;
+}

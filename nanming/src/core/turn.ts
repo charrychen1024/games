@@ -122,8 +122,9 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
     if (!opts.length) { delete s.flags['need_succession_' + f]; continue; }
     if (f === s.player) {
       const why = String(s.flags['need_succession_' + f]);
-      const ans = yield { type: 'choice', choice: { eventId: 'succession', title: '议立新君', text: `${why}。国不可一日无主，群臣议定继统之事。`, options: opts.map(o => ({ label: o.label, desc: o.desc })) } };
-      const idx = ans?.type === 'choice' ? Math.max(0, Math.min(opts.length - 1, ans.index)) : 0;
+      const ans = yield { type: 'choice', choice: { eventId: 'succession', title: '议立新君', text: `${why}。国不可一日无主，群臣议定继统之事。`, options: opts.map(o => ({ label: o.label, desc: o.desc, disabled: o.disabled })) } };
+      let idx = ans?.type === 'choice' ? Math.max(0, Math.min(opts.length - 1, ans.index)) : 0;
+      if (opts[idx].disabled) idx = Math.max(0, opts.findIndex(o => !o.disabled));
       applySuccession(s, f, opts[idx]);
     } else autoSuccession(s, f);
   }

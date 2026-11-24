@@ -22,13 +22,26 @@ const text = sel => page.locator(sel).first().innerText().catch(() => '');
 const armyXY = id => page.evaluate(id => { const m = NM.map; const h = m.armyHits.find(x => x.id === id); if (!h) return null; return [(h.x - m.cam.x) * m.cam.z + m.w / 2, (h.y - m.cam.y) * m.cam.z + m.h / 2]; }, id);
 
 /** 推进一个月：遇到史事抉择选第一项，遇到战斗交给部将自动打完 */
-async function nextMonth(manualBattle = false) {
+async function nextMonth(manualBattle = false, probe = null) {
   const before = await text('#date-label');
   await page.click('#btn-next');
   const t0 = Date.now();
   let battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false;
   while (Date.now() - t0 < 150000) {
-    if (await visible('[data-choice]')) { await page.click('[data-choice="0"]', { timeout: 1000 }).catch(() => {}); choices++; await wait(150); continue; }
+    if (await visible('[data-choice]')) {
+      if (probe && !probe.done) {
+        // 审查复盘 1：强制决断按 Esc、Tab、点背景都不能离开
+        probe.done = true;
+        await wait(600);
+        await page.keyboard.press('Escape'); await wait(200);
+        probe.esc = await visible('[data-choice]');
+        for (let k = 0; k < 6; k++) await page.keyboard.press('Tab');
+        probe.focusIn = await page.evaluate(() => !!document.activeElement?.closest('#modal'));
+        await page.mouse.click(8, 450); await wait(200);
+        probe.bg = await visible('[data-choice]');
+      }
+      await page.click('[data-choice="0"]', { timeout: 1000 }).catch(() => {}); choices++; await wait(150); continue;
+    }
     if (await visible('#battle-done')) { await page.click('#battle-done', { timeout: 1000 }).catch(() => {}); battles++; await wait(200); continue; }
     if (await visible('#deploy-go')) {
       if (['battle', 'siege', 'naval'].includes(await page.evaluate(() => NM_audio().want))) battleScene = true;
@@ -46,7 +59,7 @@ async function nextMonth(manualBattle = false) {
       await page.click('#battle-auto', { timeout: 600 }).catch(() => {});
       await wait(400); continue;
     }
-    if (await visible('#news-skip')) { newsSeen = true; await page.click('#news-skip', { timeout: 1000 }).catch(() => {}); await wait(350); continue; }
+    if (await visible('#news-skip')) { newsSeen = true; await page.click('#news-skip', { timeout: 1000 }).catch(() => {}); await wait(450); continue; }
     // 结算、翻月动画、要闻都过去之后才算这个月结束
     if (!(await page.evaluate(() => NM.resolving))) break;
     await wait(150);
@@ -141,11 +154,17 @@ try {
   check('号令加入本月命令', (await text('#orders')).includes('号令黄得功部'));
 
   console.log('推进月份');
-  const m1 = await nextMonth();
+  const probe = {};
+  const m1 = await nextMonth(false, probe);
   check('第一个月结算后日期前进', m1.after !== m1.before, `${m1.before} → ${m1.after}`);
   check('第一个月有史事抉择（高杰争扬州）', m1.choices >= 1);
+  check('强制决断：按 Esc 不关闭', probe.esc === true, JSON.stringify(probe));
+  check('强制决断：Tab 焦点留在弹窗内', probe.focusIn === true, JSON.stringify(probe));
+  check('强制决断：点背景不关闭', probe.bg === true, JSON.stringify(probe));
   check('本月战报逐条播放过', m1.newsSeen, JSON.stringify(m1));
-  await page.click('#btn-report');
+  await wait(300);
+  check('点“看全部军情”后军情面板随即打开', await visible('#report-entries'));
+  if (!(await visible('#report-entries'))) await page.click('#btn-report');
   await wait(300);
   check('军情面板有内容', await visible('#report-entries .entry'));
   const reportText = await text('#report-entries');
@@ -181,6 +200,7 @@ try {
   await page.click('[data-load="1"]');
   await wait(500);
   check('读档后日期一致', (await text('#date-label')) === saved, `${saved} vs ${await text('#date-label')}`);
+  check('存档压缩存放', (await page.evaluate(() => localStorage.getItem('nanming:slot:1') ?? '')).startsWith('LZ1:'));
 
   console.log('存档写入失败（审查 02）');
   const old1 = await page.evaluate(() => localStorage.getItem('nanming:slot:1'));
@@ -264,10 +284,22 @@ try {
     await wait(500);
     check(`${kind === 'naval' ? '水战' : '野战'}每路有探报与克制提示`, (await page.locator('#battle-ui .l2-intel').count()) === 3 && (await page.locator('#battle-ui .ord2 em').count()) > 0);
     if (kind === 'naval') check('水战命令为舷炮、冲犁、接舷、火船', ['舷炮', '冲犁', '接舷', '火船'].every(t => true) && (await text('#battle-ui')).includes('冲犁') && (await text('#battle-ui')).includes('火船'));
+    if (kind === 'field') check('战斗标明地点与谁在指挥', (await text('#battle-where')).includes('·') && /指挥|号令/.test(await text('#battle-ui .bh-who')), await text('#battle-ui .bh-mid'));
     await page.click('#lead-1');
     await page.click('#battle-go');
-    await wait(4500);
-    check(`${kind === 'naval' ? '水战' : '野战'}回合结算后战报浮字出现`, (await page.locator('#battle-stage .bticker').count()) > 0);
+    let tick = 0;
+    if (kind === 'field') {
+      // 审查复盘 7：动画进行中调整窗口，回合照常推进
+      await wait(500);
+      await page.setViewportSize({ width: 1024, height: 600 });
+      let advanced = false;
+      for (let k = 0; k < 40 && !advanced; k++) { await wait(400); advanced = await page.evaluate(() => NM_battle?.scene && !NM_battle.scene.playing) && await page.locator('#battle-go').isEnabled().catch(() => false); }
+      tick = await page.locator('#battle-stage .bticker').count();
+      check('战中调整窗口，回合照常推进、按钮恢复', advanced);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await wait(800);
+    } else await wait(4500);
+    check(`${kind === 'naval' ? '水战' : '野战'}回合结算后战报浮字出现`, (kind === 'field' ? tick : await page.locator('#battle-stage .bticker').count()) > 0);
     await page.click('#battle-auto').catch(() => {});
     for (let i = 0; i < 60 && !(await visible('#battle-done')); i++) await wait(300);
     await page.click('#battle-done');

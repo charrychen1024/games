@@ -2,12 +2,15 @@
 import { describe, it, expect } from 'vitest';
 import { createGame } from '../src/data/scenario1644';
 import { runMonthAuto, unificationProgress, playerSideOf } from '../src/core/turn';
-import { defectFaction } from '../src/core/military';
+import { defectFaction, buildFieldBattle, setArmyOrder, moveArmies } from '../src/core/military';
 import { saveTo, loadFrom, SLOTS, type KV } from '../src/core/save';
 import type { GameState } from '../src/core/types';
 import { EVENTS } from '../src/data/events';
 import { dueEvents, fireEvent, applyChoice, choiceFor } from '../src/core/events';
 import { turnOf } from '../src/core/calendar';
+import { runEconomy } from '../src/core/economy';
+import { successionOptions, applySuccession } from '../src/core/regime';
+import { captureChar } from '../src/core/military';
 import { capture } from '../src/core/military';
 import { validateOrder, applyOrder } from '../src/core/orders';
 import { citiesOf } from '../src/core/state';
@@ -161,5 +164,67 @@ describe('05 史事不覆盖本局事实', () => {
     fireEvent(s, def('ss_shunzhi_end'), 'history');
     expect(s.factions.qing.leader).toBe('xuanye');
     expect(s.chars.xuanye.status).toBe('active');
+  });
+});
+
+describe('后勤：被围之城的自动支粮、起运与手动调拨同一判定', () => {
+  it('南京被围：扬州的军队不能从南京支粮，外地起运解饷进不了南京', () => {
+    const s = createGame('hongguang', 0);
+    s.sieges.nanjing = { node: 'nanjing', attacker: 'qing', armies: [], startTurn: s.turn, months: 1 };
+    const a = Object.values(s.armies).find(x => x.faction === 'hongguang')!;
+    a.location = 'yangzhou'; a.supply = 'nanjing'; a.path = []; a.progress = 0;
+    runEconomy(s);
+    const inNanjing = s.ledger.filter(e => e.turn === s.turn && e.node === 'nanjing');
+    expect(inNanjing.some(e => e.field === 'grain' && e.src.ref === a.id)).toBe(false);
+    expect(inNanjing.some(e => e.src.kind === 'remit' && e.delta > 0)).toBe(false);
+  });
+});
+
+describe('官员领兵即离任', () => {
+  it('南京主官赵之龙赴扬州出兵：卸去南京主官', () => {
+    const s = createGame('hongguang', 0);
+    const gov = s.cities.nanjing.governor!;
+    const o = { id: 'r1', kind: 'raise' as const, node: 'yangzhou', char: gov, troops: 2000, navy: false };
+    expect(validateOrder(s, 'hongguang', o)).toBeNull();
+    applyOrder(s, 'hongguang', o);
+    expect(Object.values(s.armies).some(a => a.commander === gov && a.location === 'yangzhou')).toBe(true);
+    expect(s.cities.nanjing.governor).toBeUndefined();
+  });
+});
+
+describe('海陆与会战', () => {
+  it('水师走陆路即舍舟登岸，不再保留水师编制', () => {
+    const s = createGame('hongguang', 0);
+    const a = Object.values(s.armies).find(x => x.faction === 'hongguang')!;
+    a.location = 'zhenjiang'; a.mix = { inf: 0.4, cav: 0, gun: 0.2, navy: 0.4 }; a.path = []; a.progress = 0;
+    expect(setArmyOrder(s, a, { kind: 'move', target: 'xian' } as any)).toBe(true);
+    for (let k = 0; k < 4 && a.location !== 'xian'; k++) { moveArmies(s); }
+    expect(a.mix.navy).toBe(0);
+  });
+  it('扬州顺明交战，第三支中立军同驻不取消野战', () => {
+    const s = createGame('hongguang', 0);
+    const [m, sh, nt] = [Object.values(s.armies).find(x => x.faction === 'hongguang')!, Object.values(s.armies).find(x => x.faction === 'shun')!, Object.values(s.armies).find(x => x.faction === 'helan' || x.faction === 'zheng')!];
+    for (const a of [m, sh, nt]) { a.location = 'yangzhou'; a.path = []; a.progress = 0; }
+    s.relations[['hongguang', 'shun'].sort().join('|')] = { stance: 'war' };
+    s.relations[['shun', nt.faction].sort().join('|')] = { stance: 'truce', until: 999 };
+    s.relations[['hongguang', nt.faction].sort().join('|')] = { stance: 'truce', until: 999 };
+    const b = buildFieldBattle(s, { node: 'yangzhou', arrivals: { [nt.id]: 9, [sh.id]: 5, [m.id]: 1 } });
+    expect(b).not.toBeNull();
+    expect([b!.att.faction, b!.def.faction]).toContain('shun');
+    expect([...b!.att.armies, ...b!.def.armies]).toContain(m.id);
+    expect([...b!.att.armies, ...b!.def.armies]).not.toContain(nt.id);
+  });
+});
+
+describe('继统：府库不够议赎时说明缺多少，误选仍可改选', () => {
+  it('朱由崧被俘、南京存银不足 15 万：议赎不可选，执行也不清掉待议标记', () => {
+    const s = createGame('hongguang', 0);
+    s.cities.nanjing.silver = 60000;
+    captureChar(s, 'zhuyousong', 'qing', '出奔芜湖');
+    const opts = successionOptions(s, 'hongguang');
+    const r = opts.find(o => o.kind === 'ransom')!;
+    expect(r.disabled).toMatch(/尚缺 9 万两/);
+    applySuccession(s, 'hongguang', r);
+    expect(s.flags.need_succession_hongguang).toBeTruthy();
   });
 });
