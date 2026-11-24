@@ -25,8 +25,7 @@ describe('战斗结算', () => {
       const b = field(30000, 25000, seed);
       const manual = playWith(b, cur => [aiChoice(cur, 'att'), aiChoice(cur, 'def')]);
       expect(manual).toEqual(autoResolve(b));
-      const s = siege(40000, 10000, 70, seed);
-      expect(playWith(s, cur => [aiChoice(cur, 'att'), aiChoice(cur, 'def')])).toEqual(autoResolve(s));
+      // 攻城已改为即时模拟（见 siege.test.ts），此处只验野战
     }
   });
   it('不修改传入的战局', () => {

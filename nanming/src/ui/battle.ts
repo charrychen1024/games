@@ -28,6 +28,8 @@ export function lookOf(s: GameState, faction: string): SideLook {
 }
 
 export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'def', fast = false): Promise<{ result: BattleState; manual: boolean }> {
+  // 攻城、守城：新的即时战斗（见 siegeBattle.ts）
+  if (b0.kind === 'siege') { const { playSiege } = await import('./siegeBattle'); return playSiege(s, b0, side, fast); }
   const root = $('#battle'), ui = $('#battle-ui'), stage = $('#battle-stage');
   root.classList.remove('hidden');
   clear(stage);

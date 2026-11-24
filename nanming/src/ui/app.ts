@@ -126,14 +126,14 @@ export class App {
     (window as any).NM_presets = { createGame, yangzhouSiegeState, name: nodeName };
     (window as any).NM_audio = audioState;
     // 自动化测试：直接打一场指定的仗
-    (window as any).NM_testBattle = async (kind: 'field' | 'siege' | 'naval') => {
+    (window as any).NM_testBattle = async (kind: 'field' | 'siege' | 'naval', side: 'att' | 'def' = 'def') => {
       const { createBattle, makeSide } = await import('../core/battle');
       const s = this.s!;
       const sd = (f: string, cmd: string, t: number, navy: number) => makeSide({ faction: f, name: s.factions[f].name, commander: cmd, commanderName: s.chars[cmd]?.name ?? '守将', tong: 60, mou: 55, wai: 50, surrender: 20,
         mix: navy ? { inf: 0.4, cav: 0, gun: 0.2, navy: 0.4 } : { inf: 0.6, cav: 0.25, gun: 0.15, navy: 0 }, stratagems: 2, armies: [], garrison: kind === 'siege', troops: t, morale: 70 });
       const b = createBattle({ id: 'test', kind, node: 'zhenjiang', nodeName: '镇江', terrain: kind === 'naval' ? 'water' : kind === 'siege' ? 'city' : 'plain', weather: 'wind',
         att: sd('qing', 'duoduo', 30000, kind === 'naval' ? 1 : 0), def: sd(s.player, s.factions[s.player].leader, 26000, kind === 'naval' ? 1 : 0), wall: 70, seed: 11 });
-      return playBattle(s, b, 'def', false);
+      return playBattle(s, b, side, false);
     };
   }
 

@@ -1,5 +1,6 @@
 /* 制作要求第六节“十二回合试玩”的验收条件，逐条写成自动测试。 */
 import { describe, it, expect } from 'vitest';
+import { createSiege, stepSiege, aiCommands, toBattleResult } from '../src/core/siege';
 import { createState1644 } from '../src/data/scenario1644';
 import { trialState, yangzhouSiegeState } from '../src/data/presets';
 import { runMonthAuto, resolveMonth, type Interrupt, type Answer } from '../src/core/turn';
@@ -55,7 +56,8 @@ describe('验收三：野战失利后仍能守城', () => {
     let s = createState1644();
     setStance(s, 'qing', 'hongguang', 'war');
     s.flags.qing_south = 0;
-    s.cities.sizhou.garrison = 9000; s.cities.sizhou.wall = 90;
+    // 城防满、守军足以撑过一月强攻（攻城战改为即时模拟后，五倍兵力一月破城城防 90 之城是可能的）
+    s.cities.sizhou.garrison = 16000; s.cities.sizhou.wall = 100;
     // 弘光一支小军驻泗州城下，清大军来攻
     s.armies.a_shi.location = 'sizhou'; s.armies.a_shi.troops = 4000; s.armies.a_shi.supply = 'sizhou';
     s.armies.a_duoduo.location = 'xuzhou'; s.armies.a_duoduo.supply = 'beijing';
@@ -177,6 +179,12 @@ describe('验收七：手动战斗与自动结算在相同选择下结果一致'
     viaManual = runMonthAuto(s, [], it => {
       if (it.type !== 'battle') return undefined;
       let b = it.battle;
+      if (b.kind === 'siege') {
+        // 攻城是即时模拟：逐步推进、每两秒照电脑之令下达，与快进结果一致
+        const sim = createSiege(b); let next = 0;
+        while (!sim.over && sim.t < 3600) { if (sim.t >= next) { aiCommands(sim, 'att'); aiCommands(sim, 'def'); next = sim.t + 2; } stepSiege(sim, 0.2); }
+        return { type: 'battle', result: toBattleResult(b, sim), manual: false };
+      }
       while (!b.over) b = resolveRound(b, aiChoice(b, 'att'), aiChoice(b, 'def'));
       return { type: 'battle', result: b, manual: false };
     });

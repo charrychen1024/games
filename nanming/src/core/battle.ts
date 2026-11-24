@@ -3,6 +3,7 @@
  * resolveRound 是纯函数：同一战局 + 同一组选择 → 同一结果。自动结算只是由电脑代为选择。 */
 import { rngFor, type Rng } from './rng';
 import type { TroopMix } from './types';
+import { runSiege, toBattleResult } from './siege';
 
 export type FieldOrder = 'attack' | 'hold' | 'flank' | 'volley' | 'charge' | 'withdraw';
 export type SiegeAttOrder = 'storm' | 'bombard' | 'sap' | 'blockade';
@@ -134,7 +135,7 @@ export interface BattleState {
   over: boolean;
   winner?: 'att' | 'def';
   /** 城破 / 献城 / 围而不攻 */
-  outcome?: 'breach' | 'surrender' | 'repulsed' | 'blockade' | 'rout' | 'held' | 'stalemate' | 'retreat' | 'collapse';
+  outcome?: 'breach' | 'surrender' | 'repulsed' | 'blockade' | 'rout' | 'held' | 'stalemate' | 'retreat' | 'collapse' | 'abandon';
   /** 守将被说降（献城） */
   surrendered?: boolean;
   /** 双方阵型 */
@@ -636,6 +637,8 @@ export function aiChoice(b: BattleState, side: 'att' | 'def'): Choice {
 }
 
 export function autoResolve(b: BattleState): BattleState {
+  // 攻城：即时模拟快进（与玩家亲征同一套）
+  if (b.kind === 'siege') return toBattleResult(b, runSiege(b));
   let cur = b;
   for (let guard = 0; !cur.over && guard < 20; guard++) cur = resolveRound(cur, aiChoice(cur, 'att'), aiChoice(cur, 'def'));
   return cur;
@@ -655,7 +658,8 @@ export function outcomeText(b: BattleState): string {
     case 'held': return b.kind === 'siege' ? `${b.nodeName}守住了。` : b.kind === 'naval' ? `两军水师相持，${b.def.name}守住江面。` : `两军相持，${b.def.name}守住阵地。`;
     case 'rout': return `${w.name}大胜，${(b.winner === 'att' ? b.def : b.att).name}溃走。`;
     case 'collapse': return `${(b.winner === 'att' ? b.def : b.att).name}军心崩溃，${w.name}大胜。`;
-    case 'retreat': return `${(b.winner === 'att' ? b.def : b.att).name}鸣金收兵，${w.name}守住战场。`;
+    case 'retreat': return b.kind === 'siege' ? `${b.att.name}收兵回营，${b.nodeName}未克。` : `${(b.winner === 'att' ? b.def : b.att).name}鸣金收兵，${w.name}守住战场。`;
+    case 'abandon': return `${b.def.name}弃${b.nodeName}而走，${b.att.name}入城。`;
     default: return `两军各自收兵。`;
   }
 }

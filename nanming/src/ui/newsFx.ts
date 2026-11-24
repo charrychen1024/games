@@ -26,6 +26,7 @@ export function actOf(r: ReportEntry): ReportAct | undefined {
   if (r.cat === '易主') {
     if (t.includes('（陷城）')) return 'breach';
     if (t.includes('（献城）')) return 'yield';
+    if (t.includes('（弃城）')) return 'abandon';
     if (/反正|分裂/.test(t)) return 'revolt';
     return 'join';
   }
@@ -44,7 +45,7 @@ export function planNews(s: GameState, r: ReportEntry, me = s.player): NewsPlan 
   const mine = topOf(s, me);
   const isMine = (f?: string) => !!f && (f === me || topOf(s, f) === mine);
   const gain = isMine(r.to), loss = isMine(r.from);
-  const persp: Persp = act && ['breach', 'yield', 'join', 'revolt'].includes(act)
+  const persp: Persp = act && ['breach', 'yield', 'join', 'revolt', 'abandon'].includes(act)
     ? (gain && !loss ? 'gain' : loss && !gain ? 'loss' : gain && loss ? 'near' : 'far')
     : (gain || loss ? 'near' : 'far');
   const side = (g: NewsSound, l: NewsSound, f: NewsSound): NewsSound => persp === 'gain' ? g : persp === 'loss' ? l : f;
@@ -53,6 +54,7 @@ export function planNews(s: GameState, r: ReportEntry, me = s.player): NewsPlan 
     case 'yield': return { act, persp, visual: 'handover', sound: side('handGain', 'handLoss', 'handFar'), stamp: '献' };
     case 'join': return { act, persp, visual: 'handover', sound: side('handGain', 'handLoss', 'handFar'), stamp: '附' };
     case 'revolt': return { act, persp, visual: 'handover', sound: side('handGain', 'handLoss', 'handFar'), stamp: '反' };
+    case 'abandon': return { act, persp, visual: 'handover', sound: side('handGain', 'handLoss', 'handFar'), stamp: '弃' };
     case 'battle': return { act, persp, visual: 'clash', sound: persp === 'near' ? 'battleNear' : 'battleFar' };
     case 'siege': return { act, persp, visual: 'siege', sound: 'siege', stamp: '围' };
     case 'lift': return { act, persp, visual: 'lift', sound: 'lift' };

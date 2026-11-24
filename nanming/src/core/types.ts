@@ -230,7 +230,7 @@ export interface ReportEntry {
   /** 史事与线索的声音基调 */
   tone?: 'lament' | 'death' | 'edict' | 'turn' | 'war' | 'court' | 'omen';
 }
-export type ReportAct = 'breach' | 'yield' | 'join' | 'revolt' | 'battle' | 'siege' | 'lift' | 'retreat' | 'march';
+export type ReportAct = 'abandon' | 'breach' | 'yield' | 'join' | 'revolt' | 'battle' | 'siege' | 'lift' | 'retreat' | 'march';
 
 /* ---------- 史事与线索的运行记录 ---------- */
 /** player：此事关乎玩家所选势力的作为，本局由玩家作主，只作史实提示、不按史实代行 */

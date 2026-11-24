@@ -26,7 +26,7 @@ async function nextMonth(manualBattle = false, probe = null) {
   const before = await text('#date-label');
   await page.click('#btn-next');
   const t0 = Date.now();
-  let battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false, marched = 0;
+  let battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false, marched = 0, siegeProbe = null;
   while (Date.now() - t0 < 150000) {
     if (await visible('[data-choice]')) {
       if (probe && !probe.done) {
@@ -41,6 +41,20 @@ async function nextMonth(manualBattle = false, probe = null) {
         probe.bg = await visible('[data-choice]');
       }
       await page.click('[data-choice="0"]', { timeout: 1000 }).catch(() => {}); choices++; await wait(150); continue;
+    }
+    // 攻守城（即时战斗）：守城先择大计，攻城先布阵；亲征则下一道令，再由部将快进打完
+    if (await visible('#def-hold') || await visible('#siege-go')) {
+      if (['battle', 'siege', 'naval'].includes(await page.evaluate(() => NM_audio().want))) battleScene = true;
+      const def = await visible('#def-hold');
+      if (manualBattle && !manualDone) {
+        await page.click(def ? '#def-hold' : '#siege-go'); await wait(300);
+        await page.locator('#battle-ui .ucard').first().click(); await wait(150);
+        if (def) { await page.click('#battle-ui [data-order="repair"]').catch(() => {}); await wait(100); await page.click('#battle-ui [data-seg="0"]').catch(() => {}); }
+        else { await page.click('#all-assault').catch(() => {}); }
+        siegeProbe = { cards: await page.locator('#battle-ui .ucard').count(), resolve: await visible('.sres'), def };
+        await wait(800); manualDone = true;
+      } else { await page.click('#battle-auto').catch(() => {}); await wait(200); }
+      await page.evaluate(() => window.NM_siegeSkip?.()); await wait(900); continue;
     }
     if (await visible('#battle-done')) { await page.click('#battle-done', { timeout: 1000 }).catch(() => {}); battles++; await wait(200); continue; }
     if (await visible('#deploy-go')) {
@@ -78,7 +92,7 @@ async function nextMonth(manualBattle = false, probe = null) {
     await wait(150);
   }
   await wait(200);
-  return { before, after: await text('#date-label'), battles, choices, battleScene, newsSeen, marched };
+  return { before, after: await text('#date-label'), battles, choices, battleScene, newsSeen, marched, siegeProbe };
 }
 
 try {
@@ -398,6 +412,7 @@ try {
   await page.screenshot({ path: `${OUT}/02-siege.png` });
   const sm = await nextMonth(true);
   check('扬州攻城战进入战斗画面并完成', sm.battles >= 1, JSON.stringify(sm));
+  check('守城是即时战斗：先择大计，各营卡片与军心条可见', !!sm.siegeProbe && sm.siegeProbe.def && sm.siegeProbe.cards >= 5 && sm.siegeProbe.resolve, JSON.stringify(sm.siegeProbe));
   check('战斗时切换战斗配乐', sm.battleScene === true, JSON.stringify(sm));
   await page.click('#btn-report');
   await wait(300);

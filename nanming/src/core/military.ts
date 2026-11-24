@@ -201,8 +201,8 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
     if (b.outcome === 'rout' || b.outcome === 'repulsed' || b.outcome === 'collapse' || b.outcome === 'retreat') for (const a of losers) retreat(s, a, b.outcome === 'rout' || b.outcome === 'collapse');
     maybeCapture(s, b, loserSide);
   } else {
-    if (b.winner === 'att' && (b.outcome === 'breach' || b.outcome === 'surrender')) {
-      capture(s, b.node, b.att.faction, b.outcome === 'surrender' ? '献城' : '陷城', b.att.commander);
+    if (b.winner === 'att' && (b.outcome === 'breach' || b.outcome === 'surrender' || b.outcome === 'abandon')) {
+      capture(s, b.node, b.att.faction, b.outcome === 'surrender' ? '献城' : b.outcome === 'abandon' ? '弃城' : '陷城', b.att.commander);
     }
   }
   void winnerSide;
@@ -307,10 +307,25 @@ export function disband(s: GameState, a: Army) {
 }
 
 /** 易主：陷城 / 献城 / 归附 */
-export function capture(s: GameState, node: string, newCtrl: string, how: '陷城' | '献城' | '归附', by?: string) {
+export function capture(s: GameState, node: string, newCtrl: string, how: '陷城' | '献城' | '归附' | '弃城', by?: string) {
   const c = s.cities[node];
   const old = c.controller;
   if (old === newCtrl) return;
+  // 弃城：守军带走八成兵马与半数府库，退往最近的本方之城；主官随军而走
+  let fled = '';
+  if (how === '弃城') {
+    const dest = Object.values(s.cities).filter(x => x.id !== node && x.controller === old).map(x => ({ x, p: shortestPath(node, x.id, false) })).filter(o => o.p).sort((a, b) => a.p!.length - b.p!.length)[0]?.x;
+    if (dest) {
+      const src0 = { kind: 'battle' as const, ref: `弃城:${node}` };
+      const g = Math.round(c.garrison * 0.8), sv = Math.round(c.silver * 0.5);
+      bump(s, dest.id, 'garrison', g, `${nodeName(node)}守军弃城来投`, src0);
+      bump(s, dest.id, 'silver', sv, `${nodeName(node)}弃城时运出`, src0);
+      bump(s, node, 'garrison', -c.garrison, '弃城而走', src0);
+      bump(s, node, 'silver', -sv, '弃城时运走', src0);
+      if (c.governor && s.chars[c.governor]?.faction === old) { s.chars[c.governor].location = dest.id; c.governor = undefined; }
+      fled = `守军 ${troopsText(g)} 携银 ${troopsText(sv)} 两退往${nodeName(dest.id)}`;
+    }
+  }
   const src = { kind: 'battle' as const, ref: `${how}:${node}` };
   const gov = c.governor ? s.chars[c.governor] : undefined;
   c.controller = newCtrl;
@@ -338,8 +353,12 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
     s.flags['lost_caught_' + node] = caught.join(',');
     if (gov && gov.faction === old) { captureChar(s, gov.id, newCtrl, `守${nodeName(node)}，城破`); spoils.captives.push(gov.name); }
   } else {
-    spoils.troops = Math.round(c.garrison);
-    bump(s, node, 'minxin', -5, how === '献城' ? '易帜' : '归附', src);
+    spoils.troops = how === '弃城' ? 0 : Math.round(c.garrison);
+    if (how === '弃城') {
+      const occ = armiesAt(s, node).filter(a => a.faction === newCtrl).sort((x, y) => y.troops - x.troops)[0];
+      if (occ) { const k = Math.min(3000, Math.max(0, occ.troops - 500), Math.round(occ.troops * 0.1)); occ.troops -= k; bump(s, node, 'garrison', k, `${occ.name}分兵驻守`, src); }
+    }
+    bump(s, node, 'minxin', -5, how === '献城' ? '易帜' : how === '弃城' ? '守军弃城' : '归附', src);
     if (gov && gov.faction === old && how === '献城') {
       const of0 = s.factions[old];
       if (of0 && of0.leader === gov.id && old !== 'local' && !of0.admin) {
@@ -376,10 +395,10 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
     return;
   }
   const byName = by ? charName(s, by) : factionName(s, newCtrl);
-  const verb = how === '陷城' ? `攻破${nodeName(node)}` : how === '献城' ? `受${nodeName(node)}献城` : `受${nodeName(node)}归附`;
+  const verb = how === '陷城' ? `攻破${nodeName(node)}` : how === '献城' ? `受${nodeName(node)}献城` : how === '弃城' ? `入${nodeName(node)}` : `受${nodeName(node)}归附`;
   const got = [spoils.silver >= 1000 ? `存银 ${troopsText(spoils.silver)} 两` : '', spoils.grain >= 1000 ? `存粮 ${troopsText(spoils.grain)} 石` : '', spoils.troops >= 100 ? (how === '陷城' ? `收降卒 ${troopsText(spoils.troops)}` : `守军 ${troopsText(spoils.troops)} 随城归附`) : '', spoils.captives.length ? `俘${spoils.captives.join('、')}` : '', how === '陷城' ? '得胜之师士气 +8' : ''].filter(Boolean);
-  report(s, { cat: '易主', act: how === '陷城' ? 'breach' : how === '献城' ? 'yield' : 'join', from: old, to: newCtrl, spoils, urgent: topOf(s, old) === s.player || topOf(s, newCtrl) === s.player, node,
-    text: `${nodeName(node)}易主（${how}）：${byName}${verb}。此城原属${factionName(s, old)}，${how === '陷城' ? '守军覆没，百姓遭兵燹' : how === '献城' ? `${gov ? gov.name + '率' : ''}守军易帜` : '一体改奉'}。现由${factionName(s, c.controller)}控制。${got.length ? `所获：${got.join('，')}。` : ''}`,
+  report(s, { cat: '易主', act: how === '陷城' ? 'breach' : how === '献城' ? 'yield' : how === '弃城' ? 'abandon' : 'join', from: old, to: newCtrl, spoils, urgent: topOf(s, old) === s.player || topOf(s, newCtrl) === s.player, node,
+    text: `${nodeName(node)}易主（${how}）：${byName}${verb}。此城原属${factionName(s, old)}，${how === '陷城' ? '守军覆没，百姓遭兵燹' : how === '献城' ? `${gov ? gov.name + '率' : ''}守军易帜` : how === '弃城' ? `${fled || '守军弃城而走'}，城中免于兵燹` : '一体改奉'}。现由${factionName(s, c.controller)}控制。${got.length ? `所获：${got.join('，')}。` : ''}`,
     src });
   // 都城失守
   const of = s.factions[old];
