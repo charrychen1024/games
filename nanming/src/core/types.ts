@@ -126,6 +126,9 @@ export interface City {
   trade?: number;
   /** 考据不确定标注 */
   uncertain?: string;
+  /** 本月已粜籴之量（石），tradeTurn 为所记月份 */
+  tradeTurn?: number;
+  tradeN?: number;
   /** 本月已募兵数（recruitTurn 为所记月份，跨月自动作废） */
   recruitTurn?: number;
   recruitN?: number;
@@ -170,6 +173,10 @@ export type Order =
   | { id: string; kind: 'appoint'; node: NodeId; char: CharId }
   | { id: string; kind: 'transfer'; from: NodeId; to: NodeId; grain: number; silver: number }
   | { id: string; kind: 'recruit'; node: NodeId; troops: number }
+  /** 粜籴：grain 为正是买粮，为负是卖粮 */
+  | { id: string; kind: 'trade'; node: NodeId; grain: number }
+  /** 劝捐助饷 */
+  | { id: string; kind: 'loan'; node: NodeId }
   | { id: string; kind: 'army'; army: ArmyId; order: ArmyOrder }
   | { id: string; kind: 'reinforce'; node: NodeId; army: ArmyId; troops: number }
   | { id: string; kind: 'envoy'; char: CharId; target: FactionId; aim: 'alliance' | 'truce' | 'peace' }

@@ -18,7 +18,7 @@ import { isReduced, setReducedMotion, reducedSystem } from './motion';
 import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
-import { POLICY_NAME, POLICY_HINT, monthlyIncome, upkeepOf, RECRUIT_SILVER, storeOf } from '../core/economy';
+import { POLICY_NAME, POLICY_HINT, monthlyIncome, upkeepOf, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
 import { orderBudget, orderCost, ordersUsed, describeOrder, validateOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { yangzhouSiegeState } from '../data/presets';
@@ -51,7 +51,7 @@ const FIELD_NAME: Record<string, string> = { grain: '仓粮', silver: '府库', 
 const FIELD_ICON: Record<string, string> = { grain: 'grain', silver: 'silver', pop: 'pop', minxin: 'minxin', garrison: 'troops', wall: 'wall', order: 'order', agri: 'agri', commerce: 'commerce', edu: 'edu' };
 const CAT_ICON: Record<ReportCat, string> = { 急报: 'urgent', 军报: 'war', 易主: 'capture', 交涉: 'envoy', 内政: 'admin', 人事: 'person', 史事: 'event', 线索: 'clue' };
 const POLICY_ICON: Record<Policy, string> = { balanced: 'order', agri: 'agri', commerce: 'commerce', fortify: 'wall', relief: 'minxin', edu: 'edu', levy: 'reward' };
-const ORDER_ICON: Record<Order['kind'], string> = { policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army' };
+const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army' };
 const HINT_KEY = 'nanming:hint';
 
 /** 选势力卡片：难度、一句处境、目标 */
@@ -505,6 +505,8 @@ export class App {
     let n = 0;
     for (const o of this.orders) {
       if (o.kind === 'recruit' && o.node === node && field === 'silver') n += o.troops * RECRUIT_SILVER;
+      if (o.kind === 'trade' && o.node === node) { const q = tradeQuote(this.s!, this.s!.cities[node], o.grain); if (field === 'silver') n += o.grain > 0 ? q.silver : -q.silver; else n += -o.grain; }
+      if (o.kind === 'loan' && o.node === node && field === 'silver') n -= loanAmount(this.s!, this.s!.cities[node]);
       if (o.kind === 'transfer' && o.from === node) n += field === 'grain' ? o.grain : o.silver;
       if ((o.kind === 'reward' || o.kind === 'command') && this.s!.factions[this.s!.player].capital === node && field === 'silver') n += o.silver;
     }
@@ -876,7 +878,8 @@ export class App {
         const inc = monthlyIncome(s, c), up = upkeepOf(s, c);
         sec.append(h('div', { class: 'rows', style: { marginTop: '6px' } },
           h('div', { class: 'row' }, ic('grain'), h('span', { class: 't' }, '每月粮 进 / 出'), h('b', { class: inc.grain >= up.grain ? 'up' : 'down' }, `${wan(inc.grain)} / ${wan(up.grain)}`)),
-          h('div', { class: 'row' }, ic('silver'), h('span', { class: 't' }, '每月银 进 / 出'), h('b', { class: inc.silver + inc.trade >= up.silver ? 'up' : 'down' }, `${wan(inc.silver + inc.trade)} / ${wan(up.silver)}`))));
+          h('div', { class: 'row' }, ic('silver'), h('span', { class: 't' }, '每月银 进 / 出'), h('b', { class: inc.silver + inc.trade >= up.silver ? 'up' : 'down' }, `${wan(inc.silver + inc.trade)} / ${wan(up.silver)}`)),
+          h('div', { class: 'row', id: 'city-price', 'data-tip': '粮价随地区、季节、战事与本城存粮浮动；粮贱时籴、粮贵时粜' }, ic('commerce'), h('span', { class: 't' }, '市价 · 市面'), h('b', null, `每石 ${grainPrice(s, c).toFixed(2)} 两 · 月容 ${wan(marketCap(s, c))} 石`))));
       }
       // 行动
       const acts = h('div', { class: 'acts' });
@@ -885,6 +888,8 @@ export class App {
       if (mine) {
         acts.append(A('act-policy', 'policy', '方针', () => this.formPolicy(id), has('policy')),
           A('act-recruit', 'recruit', '募兵', () => this.formRecruit(id), has('recruit')),
+          A('act-trade', 'grain', '粜籴', () => this.formTrade(id), has('trade')),
+          A('act-loan', 'silver', '劝饷', () => this.formLoan(id), has('loan')),
           A('act-raise', 'army', '出兵', () => this.formRaise(id), this.orders.some(o => o.kind === 'raise' && o.node === id), c.garrison >= 3000),
           A('act-transfer', 'transfer', '调拨', () => this.formTransfer(id), has('transfer')),
           A('act-appoint', 'appoint', '任命', () => this.formAppoint(id), has('appoint')));
@@ -1107,6 +1112,53 @@ export class App {
       h('div', { class: 'raise-top' }, face(s, ch.id, 72, 'face round'), h('div', null, h('b', null, ch.name), h('small', null, `${ch.title} · 统 ${ch.ab.tong} 谋 ${ch.ab.mou}`))),
       h('div', { class: 'field' }, h('label', null, ic('troops'), '兵数'), n), kind,
     ], [this.cancelBtn(), { label: '出兵', icon: 'army', primary: true, id: 'raise-ok', onclick: () => this.addOrder({ id: this.newOrderId(), kind: 'raise', node, char, troops: n.value, navy }) ? undefined : false }]);
+  }
+
+  /** 粜籴：在本城市面买粮或卖粮 */
+  formTrade(node: string) {
+    const s = this.s!, c = s.cities[node];
+    if (s.sieges[node]) { this.toast(`${nodeName(node)}被围，市面断绝`, 'close'); return; }
+    const cap = marketCap(s, c), used = c.tradeTurn === s.turn ? c.tradeN ?? 0 : 0, room = Math.max(0, cap - used);
+    if (room < 100) { this.toast(`${nodeName(node)}本月市面已尽`, 'close'); return; }
+    const silver = Math.max(0, c.silver - this.pendingSpend(node, 'silver')), grain = Math.max(0, c.grain - this.pendingSpend(node, 'grain'));
+    const price = grainPrice(s, c);
+    const maxBuy = Math.min(room, Math.floor(silver / (price * 1.25) / 100) * 100), maxSell = Math.min(room, Math.floor(grain / 100) * 100);
+    let mode: 'buy' | 'sell' = maxBuy >= 100 ? 'buy' : 'sell';
+    const input = h('input', { type: 'range', min: 100, step: 100, id: 'trade-n' }) as HTMLInputElement;
+    const big = h('div', { class: 'big-num' }), costs = h('div', { class: 'costs' });
+    const tabs = h('div', { class: 'tabs2' });
+    const setMode = (m: 'buy' | 'sell') => {
+      mode = m; const mx = m === 'buy' ? maxBuy : maxSell;
+      input.max = String(Math.max(100, mx)); input.value = String(Math.min(mx, Math.max(100, Math.round(mx / 2 / 100) * 100))); input.disabled = mx < 100;
+      clear(tabs).append(
+        h('button', { class: 'tab2' + (m === 'buy' ? ' on' : ''), id: 'trade-buy', disabled: maxBuy < 100, onclick: () => setMode('buy') }, ic('grain'), '籴粮（花银买粮）'),
+        h('button', { class: 'tab2' + (m === 'sell' ? ' on' : ''), id: 'trade-sell', disabled: maxSell < 100, onclick: () => setMode('sell') }, ic('silver'), '粜粮（卖粮得银）'));
+      upd();
+    };
+    const upd = () => {
+      const n = +input.value, q = tradeQuote(s, c, mode === 'buy' ? n : -n);
+      big.textContent = `${mode === 'buy' ? '籴' : '粜'} ${fmt(n)} 石`;
+      clear(costs).append(
+        h('span', { class: 'cost ' + (mode === 'buy' ? 'bad' : 'good') }, ic('silver'), `${mode === 'buy' ? '−' : '+'}${fmt(q.silver)}`),
+        h('span', { class: 'cost ' + (mode === 'buy' ? 'good' : 'bad') }, ic('grain'), `${mode === 'buy' ? '+' : '−'}${fmt(n)}`),
+        h('span', { class: 'cost' }, ic('commerce'), `每石 ${q.unit.toFixed(2)} 两（市价 ${q.price.toFixed(2)}）`));
+    };
+    input.oninput = upd;
+    this.modal('trade', '粜籴', `${nodeName(node)} · 市价每石 ${price.toFixed(2)} 两 · 本月市面尚容 ${fmt(room)} 石 · 量大则价不利`, [tabs, big, h('div', { class: 'field' }, input), costs],
+      [this.cancelBtn(), { label: '成交', icon: 'ok', primary: true, id: 'trade-ok', onclick: () => { const n = +input.value; this.addOrder({ id: this.newOrderId(), kind: 'trade', node, grain: mode === 'buy' ? n : -n }); } }]);
+    setMode(mode);
+  }
+  /** 劝捐助饷：立得一笔银，民心吏治受损，同城半年一次 */
+  formLoan(node: string) {
+    const s = this.s!, c = s.cities[node];
+    const err = validateOrder(s, s.player, { id: 'x', kind: 'loan', node });
+    if (err) { this.toast(err, 'close'); return; }
+    const amt = loanAmount(s, c);
+    this.modal('loan', '劝捐助饷', `${nodeName(node)} · 向城中绅商劝捐军饷`, [
+      h('div', { class: 'big-num' }, `+${fmt(amt)} 两`),
+      h('div', { class: 'costs' }, h('span', { class: 'cost good' }, ic('silver'), `+${fmt(amt)}`), h('span', { class: 'cost bad' }, ic('minxin'), '民心 −5'), h('span', { class: 'cost bad' }, ic('order'), '吏治 −2'), h('span', { class: 'cost' }, ic('hourglass'), '此城六个月内不能再劝')),
+      h('div', { class: 'note' }, '府库告罄时的应急之法：人口越多、商业越盛、民心越稳，捐得越多。'),
+    ], [this.cancelBtn(), { label: '劝捐', icon: 'ok', primary: true, id: 'loan-ok', onclick: () => { this.addOrder({ id: this.newOrderId(), kind: 'loan', node }); } }]);
   }
 
   formRecruit(node: string) {
@@ -2012,6 +2064,7 @@ function sameTarget(a: Order, b: Order): boolean {
     case 'command': return (b as any).army === a.army;
     case 'appoint': return (b as any).node === a.node;
     case 'persuade': return (b as any).node === a.node;   // 同城只派一路使者，后派者替换前派
+    case 'trade': case 'loan': return (b as any).node === a.node;   // 同城一月一笔
     default: return false;
   }
 }

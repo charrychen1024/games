@@ -204,6 +204,19 @@ try {
   check('点“定位”打开对应城池', await visible('#city-name'));
   check('城池面板有主官或守将头像', await visible('#city-gov img'), await text('#city-gov'));
   check('顶栏显示本月政令余数', /\d+\s*\/\d+ 令/.test(await text('#pill-orders')), await text('#pill-orders'));
+  // 钱粮：粜籴、劝饷
+  await page.evaluate(() => NM.selectNode('nanjing'));
+  await wait(300);
+  check('城池面板显示市价与市面', (await text('#city-price')).includes('每石'), await text('#city-price'));
+  await page.click('#act-trade'); await wait(400);
+  check('粜籴弹窗可买可卖', await visible('#trade-buy') && await visible('#trade-sell'));
+  await page.click('#trade-sell').catch(() => {}); await wait(150);
+  await page.click('#trade-ok'); await wait(250);
+  check('粜粮加入本月命令', (await text('#orders')).includes('粜粮'), await text('#orders'));
+  await page.evaluate(() => NM.selectNode('nanjing')); await wait(200);
+  await page.click('#act-loan'); await wait(300);
+  check('劝捐助饷弹窗写明得银与代价', (await text('#modal')).includes('民心'), (await text('#modal')).slice(0, 80));
+  await page.evaluate(() => NM.closeModal());
   check('左上角不显示剧本进度条', (await page.locator('#topbar .yearbar').count()) === 0);
   const eras = await page.evaluate(() => { const s = NM.s; const t0 = s.turn; const out = []; for (const y of [1644, 1647, 1652, 1658]) { s.turn = (y - 1644) * 12 + 2; NM.musicForState(); out.push(NM_audio().era); } s.turn = t0; NM.musicForState(); return out; });
   check('地图配乐随年代自动换曲（四段）', JSON.stringify(eras) === '[0,1,2,3]', JSON.stringify(eras));

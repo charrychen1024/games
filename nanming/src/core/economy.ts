@@ -3,7 +3,7 @@
  * 支出：驻军粮饷、以本城为粮台的军队粮饷、方针开销、起运上缴。 */
 import type { City, GameState, LedgerEntry, Policy } from './types';
 import { bump, report, nodeName, topOf, troopsText, charName, hostile } from './state';
-import { neighbors } from '../data/geography';
+import { neighbors, NODE } from '../data/geography';
 import { lunarOf } from './calendar';
 import { shortDate } from './calendar';
 
@@ -58,6 +58,42 @@ export function upkeepOf(s: GameState, c: City): { grain: number; silver: number
   if (s.sieges[c.id]) grain += c.garrison * GRAIN_PER_SOLDIER * 0.5;
   return { grain: Math.round(grain), silver: Math.round(silver) };
 }
+
+/* ---------------- 粮价、粜籴、劝捐 ----------------
+ * 粮价按城浮动：地区（江南、湖广鱼米之乡粮贱，北方、边地粮贵）、季节（秋收贱，青黄不接贵）、
+ * 战事（被围飞涨，敌军压境上扬）、本城存粮（仓满则贱，仓空则贵）。单位：两/石。 */
+const AREA_PRICE: Record<string, number> = { 南直隶: 0.9, 浙江: 0.95, 湖广: 0.85, 江西: 0.9, 四川: 0.95, 福建: 1.1, 广东: 1.05, 广西: 1.1, 云贵: 1.2, 河南: 1.25, 北直隶: 1.3, 山东: 1.25, 山西: 1.35, 陕西: 1.4, 辽东: 1.4, 台湾: 1.1 };
+export function grainPrice(s: GameState, c: City): number {
+  const m = lunarOf(s.turn).month;
+  const season = m >= 8 && m <= 10 ? 0.8 : m >= 11 || m === 1 ? 0.95 : m >= 2 && m <= 3 ? 1.15 : 1.3;   // 四至七月青黄不接
+  const area = AREA_PRICE[NODE[c.id]?.area ?? ''] ?? 1.1;
+  const need = upkeepOf(s, c).grain * 3 + c.pop * 120;
+  const stock = Math.max(0.75, Math.min(1.45, 1.35 - 0.35 * (c.grain / Math.max(1, need))));
+  let war = 1;
+  if (s.sieges[c.id]) war = 2.2;
+  else if (Object.values(s.armies).some(a => hostile(s, a.faction, c.controller) && (a.location === c.id || neighbors(c.id).some(n => n.to === a.location)))) war = 1.25;
+  return Math.round(Math.max(0.4, Math.min(4, area * season * stock * war)) * 100) / 100;
+}
+/** 市面一月所容的粮食买卖量（石）：人口、商业、海贸 */
+export function marketCap(s: GameState, c: City): number {
+  void s;
+  return Math.round((c.pop * 450 * (0.4 + c.commerce / 100) + (c.trade ?? 0) * 6000) / 100) * 100;
+}
+/** 粜籴报价：grain 为正是籴（买进），为负是粜（卖出）；量越大越不利（每用满一成市面，价差多 1.5%） */
+export function tradeQuote(s: GameState, c: City, grain: number): { unit: number; silver: number; price: number } {
+  const price = grainPrice(s, c);
+  const cap = Math.max(1, marketCap(s, c));
+  const used = c.tradeTurn === s.turn ? c.tradeN ?? 0 : 0;
+  const share = (Math.abs(grain) + used) / cap;
+  const unit = grain >= 0 ? price * (1.05 + 0.15 * share) : price * (0.85 - 0.15 * share);
+  return { unit: Math.round(unit * 1000) / 1000, silver: Math.round(Math.abs(grain) * unit), price };
+}
+/** 劝捐助饷：向本城绅商劝捐一笔（人口、商业越大越多），民心、吏治受损，同城六月一次 */
+export function loanAmount(s: GameState, c: City): number {
+  void s;
+  return Math.round(c.pop * 130 * (0.5 + c.commerce / 100) * (0.6 + c.minxin / 125) / 100) * 100;
+}
+export const LOAN_COOLDOWN = 6;
 
 /** 一个月的内政与钱粮结算 */
 export function runEconomy(s: GameState) {
@@ -118,12 +154,25 @@ export function runEconomy(s: GameState) {
     const up = upkeepOf(s, c);
     if (s.sieges[c.id] || up.grain <= 0 || c.grain >= up.grain * 2) continue;
     const want = Math.round(up.grain * 2 - c.grain);
-    const afford = Math.floor(Math.max(0, c.silver - up.silver * 2) / 1.2);
+    const afford = Math.floor(Math.max(0, c.silver - up.silver * 2) / (grainPrice(s, c) * 1.1));
     const buy = Math.min(want, afford, Math.round(c.pop * 600 + (c.trade ?? 0) * 4000));
     if (buy >= 500) {
-      bump(s, c.id, 'silver', -Math.round(buy * 1.2), `市籴粮 ${buy} 石`, { kind: 'upkeep', ref: 'market' });
+      const unit = grainPrice(s, c) * 1.1;
+      if (unit * buy > c.silver) continue;
+      bump(s, c.id, 'silver', -Math.round(buy * unit), `市籴粮 ${buy} 石（每石 ${unit.toFixed(2)} 两）`, { kind: 'upkeep', ref: 'market' });
       bump(s, c.id, 'grain', buy, '市籴', { kind: 'upkeep', ref: 'market' });
     }
+  }
+  // 2c. 市粜（电脑一方）：银不够发饷而仓粮宽裕，卖出余粮换银
+  for (const c of cities) {
+    if (s.sieges[c.id] || topOf(s, c.controller) === topOf(s, s.player)) continue;
+    const up = upkeepOf(s, c);
+    if (c.silver >= up.silver * 2 || c.grain <= up.grain * 5) continue;
+    const sell = Math.min(Math.round((c.grain - up.grain * 5) / 100) * 100, marketCap(s, c));
+    if (sell < 500) continue;
+    const unit = grainPrice(s, c) * 0.85;
+    bump(s, c.id, 'grain', -sell, `市粜余粮 ${sell} 石（每石 ${unit.toFixed(2)} 两）`, { kind: 'upkeep', ref: 'market' });
+    bump(s, c.id, 'silver', Math.round(sell * unit), '市粜', { kind: 'upkeep', ref: 'market' });
   }
   // 3. 起运上缴
   for (const c of cities) {

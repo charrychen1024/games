@@ -1013,3 +1013,6 @@ html.reduced .bh-pips i.now { animation: none; }
 .dchoice:hover { transform: translateY(-4px); border-color: var(--gold); }
 .dchoice .ic { width: 28px; height: 28px; color: var(--gold-2); } .dchoice b { font-size: 17px; } .dchoice small { color: var(--dim); font-size: 12px; line-height: 1.45; }
 .dchoice.primary { background: linear-gradient(180deg, #9a2c1c, #4a120a); border-color: var(--gold); } .dchoice.primary small { color: #f0c8b8; }
+.tabs2 { display: flex; gap: 6px; margin-bottom: 6px; }
+.tab2 { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 7px; border-radius: 7px; border: 1.5px solid rgba(240, 207, 134, 0.4); background: rgba(0, 0, 0, 0.3); font-weight: 700; }
+.tab2 .ic { width: 18px; height: 18px; } .tab2.on { background: linear-gradient(180deg, #9a2c1c, #4a120a); border-color: var(--gold); color: #fff3d9; } .tab2:disabled { opacity: 0.4; }

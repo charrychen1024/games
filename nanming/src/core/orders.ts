@@ -2,12 +2,12 @@
 import type { ArmyOrder, GameState, Order } from './types';
 import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance } from './state';
 import { setArmyOrder, capture } from './military';
-import { RECRUIT_SILVER, POLICY_NAME, supplyBlock } from './economy';
+import { RECRUIT_SILVER, POLICY_NAME, supplyBlock, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
 import { rngFor } from './rng';
 import { shortestPath, neighbors, NODE } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
-  policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', reinforce: '增兵',
+  trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', reinforce: '增兵',
   envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立', war: '宣战', raise: '出兵',
 };
 
@@ -18,6 +18,8 @@ export function describeOrder(s: GameState, o: Order): string {
     case 'appoint': return `任命${charName(s, o.char)}主政${nodeName(o.node)}`;
     case 'transfer': return `自${nodeName(o.from)}调${o.grain ? `粮 ${o.grain} 石` : ''}${o.grain && o.silver ? '、' : ''}${o.silver ? `银 ${o.silver} 两` : ''}往${nodeName(o.to)}`;
     case 'recruit': return `${nodeName(o.node)}募兵 ${o.troops} 人`;
+    case 'trade': return o.grain >= 0 ? `${nodeName(o.node)}籴粮 ${o.grain} 石` : `${nodeName(o.node)}粜粮 ${-o.grain} 石`;
+    case 'loan': return `${nodeName(o.node)}劝捐助饷`;
     case 'army': return `${s.armies[o.army]?.name ?? o.army}${armyOrderText(o.order)}`;
     case 'reinforce': return o.troops >= 0 ? `${s.armies[o.army]?.name}拨 ${o.troops} 人入${nodeName(o.node)}驻守` : `${nodeName(o.node)}抽驻军 ${-o.troops} 人补入${s.armies[o.army]?.name}`;
     case 'envoy': return `遣${charName(s, o.char)}赴${factionName(s, o.target)}${o.aim === 'alliance' ? '议结盟' : o.aim === 'truce' ? '议停战' : '议和'}`;
@@ -74,6 +76,25 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       if (o.grain < 0 || o.silver < 0 || (!o.grain && !o.silver)) return '数目不对';
       if (o.grain > s.cities[o.from].grain || o.silver > s.cities[o.from].silver) return '库存不足';
       return supplyBlock(s, f, o.from, o.to);
+    }
+    case 'trade': {
+      const c = s.cities[o.node];
+      if (!own(o.node)) return '只能在自己的城粜籴';
+      if (s.sieges[o.node]) return '城被围，市面断绝';
+      if (!o.grain) return '数量为零';
+      const used = c.tradeTurn === s.turn ? c.tradeN ?? 0 : 0;
+      if (Math.abs(o.grain) + used > marketCap(s, c)) return `市面有限，本月至多再粜籴 ${Math.max(0, marketCap(s, c) - used)} 石`;
+      const q = tradeQuote(s, c, o.grain);
+      if (o.grain > 0 && q.silver > c.silver) return '府库银两不足';
+      if (o.grain < 0 && -o.grain > c.grain) return '仓粮不足';
+      return null;
+    }
+    case 'loan': {
+      if (!own(o.node)) return '只能在自己的城劝捐';
+      const last = Number(s.flags['loan_' + o.node] ?? -99);
+      if (s.turn - last < LOAN_COOLDOWN) return `此城绅商新近捐过，${LOAN_COOLDOWN - (s.turn - last)} 个月后再劝`;
+      if (s.sieges[o.node]) return '城被围，绅商闭户';
+      return null;
     }
     case 'recruit': {
       const c = s.cities[o.node];
@@ -197,6 +218,25 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       const to = s.cities[o.to];
       if (to.controller !== f && s.factions[to.controller]?.overlord === f) adjustLoyalty(s, to.controller, Math.min(8, Math.round((o.grain / 4 + o.silver) / 4000)), '朝廷拨给钱粮');
       if (isPlayer) report(s, { cat: '内政', node: o.to, text: `${txt}。`, src });
+      break;
+    }
+    case 'trade': {
+      const c = s.cities[o.node];
+      const q = tradeQuote(s, c, o.grain);
+      if (o.grain > 0) { bump(s, o.node, 'silver', -q.silver, `籴粮 ${o.grain} 石（每石 ${q.unit.toFixed(2)} 两）`, src); bump(s, o.node, 'grain', o.grain, '市籴', src); }
+      else { bump(s, o.node, 'grain', o.grain, `粜粮 ${-o.grain} 石（每石 ${q.unit.toFixed(2)} 两）`, src); bump(s, o.node, 'silver', q.silver, '市粜', src); }
+      c.tradeN = (c.tradeTurn === s.turn ? c.tradeN ?? 0 : 0) + Math.abs(o.grain); c.tradeTurn = s.turn;
+      if (isPlayer) report(s, { cat: '内政', node: o.node, text: `${describeOrder(s, o)}，${o.grain > 0 ? '花银' : '得银'} ${q.silver} 两（市价每石 ${q.price.toFixed(2)} 两）。`, src });
+      break;
+    }
+    case 'loan': {
+      const c = s.cities[o.node];
+      const amt = loanAmount(s, c);
+      bump(s, o.node, 'silver', amt, '劝捐助饷', src);
+      bump(s, o.node, 'minxin', -5, '劝捐助饷，绅商怨望', src);
+      bump(s, o.node, 'order', -2, '劝捐助饷', src);
+      s.flags['loan_' + o.node] = s.turn;
+      if (isPlayer) report(s, { cat: '内政', node: o.node, text: `${nodeName(o.node)}劝捐助饷，得银 ${amt} 两；民心 −5、吏治 −2。`, src });
       break;
     }
     case 'recruit': {
