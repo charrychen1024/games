@@ -350,12 +350,28 @@ export class App {
 
   onKey(e: KeyboardEvent) {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+    const modalOpen = !$('#modal').classList.contains('hidden');
+    if (e.key === 'Tab') {
+      // 焦点困在最上层的窗口里，不落到背后的地图与城池面板
+      const layer = modalOpen ? $('#modal') : !$('#menu').classList.contains('hidden') ? $('#menu') : null;
+      if (layer) {
+        const f = [...layer.querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex]:not([tabindex="-1"]), input')].filter(x => x.offsetParent !== null);
+        if (f.length) {
+          const i = f.indexOf(document.activeElement as HTMLElement);
+          const j = i < 0 ? 0 : (i + (e.shiftKey ? -1 : 1) + f.length) % f.length;
+          e.preventDefault(); f[j].focus();
+        } else e.preventDefault();
+        return;
+      }
+    }
     if (e.key === 'Escape') {
       if (!$('#menu').classList.contains('hidden')) this.toggleMenu(false);
       else if (this.targetCb) this.endTarget();
-      else if (!$('#modal').classList.contains('hidden')) this.closeModal();
+      else if (modalOpen) { if (!this.forcedModal) this.closeModal(); }
       else this.closePanel();
+      return;
     }
+    if (this.forcedModal && /^[1-9]$/.test(e.key)) { ($(`#modal .opt[data-choice="${+e.key - 1}"]`) as HTMLElement | null)?.click(); return; }
     if (!this.s || this.resolving || !$('#modal').classList.contains('hidden')) return;
     if (e.key === 'r' || e.key === 'R') this.toggleReport();
     const sel = this.map.view.selectedArmy;
@@ -579,7 +595,8 @@ export class App {
   /** 菜单：存档、图例、战斗方式、声音、玩法、回到标题 */
   toggleMenu(force?: boolean) {
     const el = $('#menu');
-    const show = force ?? el.classList.contains('hidden');
+    let show = force ?? el.classList.contains('hidden');
+    if (show && this.forcedModal) show = false;   // 史事决断未答时，不许另开菜单把它盖掉
     el.classList.toggle('hidden', !show);
     if (show) {
       const row = (id: string, icon: string, label: string, sub: string, onclick: () => void) => h('button', { class: 'mrow', id, onclick: () => { click(); onclick(); } }, ic(icon), h('div', null, h('b', null, label), h('small', null, sub)));
@@ -931,6 +948,8 @@ export class App {
 
   /* ================= 弹窗 ================= */
   modal(icon: string, title: string, sub: string, body: (HTMLElement | string | null)[], buttons: { label: string; icon?: string; primary?: boolean; id?: string; onclick: () => void | boolean }[], size?: 'wide') {
+    if ($('#modal').classList.contains('hidden')) this.modalOpener = document.activeElement as HTMLElement | null;
+    this.forcedModal = false;
     const m = clear($('#modal'));
     m.classList.remove('hidden');
     const dlg = h('div', { class: 'dialog hud' + (size ? ' ' + size : ''), role: 'dialog' },
@@ -946,9 +965,17 @@ export class App {
     scroll();
     gsap.fromTo(dlg, { scale: 0.88, opacity: 0, y: 12 }, { scale: 1, opacity: 1, y: 0, duration: 0.3, ease: 'back.out(1.7)' });
     gsap.from(dlg.querySelectorAll('.opt, .gopt, .lrow, .slot, .tile'), { opacity: 0, y: 10, duration: 0.25, stagger: 0.03, delay: 0.1 });
+    requestAnimationFrame(() => { if (!dlg.contains(document.activeElement)) dlg.querySelector<HTMLElement>('button:not([disabled])')?.focus({ preventScroll: true }); });
     return dlg;
   }
-  closeModal() { closeSelects(); $('#modal').classList.add('hidden'); clear($('#modal')); }
+  modalOpener: HTMLElement | null = null;
+  forcedModal = false;
+  closeModal() {
+    closeSelects(); this.forcedModal = false;
+    $('#modal').classList.add('hidden'); clear($('#modal'));
+    const o = this.modalOpener; this.modalOpener = null;
+    if (o && o.isConnected && !o.closest('#modal')) o.focus({ preventScroll: true });
+  }
   cancelBtn() { return { label: '取消', icon: 'close', onclick: () => {} }; }
 
   gauge(score: number, factors: string[], label: string, marks = ['抗命', '打折扣', '拖延', '照办']): HTMLElement {
@@ -1509,9 +1536,11 @@ export class App {
 
   choose(c: PendingChoice): Promise<number> {
     return new Promise(resolve => {
+      this.modalOpener = null;
       const m = clear($('#modal'));
       m.classList.remove('hidden');
       m.onclick = null;
+      this.forcedModal = true;   // 史事决断必须作答：Esc、点背景都不关
       const opts = h('div', { class: 'opts' });
       c.options.forEach((o, i) => opts.append(h('button', { class: 'opt', 'data-choice': i, onclick: () => { this.closeModal(); resolve(i); } }, h('span', { class: 'num' }, String(i + 1)), h('div', null, h('b', null, o.label), h('small', null, o.desc)))));
       choiceSfx();
@@ -1520,6 +1549,7 @@ export class App {
         h('div', { class: 'db' }, h('div', { class: 'lead' }, c.text), opts)));
       gsap.fromTo('#modal .dialog', { scale: 0.85, opacity: 0, rotateX: 20 }, { scale: 1, opacity: 1, rotateX: 0, duration: 0.45, ease: 'back.out(1.6)' });
       gsap.from('#modal .opt', { opacity: 0, x: -30, duration: 0.35, stagger: 0.1, delay: 0.2, ease: 'power3.out' });
+      requestAnimationFrame(() => ($('#modal .opt') as HTMLElement | null)?.focus({ preventScroll: true }));
     });
   }
 
@@ -1604,13 +1634,27 @@ export class App {
     if (this.resolving) return;
     if (this.orders.length) this.toast('本月未结束的命令不会存入', 'info');
     if (!saveTo(this.kv, slot, this.s!, this.saveLabel(this.s!))) { this.saveFailed(`存档 ${slot}`); return; }
-    this.toast(`已存入存档 ${slot}`, 'save');
+    if (this.kv.volatile) this.volatileWarn();
+    else this.toast(`已存入存档 ${slot}`, 'save');
     this.closeModal();
     this.openSaves(false);
   }
   autoSave() {
     if (!this.s) return;
     if (!saveTo(this.kv, 'auto', this.s, this.saveLabel(this.s))) this.saveFailed('自动存档');
+    else if (this.kv.volatile && !this.warnedVolatile) this.volatileWarn();
+  }
+  warnedVolatile = false;
+  /** 浏览器不许本地存储（隐私模式等）：存档只在这次打开期间有效 */
+  volatileWarn() {
+    this.warnedVolatile = true;
+    const el = h('div', { class: 'hud warn', id: 'save-fail', style: { pointerEvents: 'auto' } }, ic('info'),
+      '此浏览器不允许本地存储，存档只在本次打开期间有效，刷新或关闭即失。要留档请导出为文件。',
+      h('button', { class: 'mini', id: 'save-fail-export', onclick: () => { this.exportSave(); el.remove(); } }, ic('transfer'), '导出为文件'),
+      h('button', { class: 'mini', onclick: () => el.remove() }, '知道了'));
+    $('#save-fail')?.remove();
+    $('#toast').append(el);
+    gsap.from(el, { y: -16, opacity: 0, duration: 0.3 });
   }
   /** 写入失败：旧档保留，提示本次未保存，给出导出文件的入口 */
   saveFailed(what: string) {
@@ -1685,6 +1729,7 @@ function sameTarget(a: Order, b: Order): boolean {
     case 'army': return (b as any).army === a.army;
     case 'command': return (b as any).army === a.army;
     case 'appoint': return (b as any).node === a.node;
+    case 'persuade': return (b as any).node === a.node;   // 同城只派一路使者，后派者替换前派
     default: return false;
   }
 }

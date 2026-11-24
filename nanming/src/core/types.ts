@@ -61,6 +61,8 @@ export interface Faction {
   playable: boolean;
   /** 退出天下之争 */
   defunct?: boolean;
+  /** 多省地方官府的合称：首领只能处分自己所守之城，不能把整个集团带走 */
+  admin?: boolean;
   /** 电脑战略倾向说明（随时间变化，见 ai.ts） */
   doctrine: string;
 }

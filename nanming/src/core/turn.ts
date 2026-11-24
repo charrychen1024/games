@@ -10,7 +10,7 @@ import { runEconomy } from './economy';
 import { aiOrders, aiFixSupply, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy } from './ai';
 import { dueEvents, fireEvent, choiceFor, applyChoice, type EventDef, type PendingChoice } from './events';
 import { EVENTS } from '../data/events';
-import { pruneLedger, topOf, report, friendly, citiesOf, armiesOf } from './state';
+import { pruneLedger, topOf, report, citiesOf, armiesOf } from './state';
 import { TOTAL_TURNS, dateLabel } from './calendar';
 import { VICTORY_AREAS, NODE } from '../data/geography';
 import { runTalent } from './talent';
@@ -27,10 +27,18 @@ export interface MonthResult { state: GameState }
 
 export function playerSideOf(s: GameState, b: BattleState): 'att' | 'def' | null {
   // 本方的战斗，以及下属军镇奉玩家号令出征（号令后三个月内）的战斗，都由玩家指挥
-  const led = (id: string) => { const t = s.flags['commanded_' + id]; return typeof t === 'number' && t >= 0 && s.turn - t <= 3; };
-  const mine = (side: BattleState['att']) => side.faction === s.player || side.armies.some(id => s.armies[id]?.faction === s.player || led(id));
-  if (mine(b.att)) return 'att';
-  if (mine(b.def)) return 'def';
+  // 授权按交战当下的隶属复核：易帜、独立、分裂之后，旧号令作废
+  const led = (id: string) => {
+    const t = s.flags['commanded_' + id], a = s.armies[id];
+    return typeof t === 'number' && t >= 0 && s.turn - t <= 3 && !!a && s.factions[a.faction]?.overlord === s.player;
+  };
+  const direct = (side: BattleState['att']) => side.faction === s.player || side.armies.some(id => s.armies[id]?.faction === s.player);
+  const vassal = (side: BattleState['att']) => side.armies.some(led);
+  // 直属军队一方优先：倒戈部队来袭时，玩家指挥的是自己的守军
+  if (direct(b.att)) return 'att';
+  if (direct(b.def)) return 'def';
+  if (vassal(b.att) && !vassal(b.def)) return 'att';
+  if (vassal(b.def) && !vassal(b.att)) return 'def';
   return null;
 }
 
@@ -142,7 +150,8 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
 export function unificationProgress(s: GameState, f = s.player): { held: number; total: number; rivals: string[] } {
   const nodes = Object.values(s.cities).filter(c => VICTORY_AREAS.includes(NODE[c.id].area));
   const held = nodes.filter(c => topOf(s, c.controller) === topOf(s, f)).length;
-  const rivals = Object.values(s.factions).filter(x => x.playable && !x.defunct && topOf(s, x.id) !== topOf(s, f) && !friendly(s, x.id, f)).map(x => x.name);
+  // 盟约、停战保留各自控制权：盟友若仍奉另一政权，照样是独立对手；只有正式归附（同奉一主）或退出才不算
+  const rivals = Object.values(s.factions).filter(x => x.playable && !x.defunct && topOf(s, x.id) !== topOf(s, f)).map(x => x.name);
   return { held, total: nodes.length, rivals };
 }
 

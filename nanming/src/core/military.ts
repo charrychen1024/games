@@ -325,7 +325,7 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
     bump(s, node, 'minxin', -5, how === '献城' ? '易帜' : '归附', src);
     if (gov && gov.faction === old && how === '献城') {
       const of0 = s.factions[old];
-      if (of0 && of0.leader === gov.id && old !== 'local') {
+      if (of0 && of0.leader === gov.id && old !== 'local' && !of0.admin) {
         // 一镇之主献城：全镇正式归附，城仍由本镇实控，改奉新主
         c.controller = old;
         defectFaction(s, old, newCtrl);
@@ -334,6 +334,8 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
         gov.faction = newCtrl;
         for (const a of Object.values(s.armies)) if (a.commander === gov.id) a.faction = newCtrl;
         adjustAtt(s, gov.id, 'loyalty', 60 - gov.att.loyalty, `献${nodeName(node)}，改投${factionName(s, newCtrl)}`);
+        // 地方官府的首领只带走本城与亲领之兵；其余各城另推主事，各自守土
+        if (of0 && of0.leader === gov.id) succession(s, old, `${gov.name}献${nodeName(node)}改投${factionName(s, newCtrl)}`);
       }
     }
   }
@@ -379,6 +381,8 @@ export function defectFaction(s: GameState, f: string, to: string) {
   fac.overlord = lord;
   fac.polity = s.factions[lord].polity;
   fac.loyalty = 60;
+  // 原主的号令随之作废
+  for (const a of Object.values(s.armies)) if (a.faction === f) delete s.flags['commanded_' + a.id];
   for (const k of Object.keys(s.relations)) if (k.split('|').includes(f)) delete s.relations[k];
   for (const sg of Object.values(s.sieges)) if (sg.attacker === f || s.cities[sg.node].controller === f) {
     if (!hostile(s, sg.attacker, s.cities[sg.node].controller)) delete s.sieges[sg.node];

@@ -27,7 +27,7 @@ export const FACTIONS: Faction[] = [
     doctrine: '江北四镇之一，最称忠勇，与高杰不睦。' },
   { id: 'zuoliangyu', name: '左良玉部', short: '左', color: '#8e4f6e', polity: 'ming', leader: 'zuoliangyu', capital: 'wuchang', overlord: 'hongguang', loyalty: 40, playable: false,
     doctrine: '拥兵武昌，号称八十万，与马士英、阮大铖积怨。' },
-  { id: 'mingprov', name: '各省明官府', short: '省', color: '#c98b7c', polity: 'ming', leader: 'hetengjiao', capital: 'changsha', overlord: 'hongguang', loyalty: 70, playable: false,
+  { id: 'mingprov', name: '各省明官府', short: '省', color: '#c98b7c', polity: 'ming', leader: 'hetengjiao', capital: 'changsha', overlord: 'hongguang', loyalty: 70, playable: false, admin: true,
     doctrine: '湖南、江西、两广、云贵、川中与闽北的明朝地方官府，听南京号令而各守其土。' },
   { id: 'zheng', name: '福建郑氏', short: '郑', color: '#2f7d78', polity: 'ming', leader: 'zhengzhilong', capital: 'anping', overlord: 'hongguang', loyalty: 55, playable: true,
     doctrine: '奉明而自主，握海上船队与贸易，重港口而轻陆战。' },

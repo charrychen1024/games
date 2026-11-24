@@ -5,7 +5,7 @@ import type { EventDef } from '../core/events';
 import type { GameState } from '../core/types';
 import { turnOf } from '../core/calendar';
 import { adjustAtt, bump, setStance, hostile, report, armiesOf, citiesOf, topOf, nodeName, armiesAt, stance } from '../core/state';
-import { setArmyOrder, captureChar, succession, defectFaction, retreat } from '../core/military';
+import { setArmyOrder, captureChar, succession, defectFaction, retreat, handover } from '../core/military';
 import { courtOf, splitFaction } from '../core/regime';
 import { NODE } from './geography';
 
@@ -62,16 +62,12 @@ export const LATE_EVENTS: EventDef[] = [
     source: SRC + '第六章',
     chooser: ['qing'],
     choices: () => [
-      { label: '严令剃发', desc: '新附各城民心大降，降官更易驯服；江南各地或将起兵抗拒。', apply: s => { s.flags.tifa_strict = 1; } },
-      { label: '暂缓推行', desc: '江南人心稍安，起事者少；满洲贵族不满，诸王主战之意稍减。', apply: s => { s.flags.tifa_strict = 0; for (const id of ['duoduo', 'ajige', 'boluo']) adjustAtt(s, id, 'loyalty', -3, '不满缓行剃发'); return '江南稍安。'; } },
+      { label: '严令剃发', desc: '新附各城民心大降，降官更易驯服；江南各地或将起兵抗拒。', apply: s => { tifaApply(s, 1); return '江南新附各城民心大降。'; } },
+      { label: '暂缓推行', desc: '江南人心稍安，起事者少；满洲贵族不满，诸王主战之意稍减。', apply: s => { tifaApply(s, 0); for (const id of ['duoduo', 'ajige', 'boluo']) adjustAtt(s, id, 'loyalty', -3, '不满缓行剃发'); return '江南稍安。'; } },
     ],
     effect: s => {
-      s.flags.tifa_strict ??= 1;
-      for (const c of Object.values(s.cities)) {
-        if (!qingHolds(s, c.id) || !['南直隶', '浙江'].includes(NODE[c.id].area)) continue;
-        bump(s, c.id, 'minxin', -8, '剃发令', { kind: 'event', ref: 'ss_tifa' });
-      }
-      for (const ch of Object.values(s.chars)) if (ch.status === 'active' && s.factions[ch.faction]?.polity === 'ming') adjustAtt(s, ch.id, 'hawk', 5, '闻剃发令');
+      // 玩家为清时，民心等后果待决断后再结算（见 tifaApply）；电脑清廷按史严令
+      if (s.player !== 'qing') tifaApply(s, 1);
     },
   }),
   ev({
@@ -126,7 +122,8 @@ export const LATE_EVENTS: EventDef[] = [
     id: 'ss_luwang', kind: 'shishi', title: '鲁王监国绍兴', from: T(1645, 7), to: T(1645, 10), node: 'shaoxing',
     cond: s => alive(s, 'zhuyihai') && !!courtOf(s) && courtLeader(s) !== 'zhuyihai' && !s.factions.lu
       && ['shaoxing', 'ningbo', 'taizhou'].some(n => s.factions[ctrl(s, n) ?? '']?.polity === 'ming'),
-    text: () => '浙东士绅与张国维、张煌言等奉鲁王朱以海监国于绍兴，凭钱塘江防守。浙东与福建的朝廷各奉一主，彼此不相统属。',
+    text: s => { const c = courtOf(s)!; const f = s.factions[c]; const lord = s.chars[f.leader];
+      return `浙东士绅与张国维、张煌言等奉鲁王朱以海监国于绍兴，凭钱塘江防守，不再听${nodeName(f.capital)}的${f.name}${lord ? '（' + lord.name + '）' : ''}号令。两家各奉一主，争明室正统。`; },
     history: '乙酉七月，鲁王在绍兴称监国，与福州隆武朝廷争正统，两家互不相下。',
     source: SRC + '第八章',
     effect: s => {
@@ -166,7 +163,7 @@ export const LATE_EVENTS: EventDef[] = [
   ev({
     id: 'ss_zhilong', kind: 'shishi', title: '郑芝龙降清', from: T(1646, 8), to: T(1646, 12), node: 'anping',
     cond: s => alive(s, 'zhengzhilong') && !s.factions.zheng?.defunct && s.factions.zheng.leader === 'zhengzhilong' && topOf(s, 'zheng') !== 'qing'
-      && (['fuzhou', 'jianning', 'yanping', 'xianxia', 'quzhou'].some(n => qingHolds(s, n)) || s.turn === T(1646, 12)),
+      && (['fuzhou', 'jianning', 'yanping', 'xianxia', 'quzhou'].some(n => qingHolds(s, n)) || Object.values(s.armies).some(a => topOf(s, a.faction) === 'qing' && NODE[a.location]?.area === '福建')),
     text: () => '清军入闽，博洛许郑芝龙以闽粤总督之位。郑芝龙不顾郑成功苦谏，北上降清，随即被挟往北京。郑成功哭别其父，率部入海。',
     history: '丙戌十一月郑芝龙降清，被博洛挟往北京；郑成功拒不从降，在南澳募兵，后据厦门、金门抗清。',
     source: SRC + '第十章；《台湾外记》',
@@ -375,7 +372,25 @@ export const LATE_EVENTS: EventDef[] = [
     text: () => '顺治帝病逝，皇三子玄烨即位，改元康熙，索尼、苏克萨哈、遏必隆、鳌拜四大臣辅政。',
     history: '顺治十八年正月初七，福临卒，玄烨即位。',
     source: '《清史稿·世祖本纪》',
-    effect: s => { s.chars.fulin.status = 'dead'; if (s.factions.qing.leader === 'fulin') s.factions.qing.leader = alive(s, 'jierhalang') ? 'jierhalang' : s.factions.qing.leader; },
+    effect: s => {
+      s.chars.fulin.status = 'dead';
+      const xy = s.chars.xuanye;
+      if (xy) { xy.status = 'active'; xy.faction = 'qing'; xy.location = 'beijing'; delete xy.appear; }
+      if (s.factions.qing.leader === 'fulin') s.factions.qing.leader = xy ? 'xuanye' : s.factions.qing.leader;
+    },
+  }),
+  ev({
+    id: 'ss_jierhalang_end', kind: 'shishi', title: '济尔哈朗卒', from: T(1655, 5), to: T(1655, 6), node: 'beijing',
+    cond: s => alive(s, 'jierhalang'),
+    text: () => '郑亲王济尔哈朗病卒。清廷宗室元老凋零，顺治帝独掌朝政。',
+    history: '顺治十二年五月，济尔哈朗卒，谥献。',
+    source: '《清史稿·郑献亲王济尔哈朗传》',
+    effect: s => {
+      s.chars.jierhalang.status = 'dead';
+      for (const a of Object.values(s.armies)) if (a.commander === 'jierhalang') handover(s, a);
+      for (const c of Object.values(s.cities)) if (c.governor === 'jierhalang') c.governor = undefined;
+      if (s.factions.qing.leader === 'jierhalang') s.factions.qing.leader = alive(s, 'fulin') ? 'fulin' : s.factions.qing.leader;
+    },
   }),
   ev({
     id: 'xs_qianjie', kind: 'xiansuo', title: '迁界令', from: T(1661, 8), to: T(1661, 8), node: 'xiamen',
@@ -473,7 +488,10 @@ function zhengAnti(s: GameState): string | null {
 
 /** 郑氏分裂：郑芝龙降清北上，郑成功率部入海 */
 function zhengSplit(s: GameState, playerFollowsChenggong: boolean) {
-  const keep = ['xiamen'].filter(n => ctrl(s, n) === 'zheng');
+  // 郑成功只带走郑氏实际握有的港口：厦门在郑氏手里就据厦门，否则取郑氏所余的一处港口；别家占着的城不白给
+  const zPorts = citiesOf(s, 'zheng').map(c => c.id).filter(n => NODE[n].kind === 'port');
+  const other = zPorts.find(n => n !== s.factions.zheng.capital);
+  const keep = zPorts.includes('xiamen') ? ['xiamen'] : other ? [other] : [];
   const ships = armiesOf(s, 'zheng').filter(a => a.mix.navy >= 0.3).map(a => a.id);
   const fleet = ships.length ? [ships[0]] : [];
   const chars = ['zhengsen', 'ganhui', 'shilang', 'zhenghongkui', 'zhengcai', 'zhengjing'].filter(id => s.chars[id] && s.chars[id].status !== 'dead');
@@ -482,7 +500,10 @@ function zhengSplit(s: GameState, playerFollowsChenggong: boolean) {
   if (courtOf(s)) { cg.overlord = courtOf(s)!; cg.loyalty = 75; }
   setStance(s, 'zhengcg', 'qing', 'war');
   if (!keep.length) {
-    const c = s.cities.xiamen; if (c) { c.controller = 'zhengcg'; c.governor = undefined; }
+    // 无港可据：厦门若无人或在郑氏手中则入据，若为他家所占则只率船队入海
+    const c = s.cities.xiamen;
+    if (c && (c.controller === 'zheng' || c.controller === 'local')) { c.controller = 'zhengcg'; c.governor = undefined; }
+    else if (fleet.length) cg.capital = s.armies[fleet[0]].location;
   }
   // 郑芝龙一支归清，芝龙本人被挟北上
   defectFaction(s, 'zheng', 'qing');
@@ -525,3 +546,13 @@ function launchTaiwan(s: GameState) {
   if (fleet) setArmyOrder(s, fleet, { kind: 'move', target: 'dayuan', attack: true });
 }
 
+
+/** 剃发令的后果：严令则江南新附各城民心大降、明臣同仇；缓行则只小有波动 */
+function tifaApply(s: GameState, strict: 0 | 1) {
+  s.flags.tifa_strict = strict;
+  for (const c of Object.values(s.cities)) {
+    if (!qingHolds(s, c.id) || !['南直隶', '浙江'].includes(NODE[c.id].area)) continue;
+    bump(s, c.id, 'minxin', strict ? -8 : -2, strict ? '剃发令' : '剃发令暂缓', { kind: 'event', ref: 'ss_tifa' });
+  }
+  if (strict) for (const ch of Object.values(s.chars)) if (ch.status === 'active' && s.factions[ch.faction]?.polity === 'ming') adjustAtt(s, ch.id, 'hawk', 5, '闻剃发令');
+}

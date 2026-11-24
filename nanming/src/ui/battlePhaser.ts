@@ -36,8 +36,15 @@ export class BattleView {
       scene: [new Boot(b, look)],
     });
   }
-  async playRound(from: BattleState, to: BattleState, log: RoundLog, fast: boolean) { await this.ready; await this.scene.playRound(from, to, log, fast ? 0.4 : 1); }
-  async showResult(win: boolean, text: string) { await this.ready; this.scene.showResult(win, text); }
+  /** 一回合动画。场景若在动画中途因窗口变化重启，原动画的等待不会再回来；这里设上限，回合流程绝不卡住。 */
+  async playRound(from: BattleState, to: BattleState, log: RoundLog, fast: boolean) {
+    await this.ready;
+    const sc = this.scene;
+    const cap = new Promise<void>(r => setTimeout(r, fast ? 6000 : 12000));
+    await Promise.race([sc.playRound(from, to, log, fast ? 0.4 : 1).catch(() => {}), cap]);
+    sc.endRound(to);
+  }
+  async showResult(win: boolean, text: string) { await this.ready; this.scene.result = [win, text]; this.scene.showResult(win, text); }
   /** 布阵预览：按新的三路兵力重排阵列 */
   preview(b: BattleState) { if (!this.scene) return; this.scene.b = b; for (let i = 0; i < 3; i++) for (const sd of ['att', 'def'] as const) this.scene.buildGroup(sd, i, b); }
   destroy() { this.game.destroy(true); }
@@ -100,7 +107,23 @@ class WarScene extends Phaser.Scene {
     }
     cam.fadeIn(500, 20, 12, 6);
     this.scale.off('resize');
-    this.scale.on('resize', () => this.scene.restart());
+    this.scale.on('resize', () => {
+      // 动画进行中不重启（重启会丢掉正在等待的动画），等本回合演完再按新尺寸重画
+      if (this.playing) { this.pendingResize = true; return; }
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = setTimeout(() => { if (this.playing) this.pendingResize = true; else this.scene.restart(); }, 120);
+    });
+    if (this.result) this.showResult(...this.result);
+  }
+  playing = false;
+  pendingResize = false;
+  resizeTimer: ReturnType<typeof setTimeout> | undefined;
+  result: [boolean, string] | null = null;
+  /** 回合收尾：记下新局面；若期间窗口变过，按新尺寸重画 */
+  endRound(to: BattleState) {
+    this.playing = false;
+    this.b = to;
+    if (this.pendingResize) { this.pendingResize = false; this.scene.restart(); }
   }
 
   /* ---------- 贴图 ---------- */
@@ -311,6 +334,7 @@ class WarScene extends Phaser.Scene {
 
   /* ---------- 一回合 ---------- */
   async playRound(from: BattleState, to: BattleState, log: RoundLog, d: number) {
+    this.playing = true;
     const cam = this.cameras.main;
     // 1. 计策
     for (const st of log.stratagems) {

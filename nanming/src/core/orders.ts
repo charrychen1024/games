@@ -87,6 +87,7 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       if (o.kind === 'persuade') {
         const city = s.cities[o.node];
         if (!city || friendly(s, f, city.controller)) return '只能劝降敌方或中立城池';
+        if (s.missions.some(m => m.faction === f && m.order.kind === 'persuade' && m.order.node === o.node)) return '已有使者赴此城劝降';
       }
       return null;
     }

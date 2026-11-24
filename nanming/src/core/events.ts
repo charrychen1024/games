@@ -31,7 +31,12 @@ export function dueEvents(s: GameState, defs: EventDef[]): { def: EventDef; vari
   const out: { def: EventDef; variant: 'history' | 'altered' }[] = [];
   for (const def of defs) {
     if (fired.has(def.id) || s.turn < def.from || s.turn > def.to) continue;
-    if (def.kind === 'xiansuo') { if (s.turn === def.from || !def.cond || def.cond(s)) out.push({ def, variant: 'history' }); continue; }
+    if (def.kind === 'xiansuo') {
+      // 线索：条件相符才作为本局之事发生并生效；窗口结束仍不符，只作史实提示，不改本局
+      if (!def.cond || def.cond(s)) out.push({ def, variant: 'history' });
+      else if (s.turn === def.to) out.push({ def, variant: 'altered' });
+      continue;
+    }
     if (!def.cond || def.cond(s)) out.push({ def, variant: 'history' });
     else if (s.turn === def.to && def.altered && def.altered(s)) out.push({ def, variant: 'altered' });
   }
@@ -42,6 +47,10 @@ export function dueEvents(s: GameState, defs: EventDef[]): { def: EventDef; vari
 /** 触发一条事件（不含选择部分） */
 export function fireEvent(s: GameState, def: EventDef, variant: 'history' | 'altered') {
   s.events.push({ id: def.id, turn: s.turn, variant });
+  if (def.kind === 'xiansuo' && variant === 'altered') {
+    report(s, { cat: '线索', urgent: false, node: def.node, text: `【${def.title}】本局未发生。`, history: `史实：${def.history}（${def.source}）`, src: { kind: 'event', ref: def.id } });
+    return;
+  }
   def.effect?.(s, variant);
   report(s, {
     cat: def.kind === 'shishi' ? '史事' : '线索',
