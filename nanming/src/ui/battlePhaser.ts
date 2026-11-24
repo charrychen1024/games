@@ -14,7 +14,7 @@ type Kind = 'inf' | 'gun' | 'cav' | 'ship';
 interface Unit { spr: Phaser.GameObjects.Sprite; kind: Kind; bx: number; by: number }
 interface Group { c: Phaser.GameObjects.Container; units: Unit[]; flag: Phaser.GameObjects.Image | null; baseX: number }
 
-const REACH: Partial<Record<LaneOrder, number>> = { attack: 0.11, charge: 0.14, flank: 0.09, storm: 0.3, sap: 0.24, sortie: 0.12, withdraw: -0.06, blockade: -0.03, ram: 0.16, board: 0.13, fireship: 0.05, evade: 0.04 };
+const REACH: Partial<Record<LaneOrder, number>> = { envelop: 0.1, attack: 0.11, charge: 0.14, flank: 0.09, storm: 0.3, sap: 0.24, sortie: 0.12, withdraw: -0.06, blockade: -0.03, ram: 0.16, board: 0.13, fireship: 0.05, evade: 0.04 };
 
 export class BattleView {
   game: Phaser.Game;
@@ -53,6 +53,7 @@ export class BattleView {
     if (full && b.weather !== sc.b.weather) { sc.b = b; sc.restartSafe(); return; }
     sc.b = b;
     for (let i = 0; i < 3; i++) for (const sd of ['att', 'def'] as const) sc.buildGroup(sd, i, b);
+    sc.buildReserves(b);
     if (full && b.kind === 'siege') { sc.drawWall(b); sc.buildDefenders(b); }
   }
   destroy() { clearTimeout(this.scene?.resizeTimer); this.game.destroy(true); }
@@ -106,6 +107,7 @@ class WarScene extends Phaser.Scene {
     if (this.b.kind === 'siege') this.drawWall(this.b);
     // 阵列
     for (let i = 0; i < 3; i++) for (const side of ['att', 'def'] as const) this.buildGroup(side, i, this.b);
+    this.buildReserves(this.b);
     if (this.b.kind === 'siege') this.buildDefenders(this.b);
     // 后期
     const cam = this.cameras.main;
@@ -329,6 +331,25 @@ class WarScene extends Phaser.Scene {
     this.tweens.add({ targets: flag, scaleX: flag.scaleX * 0.92, duration: this.b.weather === 'wind' ? 260 : 700, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
   }
 
+  /** 预备队：阵后一小队，半透明，表示尚未接战 */
+  reserves: Record<string, Phaser.GameObjects.Container | undefined> = {};
+  buildReserves(b: BattleState) {
+    for (const side of ['att', 'def'] as const) {
+      this.reserves[side]?.destroy(); this.reserves[side] = undefined;
+      const n0 = b[side].reserve ?? 0;
+      if (n0 < 300 || b.kind === 'naval' || (b.kind === 'siege' && side === 'def')) continue;
+      const dir = side === 'att' ? 1 : -1, s = this.geo.laneS(0) * 0.9;
+      const x = (side === 'att' ? Math.max(40, this.baseX('att', 1) - this.W * 0.2) : Math.min(this.W - 40, this.baseX('def', 1) + this.W * 0.16));
+      const y = (this.geo.laneY(0) + this.geo.laneY(1)) / 2;
+      const c = this.add.container(x, y).setDepth(900).setAlpha(0.7);
+      const n = Math.max(4, Math.min(12, Math.round(Math.sqrt(n0) / 6)));
+      for (let k = 0; k < n; k++) c.add(this.sprite(-dir * (k % 6) * 12 * s, (Math.floor(k / 6) - 0.5) * 9 * s, `${side}-inf-idle`, s, dir < 0));
+      c.add(this.sprite(dir * 10 * s, -4, `${side}-flag-1`, s * 0.8, false));
+      const lab = this.add.text(0, -40 * s, `预备 ${n0 >= 10000 ? (Math.round(n0 / 1000) / 10) + '万' : n0}`, { fontFamily: '"Noto Serif SC",serif', fontSize: '13px', color: '#f3e6c8', stroke: '#1a0f06', strokeThickness: 3 }).setOrigin(0.5);
+      c.add(lab);
+      this.reserves[side] = c;
+    }
+  }
   setPose(side: 'att' | 'def', i: number, pose: 'idle' | 'walk' | 'aim' | 'flee') {
     const g = this.groups[side + i];
     if (!g) return;
@@ -366,6 +387,46 @@ class WarScene extends Phaser.Scene {
       await this.wait(700 * d);
       this.tweens.add({ targets: [box, txt], alpha: 0, duration: 200 * d, onComplete: () => { box.destroy(); txt.destroy(); } });
     }
+    // 1.4 鸣金收兵：一方各路回身撤走
+    if (log.retreat) {
+      const sd = log.retreat, dir = sd === 'att' ? 1 : -1;
+      battleSfx.rout();
+      const outs: Promise<void>[] = [];
+      for (let i = 0; i < 3; i++) { const g = this.groups[sd + i]; if (!g || !g.units.length) continue; this.setPose(sd, i, 'flee'); outs.push(this.tween({ targets: g.c, x: g.c.x - dir * this.W * 0.4, alpha: 0.2, duration: 1100 * d, ease: 'Quad.in' })); }
+      await Promise.all(outs);
+      this.b = to;
+      return;
+    }
+    // 1.5 投入预备队、调兵：一队兵从阵后或别路开过去
+    for (const mv of log.moves ?? []) {
+      const dir = mv.side === 'att' ? 1 : -1;
+      const s = this.geo.laneS(mv.to);
+      const fromX = mv.kind === 'commit' ? (this.reserves[mv.side]?.x ?? this.baseX(mv.side, 1) - dir * this.W * 0.2) : (this.groups[mv.side + mv.from]?.c.x ?? this.baseX(mv.side, mv.from!));
+      const fromY = mv.kind === 'commit' ? (this.reserves[mv.side]?.y ?? this.geo.laneY(1)) : this.geo.laneY(mv.from!);
+      const toX = this.groups[mv.side + mv.to]?.c.x ?? this.baseX(mv.side, mv.to), toY = this.geo.laneY(mv.to);
+      if (mv.kind === 'commit') this.reserves[mv.side]?.setVisible(false);
+      for (let k = 0; k < 7; k++) {
+        const spr = this.sprite(fromX - dir * k * 10 * s, fromY + (k % 2) * 6, `${mv.side}-inf-walk-0`, s, dir < 0).setDepth(1500 + mv.to * 1000);
+        spr.play(`${mv.side}-inf-walk`);
+        this.tweens.add({ targets: spr, x: toX - dir * (20 + k * 8) * s, y: toY + (k % 3 - 1) * 5 * s, duration: 800 * d, delay: k * 50 * d, ease: 'Sine.inOut', onComplete: () => this.tweens.add({ targets: spr, alpha: 0, duration: 250, onComplete: () => spr.destroy() }) });
+      }
+      if (log.moves!.indexOf(mv) === 0) battleSfx.advance(false);
+    }
+    if (log.moves?.length) await this.wait(850 * d);
+    // 1.6 包抄：当面无敌的一路斜插邻路之敌侧背
+    const envs: Promise<void>[] = [];
+    for (const ev of log.envelops ?? []) {
+      const g = this.groups[ev.side + ev.from];
+      const foeG = this.groups[(ev.side === 'att' ? 'def' : 'att') + ev.to];
+      if (!g || !g.units.length) continue;
+      const dir = ev.side === 'att' ? 1 : -1;
+      this.setPose(ev.side, ev.from, 'walk');
+      battleSfx.advance(g.units.some(u => u.kind === 'cav'));
+      const tx = (foeG?.c.x ?? this.baseX(ev.side === 'att' ? 'def' : 'att', ev.to)) + dir * 30 * this.geo.laneS(ev.to);
+      const ty = this.geo.laneY(ev.to) + (ev.to > ev.from ? -14 : 14) * this.geo.laneS(ev.to);
+      envs.push(this.tween({ targets: g.c, x: tx, y: ty, duration: 700 * d, ease: 'Quad.inOut' }).then(() => { this.sparks.explode(18, tx, ty - 16); this.dust.explode(14, tx, ty); battleSfx.clash(6); }));
+    }
+    if (envs.length) await Promise.all(envs);
     // 2. 前进 / 射击
     const advances: Promise<void>[] = [];
     for (let i = 0; i < 3; i++) {
@@ -374,7 +435,7 @@ class WarScene extends Phaser.Scene {
       for (const side of ['att', 'def'] as const) {
         const order = side === 'att' ? ev.att : ev.def;
         const g = this.groups[side + i];
-        if (!g || !g.c.visible || !g.units.length) continue;
+        if (!g || !g.c.visible || !g.units.length || order === 'envelop') continue;
         const dir = side === 'att' ? 1 : -1;
         let dx = dir * this.W * (REACH[order] ?? 0);
         if (this.b.kind === 'siege' && side === 'att' && order === 'storm') dx = this.geo.wallX(this.geo.laneY(i)) - 34 * this.geo.laneS(i) - g.baseX;
@@ -430,13 +491,14 @@ class WarScene extends Phaser.Scene {
         this.setPose(side, i, 'flee');
         backs.push(this.tween({ targets: g.c, x: g.c.x - (side === 'att' ? 1 : -1) * this.W * 0.45, alpha: 0, duration: 900 * d, ease: 'Quad.in' }));
       } else {
-        backs.push(this.tween({ targets: g.c, x: g.baseX, duration: 450 * d, ease: 'Sine.inOut' }).then(() => this.setPose(side, i, 'idle')));
+        backs.push(this.tween({ targets: g.c, x: g.baseX, y: this.geo.laneY(i), duration: 450 * d, ease: 'Sine.inOut' }).then(() => this.setPose(side, i, 'idle')));
       }
     }
     await Promise.all(backs);
     // 5. 依新战局重排
     this.b = to;
     for (let i = 0; i < 3; i++) for (const side of ['att', 'def'] as const) this.buildGroup(side, i, to);
+    this.buildReserves(to);
     if (to.kind === 'siege') {
       this.buildDefenders(to);
       if (to.outcome === 'breach') { battleSfx.breach(); cam.shake(700, 0.016); for (let i = 0; i < 3; i++) this.dust.explode(40, this.geo.wallX(this.geo.laneY(i)), this.geo.laneY(i) - 30); }

@@ -198,7 +198,7 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
   if (b.kind !== 'siege') {
     // 败方后撤
     const losers = (b.winner === 'att' ? defArmies : attArmies).filter(a => s.armies[a.id]);
-    if (b.outcome === 'rout' || b.outcome === 'repulsed') for (const a of losers) retreat(s, a, b.outcome === 'rout');
+    if (b.outcome === 'rout' || b.outcome === 'repulsed' || b.outcome === 'collapse' || b.outcome === 'retreat') for (const a of losers) retreat(s, a, b.outcome === 'rout' || b.outcome === 'collapse');
     maybeCapture(s, b, loserSide);
   } else {
     if (b.winner === 'att' && (b.outcome === 'breach' || b.outcome === 'surrender')) {
@@ -242,7 +242,7 @@ export function retreat(s: GameState, a: Army, routed: boolean) {
 }
 
 function maybeCapture(s: GameState, b: BattleState, loser: BattleSide) {
-  if (b.outcome !== 'rout') return;
+  if (b.outcome !== 'rout' && b.outcome !== 'collapse') return;
   const rng = rngFor(b.seed, 'capture');
   const ch = s.chars[loser.commander];
   const isLeader = !!ch && s.factions[ch.faction]?.leader === ch.id;

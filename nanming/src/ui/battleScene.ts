@@ -28,7 +28,7 @@ export class BattleScene {
   wallX(y: number) { // 城墙左缘随深度变化
     const hz = this.horizon();
     const f = (y - hz) / (this.H - hz);
-    return this.W * (0.9 - f * 0.2);
+    return this.W * (0.88 - f * 0.22);
   }
 
   /* ---------- 静态背景（缓存） ---------- */
@@ -194,7 +194,7 @@ export class BattleScene {
   }
 
   /* ---------- 城墙 ---------- */
-  wallH(y: number) { return 34 + (y - this.horizon()) * 0.42; }
+  wallH(y: number) { return 46 + (y - this.horizon()) * 0.5; }
   drawWall(g: CanvasRenderingContext2D, F: SceneFrame) {
     const b = F.next && F.t > 0.5 ? F.next : F.b;
     const hz = this.horizon();
@@ -233,64 +233,146 @@ export class BattleScene {
     const px = this.W * 0.95, py = yTop - wh(yTop) + 30;
     for (let k = 0; k < 6; k++) { const w = 22 - k * 3, yy = py - k * 12; g.fillStyle = '#d9cfb8'; g.fillRect(px - w / 2 + 3, yy - 9, w - 6, 9); g.fillStyle = '#3b3f42'; g.fillRect(px - w / 2, yy - 11, w, 3); }
     g.restore();
-    // 护城河
-    const moat = (y: number) => xl(y) - 8 - (y - hz) * 0.12;
-    g.fillStyle = '#5e8794';
-    g.beginPath(); g.moveTo(moat(yTop) - 10, yTop); g.lineTo(xl(yTop) - 2, yTop); g.lineTo(xl(yBot) - 4, yBot); g.lineTo(moat(yBot) - 50, yBot); g.closePath(); g.fill();
-    g.fillStyle = 'rgba(220,240,240,0.18)';
-    g.beginPath(); g.moveTo(moat(yTop) - 10, yTop); g.lineTo(moat(yTop) - 4, yTop); g.lineTo(moat(yBot) - 38, yBot); g.lineTo(moat(yBot) - 50, yBot); g.closePath(); g.fill();
-    // 马道（墙顶）
+    // 护城河：在墙脚之外（攻方一侧），河岸一线浅色
+    const foot = (y: number) => xl(y) - wh(y) * 0.1 - 3;
+    const moat = (y: number) => foot(y) - 14 - (y - hz) * 0.16;
+    g.fillStyle = '#56808c';
+    g.beginPath(); g.moveTo(moat(yTop), yTop); g.lineTo(foot(yTop), yTop); g.lineTo(foot(yBot), yBot); g.lineTo(moat(yBot), yBot); g.closePath(); g.fill();
+    g.fillStyle = 'rgba(220,240,240,0.2)';
+    g.beginPath(); g.moveTo(moat(yTop), yTop); g.lineTo(moat(yTop) + 4, yTop); g.lineTo(moat(yBot) + 10, yBot); g.lineTo(moat(yBot), yBot); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(200,190,150,0.5)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(moat(yTop), yTop); g.lineTo(moat(yBot), yBot); g.stroke();
+    // 墙体：下宽上窄（收分），青砖墙面、条石基座、马面凸出、墙根阴影
+    const bat = 0.1; // 收分：墙脚比墙顶向外伸出墙高的一成
+    const fp = (y: number, f: number): [number, number] => [xl(y) - wh(y) * bat * f, y - wh(y) * (1 - f)];
+    // 马道（墙顶，可见其厚）
     g.beginPath(); g.moveTo(xl(yTop), yTop - wh(yTop)); g.lineTo(inner(yTop), yTop - wh(yTop)); g.lineTo(inner(yBot), yBot - wh(yBot)); g.lineTo(xl(yBot), yBot - wh(yBot)); g.closePath();
-    g.fillStyle = '#8c8577'; g.fill();
+    const wk = g.createLinearGradient(xl(yBot), 0, inner(yBot), 0); wk.addColorStop(0, '#a29a8a'); wk.addColorStop(1, '#7d766a');
+    g.fillStyle = wk; g.fill();
+    // 马道铺砖
+    g.strokeStyle = 'rgba(60,54,46,0.25)'; g.lineWidth = 0.6;
+    for (let s = 0; s <= 1; s += 0.03) { const y = yTop + s * (yBot - yTop); g.beginPath(); g.moveTo(xl(y), y - wh(y)); g.lineTo(inner(y), y - wh(y)); g.stroke(); }
+    // 内侧女墙（矮墙）
+    g.fillStyle = '#6f685d';
+    g.beginPath(); g.moveTo(inner(yTop), yTop - wh(yTop)); g.lineTo(inner(yBot), yBot - wh(yBot)); g.lineTo(inner(yBot), yBot - wh(yBot) - 7); g.lineTo(inner(yTop), yTop - wh(yTop) - 3); g.closePath(); g.fill();
+    // 墙根阴影（落在地上）
+    g.save();
+    const sh = g.createLinearGradient(0, 0, -40, 0);
+    g.fillStyle = 'rgba(20,16,10,0.28)';
+    g.beginPath(); g.moveTo(fp(yTop, 1)[0], yTop); g.lineTo(fp(yBot, 1)[0], yBot); g.lineTo(fp(yBot, 1)[0] - 46, yBot); g.lineTo(fp(yTop, 1)[0] - 14, yTop); g.closePath(); g.fill();
+    void sh;
+    g.restore();
     // 墙面
-    g.beginPath(); g.moveTo(xl(yTop), yTop - wh(yTop)); g.lineTo(xl(yBot), yBot - wh(yBot)); g.lineTo(xl(yBot), yBot); g.lineTo(xl(yTop), yTop); g.closePath();
+    g.beginPath(); g.moveTo(...fp(yTop, 0)); g.lineTo(...fp(yBot, 0)); g.lineTo(...fp(yBot, 1)); g.lineTo(...fp(yTop, 1)); g.closePath();
     const fg = g.createLinearGradient(0, yBot - wh(yBot), 0, yBot);
-    fg.addColorStop(0, '#b1a893'); fg.addColorStop(0.8, '#968d79'); fg.addColorStop(1, '#7b7363');
+    fg.addColorStop(0, '#9d9b92'); fg.addColorStop(0.55, '#86847b'); fg.addColorStop(1, '#6b6961');
     g.fillStyle = fg; g.fill();
     g.save(); g.clip();
-    // 砖缝：随透视的横缝 + 错缝竖缝
-    const rows = 22;
-    for (let r = 0; r <= rows; r++) {
-      const f = r / rows;
-      g.strokeStyle = r > rows - 3 ? 'rgba(50,45,38,0.45)' : 'rgba(70,64,54,0.3)'; g.lineWidth = r > rows - 3 ? 1.2 : 0.7;
-      g.beginPath(); g.moveTo(xl(yTop), yTop - wh(yTop) * (1 - f)); g.lineTo(xl(yBot), yBot - wh(yBot) * (1 - f)); g.stroke();
-      for (let c = 0; c < 46; c++) {
-        const t2 = (c + (r % 2) * 0.5) / 46, y = yTop + t2 * (yBot - yTop), x = xl(y);
-        const y1 = y - wh(y) * (1 - f), y2 = y - wh(y) * (1 - (r + 1) / rows);
-        g.beginPath(); g.moveTo(x, y1); g.lineTo(x, y2); g.stroke();
+    // 青砖：逐块深浅不一，错缝
+    const rows = 26, cols = 54;
+    for (let r = 0; r < rows; r++) {
+      const f0 = r / rows, f1 = (r + 1) / rows;
+      for (let c = 0; c < cols; c++) {
+        const t0 = (c + (r % 2) * 0.5) / cols, t1 = (c + 1 + (r % 2) * 0.5) / cols;
+        const ya = yTop + t0 * (yBot - yTop), yb = yTop + Math.min(1, t1) * (yBot - yTop);
+        const [x00, y00] = fp(ya, f0), [x10, y10] = fp(yb, f0), [x11, y11] = fp(yb, f1), [x01, y01] = fp(ya, f1);
+        const v = rng.next();
+        g.fillStyle = v < 0.3 ? 'rgba(40,40,46,0.13)' : v < 0.55 ? 'rgba(255,255,245,0.07)' : v < 0.62 ? 'rgba(90,70,50,0.12)' : 'rgba(0,0,0,0)';
+        g.beginPath(); g.moveTo(x00, y00); g.lineTo(x10, y10); g.lineTo(x11, y11); g.lineTo(x01, y01); g.closePath(); g.fill();
+      }
+      g.strokeStyle = 'rgba(48,46,42,0.32)'; g.lineWidth = 0.7;
+      g.beginPath(); g.moveTo(...fp(yTop, f0)); g.lineTo(...fp(yBot, f0)); g.stroke();
+      for (let c = 0; c < cols; c++) {
+        const tt = (c + (r % 2) * 0.5) / cols, y = yTop + tt * (yBot - yTop);
+        g.beginPath(); g.moveTo(...fp(y, f0)); g.lineTo(...fp(y, f1)); g.stroke();
       }
     }
-    // 苔痕与水渍
-    for (let k = 0; k < 40; k++) { const t2 = rng.next(), y = yTop + t2 * (yBot - yTop), x = xl(y); g.fillStyle = `rgba(70,90,50,${0.08 + rng.next() * 0.12})`; g.beginPath(); g.ellipse(x, y - wh(y) * rng.next() * 0.3, 6 + rng.next() * 12, 3 + rng.next() * 6, 0, 0, Math.PI * 2); g.fill(); }
-    // 破损
-    const dmg = 1 - b.wall / 100;
-    g.strokeStyle = 'rgba(30,26,22,0.85)'; g.lineWidth = 1.8;
-    for (let k = 0; k < dmg * 30; k++) {
-      const t2 = rng.next(), y = yTop + t2 * (yBot - yTop), x = xl(y), yy = y - wh(y) * (0.2 + rng.next() * 0.75);
-      const dir = (yBot - yTop) / (xl(yBot) - xl(yTop));
-      g.beginPath(); g.moveTo(x, yy); g.lineTo(x - 6 - rng.next() * 10, yy + 6 + rng.next() * 14); g.lineTo(x - 2 - rng.next() * 14, yy + 16 + rng.next() * 18); g.stroke();
-      void dir;
+    // 条石基座：墙脚三层大石，色浅而缝宽
+    for (let r = 0; r < 3; r++) {
+      const f0 = 0.86 + r * 0.047, f1 = f0 + 0.047;
+      g.fillStyle = r % 2 ? '#8d8574' : '#988f7d';
+      g.beginPath(); g.moveTo(...fp(yTop, f0)); g.lineTo(...fp(yBot, f0)); g.lineTo(...fp(yBot, f1)); g.lineTo(...fp(yTop, f1)); g.closePath(); g.fill();
+      g.strokeStyle = 'rgba(40,34,26,0.45)'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(...fp(yTop, f0)); g.lineTo(...fp(yBot, f0)); g.stroke();
+      for (let c = 0; c < 18; c++) { const y = yTop + ((c + r * 0.5) / 18) * (yBot - yTop); g.beginPath(); g.moveTo(...fp(y, f0)); g.lineTo(...fp(y, f1)); g.stroke(); }
     }
-    if (dmg > 0.4) for (let k = 0; k < 3; k++) { // 坍口
-      const y = this.laneY(k), x = xl(y), top = y - wh(y);
-      g.fillStyle = 'rgba(40,34,28,0.85)';
-      g.beginPath(); g.moveTo(x - 12, top); g.lineTo(x + 2, top + wh(y) * 0.35 * dmg); g.lineTo(x - 22, top + wh(y) * 0.3 * dmg); g.closePath(); g.fill();
+    // 墙顶压檐一线（受光）
+    g.strokeStyle = 'rgba(255,250,235,0.35)'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(...fp(yTop, 0.012)); g.lineTo(...fp(yBot, 0.012)); g.stroke();
+    // 苔痕、雨渍（自上而下的水痕）
+    for (let k = 0; k < 46; k++) {
+      const t2 = rng.next(), y = yTop + t2 * (yBot - yTop), f = rng.next() * 0.25;
+      const [x0, y0] = fp(y, f), len = wh(y) * (0.15 + rng.next() * 0.35);
+      const gr = g.createLinearGradient(0, y0, 0, y0 + len); gr.addColorStop(0, 'rgba(50,60,40,0.18)'); gr.addColorStop(1, 'rgba(50,60,40,0)');
+      g.fillStyle = gr; g.fillRect(x0 - 3, y0, 6 + rng.next() * 6, len);
+    }
+    // 破损：裂缝、剥落、坍口
+    const dmg = 1 - b.wall / 100;
+    g.strokeStyle = 'rgba(28,24,20,0.85)'; g.lineWidth = 1.8;
+    for (let k = 0; k < dmg * 30; k++) {
+      const t2 = rng.next(), y = yTop + t2 * (yBot - yTop), [x, yy] = fp(y, 0.15 + rng.next() * 0.7);
+      g.beginPath(); g.moveTo(x, yy); g.lineTo(x - 6 - rng.next() * 10, yy + 6 + rng.next() * 14); g.lineTo(x - 2 - rng.next() * 14, yy + 16 + rng.next() * 18); g.stroke();
+      if (rng.chance(0.4)) { g.fillStyle = 'rgba(60,54,46,0.6)'; g.beginPath(); g.ellipse(x - 4, yy + 8, 5 + rng.next() * 6, 3 + rng.next() * 4, 0.6, 0, Math.PI * 2); g.fill(); }
+    }
+    if (dmg > 0.4) for (let k = 0; k < 3; k++) {
+      const y = this.laneY(k), [x, top] = fp(y, 0);
+      g.fillStyle = 'rgba(36,30,24,0.9)';
+      g.beginPath(); g.moveTo(x - 14, top); g.lineTo(x + 4, top + wh(y) * 0.4 * dmg); g.lineTo(x - 26, top + wh(y) * 0.34 * dmg); g.closePath(); g.fill();
     }
     g.restore();
+    // 马面：每段凸出一座墩台，正面、侧面、顶面各有明暗
+    const bastionAt = [0.12, (this.laneY(0) + this.laneY(1)) / 2, (this.laneY(1) + this.laneY(2)) / 2];
+    for (const by0 of bastionAt) {
+      const y = by0 < 1 ? yTop + by0 * (yBot - yTop) : by0;
+      const s = 0.55 + (y - hz) / (this.H - hz) * 1.0;
+      const out = 26 * s, half = 16 * s, h0 = wh(y) * 1.0;
+      const ya = y - half * 0.6, yb = y + half * 0.6;
+      const [ax, aTop] = fp(ya, 0), [bx, bTop] = fp(yb, 0);
+      const [ax1] = fp(ya, 1), [bx1] = fp(yb, 1);
+      // 侧面（朝下方观者，略受光）
+      g.fillStyle = '#7f7c73';
+      g.beginPath(); g.moveTo(bx, bTop); g.lineTo(bx - out, bTop - 2); g.lineTo(bx1 - out - h0 * bat * 0.4, yb); g.lineTo(bx1, yb); g.closePath(); g.fill();
+      // 正面（朝攻方，背光）
+      const ff = g.createLinearGradient(0, aTop, 0, yb); ff.addColorStop(0, '#8a877e'); ff.addColorStop(1, '#69665f');
+      g.fillStyle = ff;
+      g.beginPath(); g.moveTo(ax - out, aTop - 2); g.lineTo(bx - out, bTop - 2); g.lineTo(bx1 - out - h0 * bat * 0.4, yb); g.lineTo(ax1 - out - h0 * bat * 0.4, ya); g.closePath(); g.fill();
+      g.strokeStyle = 'rgba(40,38,34,0.35)'; g.lineWidth = 0.7;
+      for (let r = 1; r < 10; r++) { const f = r / 10; g.beginPath(); g.moveTo(ax - out - h0 * bat * 0.4 * f, aTop - 2 + (ya - aTop) * f); g.lineTo(bx - out - h0 * bat * 0.4 * f, bTop - 2 + (yb - bTop) * f); g.stroke(); }
+      // 顶面
+      g.fillStyle = '#a49d8f';
+      g.beginPath(); g.moveTo(ax, aTop); g.lineTo(bx, bTop); g.lineTo(bx - out, bTop - 2); g.lineTo(ax - out, aTop - 2); g.closePath(); g.fill();
+      // 墩台垛口
+      for (let k = 0; k < 4; k++) {
+        const q = (k + 0.5) / 4, mx = ax - out + (bx - ax) * q, my = aTop - 2 + (bTop - aTop) * q, m = 5 * s;
+        g.fillStyle = '#8f8b81'; g.fillRect(mx - m * 0.5, my - m, m, m);
+        g.fillStyle = '#b3ad9f'; g.fillRect(mx - m * 0.5, my - m - 1.5 * s, m, 1.5 * s);
+      }
+    }
     // 墙脚碎石
     if (dmg > 0.25) for (let k = 0; k < 3; k++) {
-      const y = this.laneY(k), x = xl(y);
+      const y = this.laneY(k), x = fp(y, 1)[0];
       for (let r = 0; r < 14 * dmg; r++) { g.fillStyle = rng.chance(0.5) ? '#8f877a' : '#6f685c'; g.beginPath(); g.ellipse(x - 6 - rng.next() * 34, y - rng.next() * 6, 2 + rng.next() * 5, 1.5 + rng.next() * 3, 0, 0, Math.PI * 2); g.fill(); }
     }
-    // 城门（中路）
-    const gy = this.laneY(1), gx = xl(gy), gh = wh(gy) * 0.55;
-    const slope = (xl(yBot) - xl(yTop)) / (yBot - yTop);
-    const gw = 26 * this.laneS(1);
-    g.fillStyle = '#20150d';
-    g.beginPath();
-    g.moveTo(gx - slope * -gw * 0.5, gy - 2 - gw * 0.5); g.lineTo(gx, gy - 2 + gw * 0.5);
-    g.lineTo(gx, gy - gh); g.quadraticCurveTo(gx - slope * -gw * 0.25, gy - gh - 18, gx - slope * -gw * 0.5, gy - gh - gw * 0.5); g.closePath(); g.fill();
-    g.strokeStyle = '#6d5a3f'; g.lineWidth = 2; g.stroke();
+    // 城门（中路）：砖券门洞，券脸一圈立砖，洞深而暗，包铁大门半掩
+    const gy = this.laneY(1), gw = 44 * this.laneS(1), gh = wh(gy) * 0.5;
+    const gya = gy - gw * 0.45, gyb = gy + gw * 0.45;
+    const [g1x, g1t] = fp(gya, 1), [g2x] = fp(gyb, 1);
+    const arch = (inset: number) => {
+      const xa = g1x + inset * 0.3, xb = g2x + inset * 0.3, ya = gya + inset, yb = gyb - inset;
+      g.beginPath(); g.moveTo(xa, ya); g.lineTo(xa + wh(gya) * bat * 0.4, ya - gh + inset);
+      g.quadraticCurveTo((xa + xb) / 2 + wh(gy) * bat * 0.4, (ya + yb) / 2 - gh - gw * 0.55 + inset, xb + wh(gyb) * bat * 0.4, yb - gh + inset);
+      g.lineTo(xb, yb); g.closePath();
+    };
+    void g1t;
+    g.fillStyle = '#6a665e'; arch(-3); g.fill();                     // 券脸
+    g.strokeStyle = 'rgba(40,36,30,0.5)'; g.lineWidth = 0.8; arch(-3); g.stroke();
+    const dg = g.createLinearGradient(g1x, 0, g1x + gw, 0); dg.addColorStop(0, '#1a120b'); dg.addColorStop(1, '#3a2a1c');
+    g.fillStyle = dg; arch(1.5); g.fill();                           // 门洞深处
+    // 门扇：木纹、门钉
+    g.save(); arch(4); g.clip();
+    g.fillStyle = '#5a3a20'; g.fillRect(g1x - 10, gya - gh - gw, gw * 1.6, gh + gw * 2);
+    g.strokeStyle = 'rgba(30,18,8,0.6)'; g.lineWidth = 1; for (let k = 0; k < 8; k++) { const x = g1x + k * gw / 8; g.beginPath(); g.moveTo(x, gya - gh - gw); g.lineTo(x + 2, gyb + 4); g.stroke(); }
+    g.fillStyle = '#c9a457'; for (let r = 0; r < 6; r++) for (let c = 0; c < 4; c++) { g.beginPath(); g.arc(g1x + 4 + c * gw / 4.4 + r * 0.5, gya - gh * 0.85 + r * gh / 6 + c * gw * 0.18, 1.1 * this.laneS(1), 0, Math.PI * 2); g.fill(); }
+    g.restore();
+    g.strokeStyle = '#4a3f33'; g.lineWidth = 2; arch(-3); g.stroke();
   }
 
   /** 垛口、城楼、城头守军 */
@@ -300,11 +382,22 @@ export class BattleScene {
     const wh = (y: number) => this.wallH(y);
     const xl = (y: number) => this.wallX(y);
     // 垛口：沿外缘
-    for (let s = 0; s <= 1.0001; s += 0.022) {
-      const y = hz + 4 + s * (this.H + 16 - hz), x = xl(y), top = y - wh(y), m = 4 + s * 9;
-      g.fillStyle = '#a49b87'; g.fillRect(x - 1, top - m, m * 0.85, m);
-      g.fillStyle = 'rgba(40,36,30,0.4)'; g.fillRect(x - 1, top - m, 1.4, m);
-      g.fillStyle = 'rgba(255,255,240,0.15)'; g.fillRect(x - 1, top - m, m * 0.85, 1.2);
+    // 垛墙：先画一道连续的矮墙，再在上面起垛，每个垛有正面、顶面与侧影，垛间有射孔
+    g.fillStyle = '#7e7b72';
+    g.beginPath();
+    for (let s = 0; s <= 1.0001; s += 0.02) { const y = hz + 4 + s * (this.H + 16 - hz); const m = 3 + s * 6; s === 0 ? g.moveTo(xl(y) - 1, y - wh(y) - m) : g.lineTo(xl(y) - 1, y - wh(y) - m); }
+    for (let s = 1; s >= -0.0001; s -= 0.02) { const y = hz + 4 + s * (this.H + 16 - hz); g.lineTo(xl(y) - 1, y - wh(y)); }
+    g.closePath(); g.fill();
+    for (let s = 0; s <= 1.0001; s += 0.026) {
+      const y = hz + 4 + s * (this.H + 16 - hz), x = xl(y), top = y - wh(y), m = 4 + s * 10, base = 3 + s * 6, d = 2 + s * 3;
+      // 顶面（受光）
+      g.fillStyle = '#b8b2a4'; g.beginPath(); g.moveTo(x - 1, top - base - m); g.lineTo(x - 1 + m * 0.8, top - base - m + m * 0.12); g.lineTo(x - 1 + m * 0.8 + d, top - base - m + m * 0.12 - d * 0.5); g.lineTo(x - 1 + d, top - base - m - d * 0.5); g.closePath(); g.fill();
+      // 正面
+      g.fillStyle = '#8f8b80'; g.beginPath(); g.moveTo(x - 1, top - base - m); g.lineTo(x - 1 + m * 0.8, top - base - m + m * 0.12); g.lineTo(x - 1 + m * 0.8, top - base + m * 0.12); g.lineTo(x - 1, top - base); g.closePath(); g.fill();
+      // 侧影
+      g.fillStyle = 'rgba(30,28,24,0.45)'; g.fillRect(x - 1, top - base - m, 1.5, m);
+      // 射孔
+      g.fillStyle = 'rgba(20,16,12,0.7)'; g.fillRect(x - 1 + m * 0.35, top - base - m * 0.55, Math.max(1, m * 0.12), m * 0.3);
     }
     for (let i = 0; i < 3 && withDefenders; i++) {
       const l = b.def.lanes[i];

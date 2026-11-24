@@ -2,7 +2,7 @@
  * 规则全在 core/battle.ts；这里只收集选择、驱动动画。 */
 import type { GameState } from '../core/types';
 import {
-  resolveRound, aiChoice, legalOrders, legalStratagems, stratagemOdds, sideTroops, laneActive,
+  resolveRound, aiChoice, laneOrders, FORM_DEFAULT_SPLIT, legalStratagems, stratagemOdds, sideTroops, laneActive,
   ORDER_NAME, ORDER_HINT, STRATAGEM_NAME, STRATAGEM_HINT, LANE_NAMES, outcomeText, FORM_NAME, FORM_HINT,
   deploy, aiFormation, scout, counterOf, type BattleState, type Choice, type Stratagem, type Formation,
 } from '../core/battle';
@@ -40,10 +40,14 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
     let cur = b0;
     let manual = false;
     let busy = false;
-    let phase: 'deploy' | 'fight' = b0.kind === 'siege' ? 'fight' : 'deploy';
+    let phase: 'deploy' | 'fight' = b0.kind === 'siege' && side === 'def' ? 'fight' : 'deploy';
     let form: Formation = aiFormation(cur, side);
-    let choice: Choice = aiChoice(cur, side);
-    choice.stratagem = undefined;
+    const mine = (c: Choice): Choice => ({ lanes: [...c.lanes] });   // 电脑替玩家拟的令只取各路命令，计策、预备、调兵、收兵由玩家自定
+    let choice: Choice = mine(aiChoice(cur, side));
+    /** 自定分兵：左、中、右、预备四份，以一成为单位，合计十成 */
+    let split = FORM_DEFAULT_SPLIT(form).map(x => Math.round(x * 10));
+    const fixSplit = () => { const d = 10 - split.reduce((a, x) => a + x, 0); split[1] += d; };
+    fixSplit();
     const kindName = cur.kind === 'siege' ? (side === 'att' ? '攻城' : '守城') : cur.kind === 'naval' ? '水战' : '野战';
     // 战场定位：何地、谁攻谁、你凭什么指挥这一方
     const where = `${b0.nodeName} · ${kindName}`;
@@ -54,7 +58,7 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
     let openLane: number | null = null;  // 正在改令的一路
     const history: { round: number; lines: string[] }[] = [];
     let showLog = false;
-    const morale = (x: typeof cur.att) => Math.round(x.lanes.reduce((n, l) => n + (laneActive(l) ? l.morale * l.troops : 0), 0) / Math.max(1, sideTroops(x)));
+    const morale = (x: typeof cur.att) => Math.round(x.lanes.reduce((n, l) => n + (laneActive(l) ? l.morale * l.troops : 0), 0) / Math.max(1, x.lanes.reduce((n, l) => n + (laneActive(l) ? l.troops : 0), 0)));
 
     /** 战场上的对垒头（叠在画面上）：我军大像在我方一侧，敌军在另一侧，中间是回合与拔河条 */
     function hud(): HTMLElement {
@@ -72,7 +76,9 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
             h('div', { class: 'bm-num' }, h('b', { 'data-n': sideTroops(x) }, wan(sideTroops(x))), h('span', null, '士气 ', h('i', null, String(m))))));
       };
       const pips = h('div', { class: 'bh-pips' });
-      for (let r = 0; r < cur.maxRounds; r++) pips.append(h('i', { class: r < cur.round ? 'done' : r === cur.round && !cur.over ? 'now' : '' }));
+      // 不再预告共几合：只报第几合与天色（晨、午、暮），打到日暮两军各自收兵
+      const dayF = cur.round / Math.max(1, cur.maxRounds);
+      pips.append(h('b', { class: 'bh-round' }, `第${Math.min(cur.round + 1, cur.maxRounds)}合`), h('span', { class: 'bh-sun', style: { '--p': Math.min(1, dayF) } as any }, ic('date'), dayF < 0.34 ? '晨' : dayF < 0.67 ? '午' : '暮'));
       const L = myLeft ? medal(me, true) : medal(them, false), R = myLeft ? medal(them, false) : medal(me, true);
       const barL = myLeft ? ratio : 1 - ratio;
       return h('div', { class: 'bhud' + (myLeft ? ' me-left' : ' me-right') },
@@ -98,6 +104,7 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       const left = (sd === 'att') === true;
       const ch = s.chars[cur[sd].commander];
       const text = barkLine(ch, when, salt);
+      (window as unknown as { NM_barks?: number }).NM_barks = ((window as unknown as { NM_barks?: number }).NM_barks ?? 0) + 1;
       stage.querySelector('.bbark.' + (left ? 'l' : 'r'))?.remove();
       const el = h('div', { class: 'bbark ' + (left ? 'l' : 'r') + (who === 'me' ? ' mine' : '') }, h('b', null, cur[sd].commanderName), h('span', null, text));
       stage.append(el);
@@ -119,17 +126,34 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       const foeForm = aiFormation(cur, foe);
       const cards = h('div', { class: 'fcards' });
       for (const f of forms) {
-        cards.append(h('button', { class: 'fcard' + (form === f ? ' on' : ''), 'data-form': f, onclick: () => { click(); form = f; renderDeploy(); view?.preview?.(deploy(cur, side, f)); } },
+        cards.append(h('button', { class: 'fcard' + (form === f ? ' on' : ''), 'data-form': f, onclick: () => { click(); form = f; split = FORM_DEFAULT_SPLIT(f).map(x => Math.round(x * 10)); fixSplit(); renderDeploy(); view?.preview?.(deploy(cur, side, f, split)); } },
           h('div', { class: 'fc-art' }, h('img', { src: cardArt(FORM_ICON[f], colorOf(cur[side].faction), forms.indexOf(f)), alt: '' }), h('div', { class: 'fc-dots' }, ...formDots(f))),
           h('b', null, FORM_NAME[f]), h('small', null, FORM_HINT[f])));
       }
+      // 分兵：三路与预备队各几成；空出一路、厚集一路都行
+      const total = sideTroops(cur[side]);
+      const slotNames = [...LANE_NAMES[cur.kind], '预备'];
+      const bump = (i: number, d: number) => {
+        if (d > 0) { const j = [0, 1, 2, 3].filter(k => k !== i && split[k] > 0).sort((a, b) => split[b] - split[a])[0]; if (j === undefined) return; split[j]--; split[i]++; }
+        else { if (split[i] <= 0) return; split[i]--; split[i === 3 ? 1 : 3]++; }
+        click(); renderDeploy(); view?.preview?.(deploy(cur, side, form, split));
+      };
+      const alloc = h('div', { class: 'alloc' }, ...slotNames.map((nm, i) => h('div', { class: 'al-row' + (i === 3 ? ' res' : '') + (split[i] === 0 ? ' empty' : '') },
+        h('b', null, nm),
+        h('button', { class: 'al-b', 'data-alloc': `${i}-`, 'aria-label': nm + '减一成', onclick: () => bump(i, -1) }, '−'),
+        h('div', { class: 'al-bar' }, h('i', { style: { width: split[i] * 10 + '%', background: i === 3 ? '#8c6a35' : colorOf(cur[side].faction) } })),
+        h('button', { class: 'al-b', 'data-alloc': `${i}+`, 'aria-label': nm + '加一成', onclick: () => bump(i, 1) }, '+'),
+        h('span', null, split[i] ? `${split[i]}成 · ${wan(total * split[i] / 10)}` : (i === 3 ? '不留' : '空出')))));
+      const siegeAtt = cur.kind === 'siege';
       ui.append(
         h('div', { class: 'dep-body' },
-          h('div', { class: 'dep-l' }, h('div', { class: 'cb-title' }, ic('flank'), '布阵'), cards),
+          h('div', { class: 'dep-l' },
+            siegeAtt ? null : h('div', { class: 'cb-title' }, ic('flank'), '阵型'), siegeAtt ? null : cards,
+            h('div', { class: 'cb-title' }, ic('troops'), siegeAtt ? '分兵攻城：哪段城墙多压兵' : '分兵：三路各几成，留几成预备', h('small', { class: 'cb-sub' }, '预备队不接战，可在任一合投入任一路')), alloc),
           h('div', { class: 'dep-r' },
             h('div', { class: 'scoutbox' }, ic('locate'), h('div', null, h('b', null, '探马来报'), h('small', null, `敌将似欲布${FORM_NAME[foeForm]}；${LANE_NAMES[cur.kind].map((n, i) => `${n}${ORDER_NAME[sc.orders[i]]}`).join('、')}（可信约 ${Math.round(sc.sure * 100)}%）`))),
             h('div', { class: 'bacts' },
-              h('button', { class: 'drum', id: 'deploy-go', onclick: () => { click(); cur = deploy(cur, side, form); phase = 'fight'; choice = aiChoice(cur, side); choice.stratagem = undefined; manual = true; render(); view?.preview?.(cur); } }, ic('attack'), h('b', null, '列阵开战')),
+              h('button', { class: 'drum', id: 'deploy-go', onclick: () => { click(); cur = deploy(cur, side, form, split); phase = 'fight'; choice = mine(aiChoice(cur, side)); manual = true; render(); view?.preview?.(cur); } }, ic('attack'), h('b', null, siegeAtt ? '攻城' : '列阵开战')),
               h('button', { class: 'btn', id: 'battle-auto', onclick: () => { void auto(); } }, ic('auto'), '部将代打')))));
       gsap.from('#battle-ui .fcard', { y: 40, opacity: 0, duration: 0.35, stagger: 0.06, ease: 'back.out(1.6)', clearProps: 'transform,opacity' });
     }
@@ -139,7 +163,6 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       ui.className = 'fight';
       paintStage();
       const me = cur[side], them = cur[foe];
-      const legal = legalOrders(cur, side);
       const sc = scout(cur, side);
       const lanes = h('div', { class: 'lanes2' });
       for (let i = 0; i < 3; i++) {
@@ -151,6 +174,8 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
         const share = laneActive(l) || laneActive(t) ? l.troops / Math.max(1, l.troops + (laneActive(t) ? t.troops : 0)) : 0.5;
         // 主次：本路所下的令最大；兵力对比是一根拔河条；探报是一枚小签；其余命令收在“改令”里
         const ords = h('div', { class: 'ords2' + (openLane === i ? ' open' : '') });
+        const legal = laneOrders(cur, side, i);
+        if (!legal.includes(choice.lanes[i]) && legal.includes('envelop')) choice.lanes[i] = 'envelop';
         for (const o of legal) {
           const k = intel ? counterOf(cur, side, o, intel) : 1;
           const tag = k >= 1.25 ? h('em', { class: 'good' }, '克') : k <= 0.8 ? h('em', { class: 'bad' }, '被克') : null;
@@ -164,7 +189,11 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
           h('div', { class: 'l2-tug' }, h('b', null, st || wan(l.troops)), h('div', { class: 'tug' }, h('i', { style: { width: (share * 100) + '%', background: colorOf(me.faction) } }), h('span', { style: { background: colorOf(them.faction) } })), h('b', { class: 'foe' }, laneActive(t) ? wan(t.troops) : (t.routed ? '已溃' : '—'))),
           h('button', { class: 'l2-order' + (k0 >= 1.25 ? ' good' : k0 <= 0.8 ? ' bad' : ''), disabled: !!st || cur.over || busy, 'data-pick': i, onclick: () => { click(); openLane = openLane === i ? null : i; renderFight(); } },
             ic(ORDER_ICON[cho] ?? 'attack'), h('div', null, h('b', null, st ? '—' : ORDER_NAME[cho]), h('small', null, st ? '' : k0 >= 1.25 ? '克制敌令' : k0 <= 0.8 ? '为敌所克' : '点此改令')), h('i', { class: 'caret' }, '▴')),
-          ords);
+          ords,
+          // 调兵：本路一半兵马调往别路（当面之敌已空、或别路吃紧时）
+          !st && !cur.over ? h('div', { class: 'l2-shift' }, ...(choice.shift?.from === i
+            ? [h('button', { class: 'shift-on', 'data-shift-x': i, onclick: () => { click(); choice.shift = undefined; renderFight(); } }, `调半数往${LANE_NAMES[cur.kind][choice.shift.to]} ✕`)]
+            : [0, 1, 2].filter(j => j !== i).map(j => h('button', { class: 'shift-b', 'data-shift': `${i}-${j}`, disabled: busy, 'data-tip': `本合开始时，自${LANE_NAMES[cur.kind][i]}调一半兵马（约 ${wan(l.troops / 2)}）往${LANE_NAMES[cur.kind][j]}`, onclick: () => { click(); choice.shift = { from: i, to: j, troops: Math.round(l.troops / 2) }; renderFight(); } }, `调往${LANE_SHORT[cur.kind][j]}`)))) : null);
         lanes.append(box);
       }
       // 计策（圆形令牌）与擂鼓
@@ -176,7 +205,13 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
       const cmd = h('div', { class: 'cmdcol' },
         h('div', { class: 'cb-title' }, ic('ambush'), `计策 · 余 ${me.stratagems}`, h('button', { class: 'logbtn', id: 'battle-log', onclick: () => { click(); showLog = !showLog; renderFight(); } }, ic('report'), '战况')),
         legalStratagems(cur, side).length ? strats : h('div', { class: 'note' }, '计策已用尽'));
+      const res = me.reserve ?? 0;
+      if (res > 0 && !cur.over) cmd.append(h('div', { class: 'rescard' },
+        h('div', { class: 'cb-title' }, ic('troops'), `预备队 · ${wan(res)}`),
+        h('div', { class: 'res-b' }, ...[0, 1, 2].map(j => h('button', { class: 'res-go' + (choice.commit?.lane === j ? ' on' : ''), 'data-commit': j, disabled: busy, onclick: () => { click(); choice.commit = choice.commit?.lane === j ? undefined : { lane: j, troops: res }; renderFight(); } }, `投入${LANE_NAMES[cur.kind][j]}`)))));
       const acts = h('div', { class: 'bacts' });
+      const canRetreat = !(cur.kind === 'siege' && side === 'def');
+      if (!cur.over && canRetreat) acts.append(h('button', { class: 'btn retreat', id: 'battle-retreat', disabled: busy, 'data-tip': cur.kind === 'siege' ? '停止攻城，退回营中（围城照旧）' : '撤出战场；敌军会追击，骑兵多则损失更大', onclick: () => { if (busy || cur.over) return; manual = true; void step({ ...choice, retreat: true }, fast); } }, ic('withdraw'), '鸣金收兵'));
       if (!cur.over) acts.append(
         h('button', { class: 'drum', id: 'battle-go', disabled: busy, onclick: () => go() }, ic('attack'), h('b', null, '擂鼓进兵'), h('small', null, `第 ${cur.round + 1} 合`)),
         h('button', { class: 'btn', id: 'battle-auto', disabled: busy, onclick: () => { void auto(); } }, ic('auto'), '部将代打'));
@@ -239,14 +274,14 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
         else if (next.kind === 'siege') bark(side === 'def' ? 'me' : 'foe', 'hold');
       }
       busy = false;
-      choice = { lanes: [...choice.lanes], stratagem: undefined, lead: undefined };
+      choice = { lanes: [...choice.lanes] };
       render();
       if (cur.over) { bark('me', cur.winner === side ? 'win' : 'lose'); setTimeout(() => { if (!finished) bark('foe', cur.winner === foe ? 'win' : 'lose'); }, 1400); gong(cur.winner === side); void view.showResult(cur.winner === side, `${b0.nodeName}之战：${outcomeText(cur)}`); }
     }
     function go() {
       if (busy || cur.over) return;
       manual = true;
-      const c = { lanes: [...choice.lanes], stratagem: choice.stratagem, lead: choice.lead };
+      const c: Choice = { lanes: [...choice.lanes], stratagem: choice.stratagem, lead: choice.lead, commit: choice.commit, shift: choice.shift };
       void step(c, fast);
     }
     /** 部将代打：余下回合当即算完，直接看结果 */
@@ -295,6 +330,7 @@ export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'd
   });
 }
 
+const LANE_SHORT: Record<string, string[]> = { field: ['左', '中', '右'], siege: ['左', '门', '右'], naval: ['左', '中', '右'] };
 const WEATHER_NAME: Record<string, string> = { clear: '晴', rain: '雨', wind: '大风', fog: '雾' };
 const WEATHER_ICON: Record<string, string> = { clear: 'date', rain: 'navy', wind: 'flank', fog: 'night' };
 const TERRAIN_NAME: Record<string, string> = { plain: '平原', river: '临江', hills: '山地', city: '城下', water: '江海' };

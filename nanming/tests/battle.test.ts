@@ -137,3 +137,61 @@ describe('布阵、探马、主将亲冲、水战', () => {
     expect(autoResolve(b).over).toBe(true);
   });
 });
+
+import { laneOrders, sideTroops, laneActive } from '../src/core/battle';
+describe('战斗 v3：自定分兵、预备队、包抄、调兵、收兵、不定回合', () => {
+  it('开战前可自定三路与预备队的兵力，空出一路也行', () => {
+    const b = deploy(field(30000, 20000), 'att', 'arrow', [0, 0.6, 0.2, 0.2]);
+    expect(b.att.lanes[0].troops).toBe(0);
+    expect(b.att.reserve).toBe(6000);
+    expect(sideTroops(b.att)).toBe(30000);
+  });
+  it('攻城一方也可集中兵力于一段城墙', () => {
+    const b = deploy(siege(30000, 8000, 70), 'att', 'square', [0.1, 0.7, 0.1, 0.1]);
+    expect(b.att.lanes[1].troops).toBe(21000);
+  });
+  it('预备队不接战、不受损；投入某路后才参战', () => {
+    let b = deploy(field(30000, 20000), 'att', 'square', [0.3, 0.3, 0.2, 0.2]);
+    const r0 = b.att.reserve!;
+    b = resolveRound(b, { lanes: ['attack', 'attack', 'attack'] }, { lanes: ['hold', 'hold', 'hold'] });
+    expect(b.att.reserve).toBe(r0);
+    b = resolveRound(b, { lanes: ['attack', 'attack', 'attack'], commit: { lane: 1, troops: r0 } }, { lanes: ['hold', 'hold', 'hold'] });
+    expect(b.att.reserve).toBe(0);
+  });
+  it('敌方一路已空，本路可包抄邻路，兵力不再闲置', () => {
+    let b = deploy(field(30000, 20000), 'def', 'arrow', [0, 0.7, 0.3, 0]);
+    expect(laneOrders(b, 'att', 0)).toContain('envelop');
+    expect(laneOrders(b, 'att', 1)).not.toContain('envelop');
+    const before = b.def.lanes[1].troops;
+    const withEnv = resolveRound(b, { lanes: ['envelop', 'hold', 'hold'] }, { lanes: ['hold', 'hold', 'hold'] });
+    const without = resolveRound(b, { lanes: ['hold', 'hold', 'hold'] }, { lanes: ['hold', 'hold', 'hold'] });
+    expect(before - withEnv.def.lanes[1].troops).toBeGreaterThan(before - without.def.lanes[1].troops);
+    expect(withEnv.log[0].envelops?.[0]).toMatchObject({ side: 'att', from: 0, to: 1 });
+  });
+  it('可在回合之间把一路的兵调往另一路', () => {
+    const b = deploy(field(30000, 20000), 'att', 'square');
+    const n = resolveRound(b, { lanes: ['hold', 'hold', 'hold'], shift: { from: 0, to: 1, troops: 5000 } }, { lanes: ['hold', 'hold', 'hold'] });
+    expect(n.att.lanes[0].troops).toBeLessThan(b.att.lanes[0].troops - 4000);
+    expect(n.log[0].moves?.[0]).toMatchObject({ kind: 'shift', from: 0, to: 1, troops: 5000 });
+  });
+  it('鸣金收兵：本方撤出战场，战斗当合结束，撤退时有追击损失', () => {
+    const b = field(30000, 20000);
+    const n = resolveRound(b, { lanes: ['attack', 'attack', 'attack'], retreat: true }, { lanes: ['attack', 'attack', 'attack'] });
+    expect(n.over).toBe(true);
+    expect(n.winner).toBe('def');
+    expect(n.outcome).toBe('retreat');
+  });
+  it('不再固定四五个回合：一方崩溃即结束，否则可打到日暮', () => {
+    const lens = new Set<number>();
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) { lens.add(autoResolve(field(30000, 26000, seed)).round); lens.add(autoResolve(field(50000, 12000, seed)).round); }
+    expect(lens.size).toBeGreaterThan(2);
+    expect(Math.max(...lens)).toBeGreaterThan(5);
+  });
+  it('久战士卒疲惫：第四合以后士气逐合下降', () => {
+    let b = field(30000, 30000);
+    const pick = (): Choice => ({ lanes: ['hold', 'hold', 'hold'] });
+    for (let k = 0; k < 5 && !b.over; k++) b = resolveRound(b, pick(), pick());
+    expect(b.log.some(l => l.text.some(t => t.includes('疲惫')))).toBe(true);
+    void laneActive;
+  });
+});

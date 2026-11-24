@@ -316,6 +316,10 @@ try {
     check(`${kind === 'naval' ? '水战' : '野战'}先布阵：四种阵型、探马来报`, (await page.locator('#battle-ui [data-form]').count()) === 4 && (await text('#battle-ui')).includes('探马'), (await text('#battle-ui')).slice(0, 80));
     await page.click('[data-form="square"]');
     await wait(200);
+    // 战斗 v3.1：自定分兵，留预备队
+    check(`${kind === 'naval' ? '水战' : '野战'}布阵可自定三路与预备的兵力`, (await page.locator('#battle-ui [data-alloc]').count()) === 8);
+    await page.click('#battle-ui [data-alloc="3+"]'); await wait(120); await page.click('#battle-ui [data-alloc="3+"]'); await wait(120);
+    check(`${kind === 'naval' ? '水战' : '野战'}留出两成预备`, (await text('#battle-ui .al-row.res')).includes('2成'), await text('#battle-ui .al-row.res'));
     await page.click('#deploy-go');
     await wait(500);
     check(`${kind === 'naval' ? '水战' : '野战'}每路有探报与克制提示`, (await page.locator('#battle-ui .l2-intel').count()) === 3 && (await page.locator('#battle-ui .ord2 em').count()) > 0);
@@ -329,8 +333,11 @@ try {
     await wait(150);
     check(`${kind === 'naval' ? '水战' : '野战'}选定后命令收起、令牌显示新令`, !(await visible('#battle-ui .ords2.open')));
     if (kind === 'field') check('战斗标明地点与谁在指挥', (await text('#battle-where')).includes('·') && /指挥|号令/.test(await text('#battle .bh-who')), await text('#battle .bh-mid'));
-    check(`${kind === 'naval' ? '水战' : '野战'}主帅阵前有话`, (await page.locator('#battle-stage .bbark').count()) > 0 || (await page.evaluate(() => !!document.querySelector('.bbark'))), '');
+    check(`${kind === 'naval' ? '水战' : '野战'}主帅阵前有话`, (await page.evaluate(() => window.NM_barks ?? 0)) > 0, '');
     check(`${kind === 'naval' ? '水战' : '野战'}战场两侧标出我军、敌军`, (await page.locator('#battle-stage .btag.mine').count()) === 1 && (await page.locator('#battle-stage .btag').count()) === 2 && (await text('#battle-stage .bhud .bm.mine .bm-tag')) === '我军');
+    check(`${kind === 'naval' ? '水战' : '野战'}有预备队可投入、可调兵、可鸣金收兵`, (await page.locator('#battle-ui [data-commit]').count()) === 3 && (await page.locator('#battle-ui [data-shift]').count()) >= 4 && await visible('#battle-retreat'));
+    await page.click('#battle-ui [data-commit="1"]');
+    check(`${kind === 'naval' ? '水战' : '野战'}不再预告共几合`, !/\d\s*\/\s*\d/.test(await text('#battle .bh-info')) && /合/.test(await text('#battle .bh-info')), await text('#battle .bh-info'));
     await page.click('#lead-1');
     await page.click('#battle-go');
     let tick = 0;

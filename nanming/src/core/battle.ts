@@ -8,7 +8,8 @@ export type FieldOrder = 'attack' | 'hold' | 'flank' | 'volley' | 'charge' | 'wi
 export type SiegeAttOrder = 'storm' | 'bombard' | 'sap' | 'blockade';
 export type SiegeDefOrder = 'hold' | 'sortie' | 'volley' | 'repair';
 export type NavalOrder = 'cannonade' | 'ram' | 'board' | 'fireship' | 'evade' | 'withdraw';
-export type LaneOrder = FieldOrder | SiegeAttOrder | SiegeDefOrder | NavalOrder;
+/** 包抄：本路当面之敌已空，转击邻路之敌的侧背 */
+export type LaneOrder = FieldOrder | SiegeAttOrder | SiegeDefOrder | NavalOrder | 'envelop';
 export type BattleKind = 'field' | 'siege' | 'naval';
 /** 阵型：开战前择定，决定三路兵力分配与各自长短 */
 export type Formation = 'arrow' | 'wings' | 'square' | 'goose';
@@ -25,9 +26,10 @@ export type Stratagem = 'ambush' | 'fire' | 'night' | 'persuade';
 export const ORDER_NAME: Record<LaneOrder, string> = {
   attack: '进攻', hold: '坚守', flank: '迂回', volley: '齐射', charge: '突击', withdraw: '后撤',
   storm: '登城', bombard: '炮击', sap: '掘地', blockade: '围而不攻', sortie: '出城突击', repair: '修城',
-  cannonade: '舷炮', ram: '冲犁', board: '接舷', fireship: '火船', evade: '游击',
+  cannonade: '舷炮', ram: '冲犁', board: '接舷', fireship: '火船', evade: '游击', envelop: '包抄',
 };
 export const ORDER_HINT: Record<LaneOrder, string> = {
+  envelop: '本路当面之敌已空，转击邻路之敌侧背：杀伤加重、敌军心动摇。',
   attack: '正面压上。克后撤之敌，遇坚守则吃亏。',
   hold: '结阵固守，少受损伤；怕被迂回。',
   flank: '分兵绕击，专破坚守之阵；遇突击骑兵易溃。',
@@ -77,14 +79,16 @@ export interface BattleSide {
   /** 守城一方是否含城中驻军 */
   garrison: boolean;
   startTroops: number;
+  /** 预备队：不接战、不受损，可随时投入任一路 */
+  reserve?: number;
   /** 主将已亲冲；负伤 */
   led?: boolean;
   wounded?: boolean;
 }
 export type Terrain = 'plain' | 'river' | 'hills' | 'city' | 'water';
 export type Weather = 'clear' | 'rain' | 'wind' | 'fog';
-/** lead：主将亲冲哪一路（每战一次） */
-export interface Choice { lanes: LaneOrder[]; stratagem?: Stratagem; lead?: number }
+/** lead：主将亲冲哪一路（每战一次）；commit：投入预备队；shift：从一路调兵到另一路；retreat：鸣金收兵 */
+export interface Choice { lanes: LaneOrder[]; stratagem?: Stratagem; lead?: number; commit?: { lane: number; troops: number }; shift?: { from: number; to: number; troops: number }; retreat?: boolean }
 
 export interface LaneEvent {
   lane: number;
@@ -103,6 +107,12 @@ export interface RoundLog {
   leads?: { side: 'att' | 'def'; lane: number; wounded: boolean }[];
   /** 天候转变 */
   weather?: Weather;
+  /** 包抄：某方从 from 路转击 to 路 */
+  envelops?: { side: 'att' | 'def'; from: number; to: number; dmg: number }[];
+  /** 投入预备队、调兵 */
+  moves?: { side: 'att' | 'def'; kind: 'commit' | 'shift'; from?: number; to: number; troops: number }[];
+  /** 鸣金收兵的一方 */
+  retreat?: 'att' | 'def';
   wallBefore: number;
   wallAfter: number;
   text: string[];
@@ -124,7 +134,7 @@ export interface BattleState {
   over: boolean;
   winner?: 'att' | 'def';
   /** 城破 / 献城 / 围而不攻 */
-  outcome?: 'breach' | 'surrender' | 'repulsed' | 'blockade' | 'rout' | 'held' | 'stalemate';
+  outcome?: 'breach' | 'surrender' | 'repulsed' | 'blockade' | 'rout' | 'held' | 'stalemate' | 'retreat' | 'collapse';
   /** 守将被说降（献城） */
   surrendered?: boolean;
   /** 双方阵型 */
@@ -175,7 +185,7 @@ function mixFactor(order: LaneOrder, mix: TroopMix): number {
   }
 }
 
-export const sideTroops = (s: BattleSide) => s.lanes.reduce((n, l) => n + l.troops, 0);
+export const sideTroops = (s: BattleSide) => s.lanes.reduce((n, l) => n + l.troops, 0) + (s.reserve ?? 0);
 export const laneActive = (l: Lane) => !l.routed && !l.withdrawn && l.troops > 0;
 const sideActive = (s: BattleSide) => s.lanes.some(laneActive);
 
@@ -187,18 +197,38 @@ export function makeSide(p: Omit<BattleSide, 'lanes' | 'startTroops'> & { troops
 }
 
 export function createBattle(p: { id: string; kind: BattleKind; node: string; nodeName: string; terrain: Terrain; weather: Weather; att: BattleSide; def: BattleSide; wall?: number; seed: number }): BattleState {
-  return { ...p, round: 0, maxRounds: p.kind === 'siege' ? 4 : 5, wall: p.wall ?? 0, log: [], over: false };
+  // 回合数不定：一方崩溃、溃散、收兵即止；maxRounds 只是“日暮”——再打不下去，两军各自收兵
+  return { ...p, round: 0, maxRounds: p.kind === 'siege' ? 6 : 8, wall: p.wall ?? 0, log: [], over: false };
 }
 
-/** 布阵：开战前（第 0 回合）按阵型重分三路兵力 */
-export function deploy(b0: BattleState, side: 'att' | 'def', f: Formation): BattleState {
-  if (b0.round > 0 || b0.kind === 'siege') return b0;
+/** 布阵：开战前（第 0 回合）择阵型；可另给 [左, 中, 右, 预备] 四份比例自定分兵（空出一路也行）。
+ * 攻城一方只分兵、不择阵（城下无从列阵）；守城一方沿城分守，不在此调。 */
+export function deploy(b0: BattleState, side: 'att' | 'def', f: Formation, split?: number[]): BattleState {
+  if (b0.round > 0 || (b0.kind === 'siege' && (side === 'def' || !split))) return b0;
   const b = structuredClone(b0);
-  b.form = { ...(b.form ?? {}), [side]: f };
+  if (b.kind !== 'siege') b.form = { ...(b.form ?? {}), [side]: f };
   const t = sideTroops(b[side]);
-  const split = FORM_SPLIT[f];
-  b[side].lanes.forEach((l, i) => { l.troops = Math.round(t * split[i]); });
+  const sp = split ? normSplit(split) : [...FORM_SPLIT[f], 0];
+  const parts = sp.map(x => Math.round(t * x));
+  parts[3] = t - parts[0] - parts[1] - parts[2];
+  b[side].lanes.forEach((l, i) => { l.troops = parts[i]; l.routed = false; l.withdrawn = false; });
+  b[side].reserve = Math.max(0, parts[3]);
   return b;
+}
+function normSplit(s: number[]): number[] {
+  const v = [0, 1, 2, 3].map(i => Math.max(0, s[i] ?? 0));
+  const sum = v.reduce((a, x) => a + x, 0) || 1;
+  return v.map(x => x / sum);
+}
+export const FORM_DEFAULT_SPLIT = (f: Formation) => [...FORM_SPLIT[f], 0];
+/** 某一路此刻可下的令：当面之敌已空、别路尚有敌时，可包抄 */
+export function laneOrders(b: BattleState, side: 'att' | 'def', i: number): LaneOrder[] {
+  const base = legalOrders(b, side);
+  const foe = b[side === 'att' ? 'def' : 'att'];
+  // 攻城时城墙各段相连，空出的一段由“登城”直入（城防骤降），不另设包抄
+  if (b.kind === 'siege') return base;
+  if (!laneActive(foe.lanes[i]) && foe.lanes.some(laneActive) && laneActive(b[side].lanes[i])) return ['envelop', ...base];
+  return base;
 }
 /** 电脑择阵：骑多锋矢，火器多雁行，兵少方圆，否则鹤翼 */
 export function aiFormation(b: BattleState, side: 'att' | 'def'): Formation {
@@ -288,6 +318,58 @@ export function resolveRound(b0: BattleState, attC: Choice, defC: Choice): Battl
       log.text.push({ clear: '云开日出，视野大开。', rain: '天降大雨，火器难以施放。', wind: '狂风大作，旌旗猎猎，宜于纵火。', fog: '大雾弥漫，两军难辨。' }[nw]);
     }
   }
+  // 投入预备队、调兵（先于交锋）
+  for (const side of ['att', 'def'] as const) {
+    const c = side === 'att' ? attC : defC;
+    const me = b[side];
+    if (c.commit && (me.reserve ?? 0) > 0 && me.lanes[c.commit.lane]) {
+      const n = Math.max(0, Math.min(me.reserve ?? 0, Math.round(c.commit.troops)));
+      const l = me.lanes[c.commit.lane];
+      if (n > 0) {
+        const m0 = laneActive(l) ? l.morale : 0;
+        l.morale = Math.round((m0 * (laneActive(l) ? l.troops : 0) + Math.max(60, m0) * n) / Math.max(1, (laneActive(l) ? l.troops : 0) + n));
+        if (!laneActive(l)) { l.troops = 0; l.routed = false; l.withdrawn = false; }
+        l.troops += n; me.reserve = (me.reserve ?? 0) - n;
+        (log.moves ??= []).push({ side, kind: 'commit', to: c.commit.lane, troops: n });
+        log.text.push(`${me.name}投入预备队 ${n} 人增援${LANE_NAMES[b.kind][c.commit.lane]}。`);
+      }
+    }
+    if (c.shift && c.shift.from !== c.shift.to && me.lanes[c.shift.from] && me.lanes[c.shift.to] && laneActive(me.lanes[c.shift.from])) {
+      const a = me.lanes[c.shift.from], d = me.lanes[c.shift.to];
+      const n = Math.max(0, Math.min(a.troops - (a.troops > c.shift.troops ? 0 : 0), Math.round(c.shift.troops)));
+      if (n > 0) {
+        a.troops -= n;
+        if (a.troops < 150) a.withdrawn = true;
+        if (!laneActive(d)) { d.troops = 0; d.routed = false; d.withdrawn = false; d.morale = a.morale; }
+        d.morale = Math.round((d.morale * d.troops + a.morale * n) / Math.max(1, d.troops + n));
+        d.troops += n;
+        (log.moves ??= []).push({ side, kind: 'shift', from: c.shift.from, to: c.shift.to, troops: n });
+        log.text.push(`${me.name}自${LANE_NAMES[b.kind][c.shift.from]}调 ${n} 人往${LANE_NAMES[b.kind][c.shift.to]}。`);
+      }
+    }
+  }
+  // 鸣金收兵：本合即撤出战场，敌军追击有所斩获（骑兵多则追得狠）
+  for (const side of ['att', 'def'] as const) {
+    const c = side === 'att' ? attC : defC;
+    if (!c.retreat || (b.kind === 'siege' && side === 'def')) continue;
+    const me = b[side], foe = b[side === 'att' ? 'def' : 'att'];
+    const k = 0.05 + foe.mix.cav * 0.12;
+    let lost = 0;
+    for (const l of me.lanes) if (laneActive(l)) { const n = Math.round(l.troops * k); l.troops -= n; lost += n; l.withdrawn = true; }
+    log.retreat = side;
+    log.text.push(`${me.commanderName}鸣金收兵，${me.name}撤出战场；${foe.name}追击，斩获 ${lost} 人。`);
+    b.over = true; b.winner = side === 'att' ? 'def' : 'att'; b.outcome = 'retreat';
+    log.wallAfter = Math.round(b.wall);
+    b.log.push(log);
+    return b;
+  }
+  // 久战疲惫：第四合起，各路士气逐合下降
+  if (b.round >= 4) {
+    const tire = 3 * (b.round - 3);
+    // 守城一方据墙轮番换防，不计疲惫；攻城一方顿兵坚城之下，越久越乏
+    for (const sd of (b.kind === 'siege' ? ['att'] : ['att', 'def']) as ('att' | 'def')[]) for (const l of b[sd].lanes) if (laneActive(l)) l.morale = Math.max(0, l.morale - tire);
+    log.text.push(b.kind === 'siege' ? `顿兵坚城之下，攻城士卒疲惫（士气 −${tire}）。` : `鏖战日久，两军士卒疲惫（士气 −${tire}）。`);
+  }
   // 主将亲冲：一路大振，全军士气上扬；有负伤之险
   for (const side of ['att', 'def'] as const) {
     const c = side === 'att' ? attC : defC;
@@ -353,9 +435,9 @@ export function resolveRound(b0: BattleState, attC: Choice, defC: Choice): Battl
     const aOn = laneActive(la), dOn = laneActive(ld);
     if (b.kind === 'siege') {
       // 攻城：城墙变化
-      if (aOn && ao === 'bombard') b.wall -= Math.min(14, la.troops * mixFactor('bombard', b.att.mix) / 1800) * rng.jitter(0.3);
+      if (aOn && ao === 'bombard') b.wall -= Math.min(9, la.troops * mixFactor('bombard', b.att.mix) / 2800) * rng.jitter(0.3); // 回合不再定死为四，单合炮击之效相应放缓，坚城仍须数月
       if (aOn && ao === 'sap') b.wall -= 4 * rng.jitter(0.4) * (dOrd === 'sortie' && dOn ? 0.3 : 1);
-      if (dOn && dOrd === 'repair') b.wall += 4;
+      if (dOn && dOrd === 'repair') b.wall += 5;
     }
     if (aOn && dOn) {
       const fa = b.form?.att, fd = b.form?.def;
@@ -390,6 +472,41 @@ export function resolveRound(b0: BattleState, attC: Choice, defC: Choice): Battl
     }
     log.lanes.push(ev);
   }
+  // 包抄：当面无敌的一路转击邻近之敌，杀伤加重、敌军心动摇；自身只受零星反击
+  for (const side of ['att', 'def'] as const) {
+    const c = side === 'att' ? attC : defC;
+    const me = b[side], foeKey = side === 'att' ? 'def' : 'att', foe = b[foeKey];
+    for (let i = 0; i < 3; i++) {
+      if (c.lanes[i] !== 'envelop' || !laneActive(me.lanes[i]) || laneActive(foe.lanes[i])) continue;
+      const targets = [0, 1, 2].filter(j => j !== i && laneActive(foe.lanes[j])).sort((x, y) => Math.abs(x - i) - Math.abs(y - i));
+      const j = targets[0];
+      if (j === undefined) continue;
+      const fo = ((foeKey === 'att' ? attC : defC).lanes[j] ?? 'hold') as LaneOrder;
+      const dmg = Math.min(foe.lanes[j].troops, Math.round(power(b, side, me.lanes[i], 'flank', fo, rng) * 1.3 * mods[side].dmg * (b.kind === 'siege' ? 1 - b.wall / 160 : 1)));
+      const back = Math.min(me.lanes[i].troops, Math.round(dmg * 0.25));
+      foe.lanes[j].troops -= dmg; me.lanes[i].troops -= back;
+      foe.lanes[j].morale = Math.max(0, foe.lanes[j].morale - 8 - (dmg / Math.max(1, foe.lanes[j].troops + dmg)) * 100);
+      const ev = log.lanes[j];
+      if (side === 'att') { ev.defLoss += dmg; log.lanes[i].attLoss += back; } else { ev.attLoss += dmg; log.lanes[i].defLoss += back; }
+      (log.envelops ??= []).push({ side, from: i, to: j, dmg });
+      log.text.push(`${me.name}${LANE_NAMES[b.kind][i]}包抄${LANE_NAMES[b.kind][j]}之敌侧背，斩获 ${dmg} 人。`);
+      const fl = foe.lanes[j];
+      if (!fl.routed && (fl.morale < 18 || fl.troops < 150)) { fl.routed = true; if (side === 'att') ev.defRouted = true; else ev.attRouted = true; }
+    }
+  }
+  // 军心崩溃：全军加权士气过低，各路一齐溃散
+  for (const sd of ['att', 'def'] as const) {
+    const me = b[sd];
+    const act = me.lanes.filter(laneActive);
+    const tot = act.reduce((n, l) => n + l.troops, 0);
+    if (!tot) continue;
+    const avg = act.reduce((n, l) => n + l.morale * l.troops, 0) / tot;
+    if (avg < 24 && !(b.kind === 'siege' && sd === 'def' && b.wall >= 25)) {
+      for (const l of act) l.routed = true;
+      log.text.push(`${me.name}军心崩溃，全线溃散。`);
+      (b as BattleState & { collapsed?: string }).collapsed = sd;
+    }
+  }
   b.wall = Math.max(0, Math.min(100, b.wall));
   log.wallAfter = Math.round(b.wall);
   b.wall = Math.round(b.wall * 10) / 10;
@@ -413,12 +530,23 @@ function power(b: BattleState, side: 'att' | 'def', lane: Lane, my: LaneOrder, t
 }
 
 function settle(b: BattleState, attC: Choice) {
+  // 各路皆溃而预备队尚在：预备队自动顶上中路，战斗未完
+  for (const sd of ['att', 'def'] as const) {
+    const me = b[sd];
+    if (!sideActive(me) && (me.reserve ?? 0) >= 300 && !(b as BattleState & { collapsed?: string }).collapsed) {
+      const l = me.lanes[1]; l.troops = me.reserve!; l.routed = false; l.withdrawn = false; l.morale = 55; me.reserve = 0;
+      b.log[b.log.length - 1]?.text.push(`${me.name}预备队顶上中路。`);
+    }
+  }
+  const collapsed = (b as BattleState & { collapsed?: string }).collapsed;
+  delete (b as BattleState & { collapsed?: string }).collapsed;
   const attOn = sideActive(b.att), defOn = sideActive(b.def);
+  if (collapsed && b.kind !== 'siege') { b.over = true; b.winner = collapsed === 'att' ? 'def' : 'att'; b.outcome = 'collapse'; return; }
   if (b.kind === 'siege') {
-    const breach = b.wall <= 0 || (b.wall < 35 && !defOn);
+    const breach = b.wall <= 0 || (b.wall < 25 && !defOn);
     if (breach && attOn) { b.over = true; b.winner = 'att'; b.outcome = 'breach'; return; }
     if (!attOn) { b.over = true; b.winner = 'def'; b.outcome = attC.lanes.every(o => o === 'blockade') ? 'blockade' : 'repulsed'; return; }
-    if (!defOn && b.wall >= 35) {
+    if (!defOn && b.wall >= 25) {
       // 守军溃散但城墙尚坚：残兵收拢，下回合再战
       for (const l of b.def.lanes) if (l.troops > 150) { l.routed = false; l.morale = 25; }
       if (!sideActive(b.def)) { b.over = true; b.winner = 'att'; b.outcome = 'breach'; return; }
@@ -461,6 +589,7 @@ export function aiChoice(b: BattleState, side: 'att' | 'def'): Choice {
   for (let i = 0; i < 3; i++) {
     const l = me.lanes[i];
     if (!laneActive(l)) { lanes.push(b.kind === 'field' ? 'hold' : side === 'att' ? 'storm' : 'hold'); continue; }
+    if (laneOrders(b, side, i).includes('envelop')) { lanes.push('envelop'); continue; }
     let o: LaneOrder;
     if (b.kind === 'field') {
       if (l.morale < 30 && ratio < 0.8) o = 'withdraw';
@@ -494,7 +623,16 @@ export function aiChoice(b: BattleState, side: 'att' | 'def'): Choice {
     const best = legal.map(k => ({ k, p: stratagemChance(b, side, k) })).sort((x, y) => y.p - x.p)[0];
     if (best.p > 0.35) stratagem = best.k;
   }
-  return { lanes, stratagem };
+  // 预备队：最吃紧的一路投入
+  let commit: Choice['commit'];
+  if ((me.reserve ?? 0) > 0 && b.round >= 1) {
+    let w = -1; me.lanes.forEach((l, i) => { if (laneActive(l) && (w < 0 || l.morale < me.lanes[w].morale)) w = i; });
+    if (w >= 0) commit = { lane: w, troops: me.reserve! };
+  }
+  // 大势已去：兵不及敌三成而士气低落，收兵保全
+  const avgM = me.lanes.filter(laneActive).reduce((n, l) => n + l.morale * l.troops, 0) / Math.max(1, me.lanes.filter(laneActive).reduce((n, l) => n + l.troops, 0));
+  const retreat = b.kind !== 'siege' && ratio < 0.35 && avgM < 40 ? true : b.kind === 'siege' && side === 'att' && ratio < 0.6 && b.round >= 3 ? true : undefined;
+  return { lanes, stratagem, ...(commit ? { commit } : {}), ...(retreat ? { retreat } : {}) };
 }
 
 export function autoResolve(b: BattleState): BattleState {
@@ -516,6 +654,8 @@ export function outcomeText(b: BattleState): string {
     case 'repulsed': return `${b.def.name}击退${b.att.name}。`;
     case 'held': return b.kind === 'siege' ? `${b.nodeName}守住了。` : b.kind === 'naval' ? `两军水师相持，${b.def.name}守住江面。` : `两军相持，${b.def.name}守住阵地。`;
     case 'rout': return `${w.name}大胜，${(b.winner === 'att' ? b.def : b.att).name}溃走。`;
+    case 'collapse': return `${(b.winner === 'att' ? b.def : b.att).name}军心崩溃，${w.name}大胜。`;
+    case 'retreat': return `${(b.winner === 'att' ? b.def : b.att).name}鸣金收兵，${w.name}守住战场。`;
     default: return `两军各自收兵。`;
   }
 }
