@@ -55,7 +55,7 @@ export interface MapView {
   /** 本月待发的行军命令（用于画预定路线） */
   planned: { army: string; path: string[] }[];
   /** 月末回放：军队从上月位置走到本月位置 */
-  anim?: { from: Record<string, Pt>; t0: number; dur: number } | null;
+  anim?: { from: Record<string, Pt>; t0: number; dur: number; paths?: Record<string, Pt[]>; hold?: boolean } | null;
   /** 选势力时高亮其疆域 */
   highlight?: string | null;
   /** 引导：在某城上画脉动光圈 */
@@ -63,8 +63,8 @@ export interface MapView {
 }
 type Rect = [number, number, number, number];
 interface NodeSlot { id: string; sx: number; sy: number; w: number; tier: 'full' | 'small' | 'dot'; label: Rect | null; fsize: number; big: boolean }
-interface ArmyStack { armies: string[]; sx: number; sy: number; ax: number; ay: number; moving: boolean }
-export interface Fx { kind: 'capture' | 'battle' | 'stamp' | 'float' | 'ripple' | 'convoy' | 'clash' | 'treaty' | 'card' | 'march'; node?: string; path?: string[]; text?: string; color?: string; color2?: string; img?: string; dy?: number; t0: number; dur: number }
+interface ArmyStack { armies: string[]; sx: number; sy: number; ax: number; ay: number; moving: boolean; march?: [number, number] }
+export interface Fx { kind: 'capture' | 'battle' | 'stamp' | 'float' | 'ripple' | 'convoy' | 'clash' | 'treaty' | 'card' | 'march' | 'camp' | 'envoy' | 'verdict'; node?: string; quiet?: boolean; stamp?: string; ok?: boolean; from?: string; path?: string[]; text?: string; color?: string; color2?: string; img?: string; dy?: number; t0: number; dur: number }
 const fxImg = new Map<string, HTMLImageElement>();
 function imgOf(url: string): HTMLImageElement { let im = fxImg.get(url); if (!im) { im = new Image(); im.src = url; fxImg.set(url, im); } return im; }
 const MAX_Z = 6;
@@ -483,6 +483,8 @@ export class MapRenderer {
 
   layout: Map<string, NodeSlot> = new Map();
   stacks: ArmyStack[] = [];
+  /** 每支军队上一帧画在何处（世界坐标）：下一段动画从这里接着走 */
+  shown: Record<string, Pt> = {};
 
   nodePriority(s: GameState, id: string, focus: Set<string> | null): number {
     const n = NODE[id], c = s.cities[id];
@@ -557,7 +559,9 @@ export class MapRenderer {
     }
     const out: ArmyStack[] = [];
     const anim = this.view.anim;
-    const k = anim ? easeInOut(Math.min(1, (this.lastTime - anim.t0) / anim.dur)) : 1;
+    const raw = anim ? Math.max(0, Math.min(1, (this.lastTime - anim.t0) / anim.dur)) : 1;
+    const k = anim ? easeInOut(raw) : 1;
+    if (anim && raw >= 1 && !anim.hold) this.view.anim = null;
     for (const [key, list] of groups) {
       // 同城：本方在前，兵多在前
       list.sort((a, b) => Number(topOfSafe(s, b.faction) === s.player) - Number(topOfSafe(s, a.faction) === s.player) || b.troops - a.troops || a.id.localeCompare(b.id));
@@ -566,11 +570,19 @@ export class MapRenderer {
       for (const a of list) { const side = sides.find(x => topOfSafe(s, x[0].faction) === topOfSafe(s, a.faction)); if (side) side.push(a); else sides.push([a]); }
       sides.forEach((arm, i) => {
         let [wx, wy] = armyPt(arm[0]);
-        if (anim && k < 1) { const f = anim.from[arm[0].id]; if (f) { wx = f[0] + (wx - f[0]) * k; wy = f[1] + (wy - f[1]) * k; } }
+        let march: [number, number] | undefined;
+        const poly = anim?.paths?.[arm[0].id];
+        if (anim && poly && poly.length > 1) {
+          // 沿驿路逐站而行（不是直线滑过去）
+          const [p, d] = along(poly, k);
+          [wx, wy] = p;
+          if (raw < 1) march = d;
+        } else if (anim && k < 1) { const f = anim.from[arm[0].id]; if (f) { if (Math.hypot(wx - f[0], wy - f[1]) > 2) march = [wx - f[0], wy - f[1]]; wx = f[0] + (wx - f[0]) * k; wy = f[1] + (wy - f[1]) * k; } }
+        for (const a of arm) this.shown[a.id] = [wx, wy];
         const [sx, sy] = worldToScreen(this.cam, this.w, this.h, wx, wy);
-        const moving = key.startsWith('m:');
+        const moving = key.startsWith('m:') || !!march || !!(poly && anim?.hold);
         const ox = moving ? 0 : 20 + i * 26, oy = moving ? -4 : -24;
-        out.push({ armies: arm.map(a => a.id), sx: sx + ox, sy: sy + oy, ax: sx, ay: sy, moving });
+        out.push({ armies: arm.map(a => a.id), sx: sx + ox, sy: sy + oy, ax: sx, ay: sy, moving, march });
       });
     }
     this.stacks = out;
@@ -688,6 +700,7 @@ export class MapRenderer {
       if (focus && !sel && !focus.has(a.location) && !a.path.some(p => focus.has(p))) g.globalAlpha = 0.4;
       // 牵引线：旗到城
       if (!st.moving) { g.strokeStyle = 'rgba(20,14,8,0.55)'; g.lineWidth = 1; g.beginPath(); g.moveTo(st.ax, st.ay - 4); g.lineTo(st.sx - 4, st.sy + 6); g.stroke(); }
+      if (st.march) this.drawColumn(g, st, f?.color ?? '#888', s.armies[st.armies[0]]);
       g.translate(st.sx, st.sy);
       if (st.moving) g.translate(0, Math.sin(this.lastTime / 180 + st.sx) * 1.2);
       if (sel) { g.fillStyle = 'rgba(255,214,120,0.5)'; g.beginPath(); g.arc(0, 0, 16, 0, Math.PI * 2); g.fill(); }
@@ -718,6 +731,33 @@ export class MapRenderer {
       const [wx, wy] = screenToWorld(this.cam, this.w, this.h, st.sx, st.sy);
       for (const id of st.armies) this.armyHits.push({ id, x: wx, y: wy, r: 14 / this.cam.z, stack: st.armies });
     }
+  }
+
+  /** 行军纵队：旗后一队兵卒（骑兵多则画马），踏起尘土 */
+  drawColumn(g: CanvasRenderingContext2D, st: ArmyStack, color: string, a: Army) {
+    const len = Math.hypot(st.march![0], st.march![1]) || 1;
+    const ux = st.march![0] / len, uy = st.march![1] / len;
+    const n = Math.max(4, Math.min(9, Math.round(Math.sqrt(a.troops) / 22)));
+    const cav = a.mix.cav >= 0.35, t = this.lastTime;
+    g.save();
+    for (let k = n; k >= 1; k--) {
+      const back = 9 + k * (cav ? 8 : 6);
+      const x = st.ax - ux * back + (k % 2 ? -uy : uy) * 3, y = st.ay - uy * back - 2 + (k % 2 ? ux : -ux) * 3;
+      // 尘
+      const dp = ((t / 600) + k * 0.17) % 1;
+      g.fillStyle = `rgba(190,165,120,${0.28 * (1 - dp)})`;
+      g.beginPath(); g.arc(x - ux * (4 + dp * 10), y + 3 - dp * 6, 2.5 + dp * 5, 0, Math.PI * 2); g.fill();
+      const bob = Math.abs(Math.sin(t / (cav ? 70 : 110) + k)) * 1.6;
+      if (cav && k % 2 === 0) {
+        g.fillStyle = '#5a3b22'; g.beginPath(); g.ellipse(x, y - 2 - bob, 4.5, 2.4, 0, 0, Math.PI * 2); g.fill();
+        g.fillStyle = color; g.fillRect(x - 1.5, y - 8 - bob, 3, 4);
+      } else {
+        g.fillStyle = color; g.fillRect(x - 1.6, y - 7 - bob, 3.2, 5);
+        g.fillStyle = '#e8c49a'; g.beginPath(); g.arc(x, y - 8.5 - bob, 1.6, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = 'rgba(40,28,16,0.9)'; g.lineWidth = 0.8; g.beginPath(); g.moveTo(x + 2, y - 2 - bob); g.lineTo(x + 2, y - 13 - bob); g.stroke();
+      }
+    }
+    g.restore();
   }
 
   drawNames(g: CanvasRenderingContext2D, s: GameState, _focus: Set<string> | null) {
@@ -815,6 +855,29 @@ export class MapRenderer {
       const sl = f.node ? this.layout.get(f.node) : null;
       const [wx, wy] = f.node ? nodePt(f.node) : [0, 0];
       const [sx, sy] = sl ? [sl.sx, sl.sy - sl.w * 0.4] : worldToScreen(this.cam, this.w, this.h, wx, wy);
+      if (f.kind === 'envoy' && f.path && f.path.length > 1) {
+        // 使者：一骑持节沿路而去，身后扬起尘土
+        const pts = f.path.map(id => { const sl2 = this.layout.get(id); return sl2 ? [sl2.sx, sl2.sy] as Pt : worldToScreen(this.cam, this.w, this.h, ...nodePt(id)); });
+        const seg = Math.min(pts.length - 2, Math.floor(p * (pts.length - 1)));
+        const q = p * (pts.length - 1) - seg;
+        const x = pts[seg][0] + (pts[seg + 1][0] - pts[seg][0]) * q, y = pts[seg][1] + (pts[seg + 1][1] - pts[seg][1]) * q;
+        const dir = pts[seg + 1][0] >= pts[seg][0] ? 1 : -1;
+        g.save();
+        g.globalAlpha = p > 0.9 ? (1 - p) / 0.1 : 1;
+        g.strokeStyle = 'rgba(240,207,134,0.45)'; g.lineWidth = 1.5; g.setLineDash([2, 5]);
+        g.beginPath(); pts.forEach(([px, py], i) => i ? g.lineTo(px, py) : g.moveTo(px, py)); g.stroke(); g.setLineDash([]);
+        for (let k = 0; k < 4; k++) { const d = k * 6; g.fillStyle = `rgba(190,160,110,${0.35 - k * 0.07})`; g.beginPath(); g.arc(x - dir * (8 + d), y + 2, 3 + k, 0, Math.PI * 2); g.fill(); }
+        const bob = Math.sin(time / 70) * 1.5;
+        g.translate(x, y - 6 + bob); g.scale(dir, 1);
+        g.fillStyle = '#5a3b22'; g.beginPath(); g.ellipse(0, 2, 8, 4, 0, 0, Math.PI * 2); g.fill();
+        g.fillRect(6, -4, 3, 6); g.fillRect(-6, 4, 2, 5); g.fillRect(4, 4, 2, 5);
+        g.fillStyle = f.color ?? '#b5342a'; g.fillRect(-2, -8, 5, 7);
+        g.fillStyle = '#e8c49a'; g.beginPath(); g.arc(0.5, -10, 2.4, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = '#3a2a1a'; g.lineWidth = 1; g.beginPath(); g.moveTo(-3, -6); g.lineTo(-3, -22); g.stroke();
+        g.fillStyle = '#f0cf86'; g.fillRect(-3, -22, 1.6, 6); g.fillRect(-4.5, -16, 4.5, 1.2);
+        g.restore();
+        continue;
+      }
       if (f.kind === 'convoy' && f.path && f.path.length > 1) {
         // 粮车沿驿路而行
         const pts = f.path.map(id => { const sl2 = this.layout.get(id); return sl2 ? [sl2.sx, sl2.sy] as Pt : worldToScreen(this.cam, this.w, this.h, ...nodePt(id)); });
@@ -834,8 +897,8 @@ export class MapRenderer {
       g.translate(sx, sy);
       switch (f.kind) {
         case 'capture': {
-          // 城破：火舌、烟柱、旧旗倒下、新旗升起、两圈冲击波
-          for (const k of [0, 0.22]) {
+          // 城破：火舌、烟柱、旧旗倒下、新旗升起、两圈冲击波。献城、归附、反正（quiet）只换旗落印，不起兵火
+          if (!f.quiet) for (const k of [0, 0.22]) {
             const q = Math.max(0, Math.min(1, (p - k) / 0.6));
             if (q <= 0 || q >= 1) continue;
             g.strokeStyle = f.color ?? '#fff'; g.globalAlpha = 1 - q; g.lineWidth = 5 * (1 - q) + 1;
@@ -843,13 +906,19 @@ export class MapRenderer {
           }
           g.globalAlpha = p > 0.8 ? (1 - p) / 0.2 : 1;
           // 烟柱
-          for (let k = 0; k < 8; k++) {
+          if (!f.quiet) for (let k = 0; k < 8; k++) {
             const q = (p * 1.4 + k / 8) % 1;
             g.fillStyle = `rgba(50,44,40,${0.5 * (1 - q)})`;
             g.beginPath(); g.arc(Math.sin(k * 1.7 + q * 3) * 6 + q * 12, -10 - q * 60, 5 + q * 12, 0, Math.PI * 2); g.fill();
           }
+          if (f.quiet) {
+            // 交印：一圈金色的光晕缓缓扩开
+            const q = Math.min(1, p / 0.5);
+            g.strokeStyle = `rgba(240,207,134,${0.8 * (1 - q)})`; g.lineWidth = 2;
+            g.beginPath(); g.ellipse(0, 10, 12 + q * 46, (12 + q * 46) * 0.42, 0, 0, Math.PI * 2); g.stroke();
+          }
           // 火舌
-          for (let k = 0; k < 6; k++) {
+          if (!f.quiet) for (let k = 0; k < 6; k++) {
             const fl = 0.6 + 0.4 * Math.sin(time / 70 + k * 2);
             const x = (k - 2.5) * 6, h0 = (10 + (k % 3) * 5) * fl * (p < 0.6 ? 1 : (1 - p) / 0.4);
             const gr = g.createLinearGradient(x, 6, x, 6 - h0);
@@ -871,7 +940,37 @@ export class MapRenderer {
             g.fillStyle = '#fff6e2'; g.font = '700 9px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(f.text ?? '', 10, -40 * q2 + 7 + wv / 2);
             g.restore();
           }
-          if (p > 0.55) { const q = Math.min(1, (p - 0.55) / 0.15); g.translate(0, -58); stamp(g, '破', '#8f2015', 1 + (1 - q) * 1.4); }
+          if (p > 0.55) { const q = Math.min(1, (p - 0.55) / 0.15); g.translate(0, -58); stamp(g, f.stamp ?? '破', f.quiet ? (f.color ?? '#8c6a35') : '#8f2015', 1 + (1 - q) * 1.4); }
+          break;
+        }
+        case 'camp': {
+          // 安营：一顶帐篷落地，炊烟升起，营旗插定（驻扎、行军、退兵——不是交战）
+          const q = Math.min(1, p / 0.25);
+          g.globalAlpha = p > 0.8 ? (1 - p) / 0.2 : 1;
+          g.translate(18, 4 - (1 - q) * 14);
+          g.fillStyle = '#d9c9a3'; g.strokeStyle = '#3a2a18'; g.lineWidth = 1.2;
+          g.beginPath(); g.moveTo(-11, 8); g.lineTo(0, -8); g.lineTo(11, 8); g.closePath(); g.fill(); g.stroke();
+          g.fillStyle = '#3a2a18'; g.beginPath(); g.moveTo(-2, 8); g.lineTo(0, 1); g.lineTo(2, 8); g.fill();
+          g.strokeStyle = '#2a1d12'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(14, 8); g.lineTo(14, -16); g.stroke();
+          const wv = Math.sin(time / 140) * 1.5;
+          g.fillStyle = f.color ?? '#f0cf86'; g.beginPath(); g.moveTo(14, -16); g.lineTo(26, -14 + wv); g.lineTo(26, -6 + wv); g.lineTo(14, -8); g.closePath(); g.fill();
+          g.fillStyle = '#2a1d12'; g.font = '700 7px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(f.text ?? '营', 20, -10.5 + wv / 2);
+          for (let k = 0; k < 4; k++) { const sp = (p * 1.6 + k / 4) % 1; g.fillStyle = `rgba(200,195,185,${0.45 * (1 - sp)})`; g.beginPath(); g.arc(-14 + Math.sin(k + sp * 3) * 3, -2 - sp * 26, 2 + sp * 5, 0, Math.PI * 2); g.fill(); }
+          break;
+        }
+        case 'verdict': {
+          // 号令结果：成（朱印）或不成（墨印），印下一行字
+          const q = Math.min(1, p / 0.16);
+          g.globalAlpha = p > 0.78 ? (1 - p) / 0.22 : 1;
+          g.translate(0, -30);
+          g.rotate(-0.12);
+          stamp(g, f.stamp ?? (f.ok ? '成' : '败'), f.ok ? (f.color ?? '#b5342a') : '#4a4440', 2.4 - q * 1.3);
+          g.rotate(0.12);
+          if (f.text && q >= 1) {
+            g.font = '900 12.5px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+            g.lineWidth = 3.5; g.strokeStyle = 'rgba(12,8,4,0.85)'; g.lineJoin = 'round'; g.strokeText(f.text, 0, 30);
+            g.fillStyle = f.ok ? '#ffe2a0' : '#d8cbbb'; g.fillText(f.text, 0, 30);
+          }
           break;
         }
         case 'clash': {
@@ -1147,4 +1246,21 @@ function arrowHead(g: CanvasRenderingContext2D, x1: number, y1: number, x2: numb
 function vertText(g: CanvasRenderingContext2D, t: string, x: number, y: number, step: number) {
   g.textAlign = 'center';
   [...t].forEach((ch, i) => g.fillText(ch, x, y + i * step));
+}
+
+/** 沿折线按长度取点；返回位置与前进方向 */
+export function along(poly: Pt[], k: number): [Pt, [number, number]] {
+  const seg: number[] = [];
+  let total = 0;
+  for (let i = 1; i < poly.length; i++) { const d = Math.hypot(poly[i][0] - poly[i - 1][0], poly[i][1] - poly[i - 1][1]); seg.push(d); total += d; }
+  if (total <= 0) return [poly[poly.length - 1], [1, 0]];
+  let left = Math.max(0, Math.min(1, k)) * total;
+  for (let i = 0; i < seg.length; i++) {
+    if (left <= seg[i] || i === seg.length - 1) {
+      const q = seg[i] ? Math.min(1, left / seg[i]) : 1, a = poly[i], b = poly[i + 1];
+      return [[a[0] + (b[0] - a[0]) * q, a[1] + (b[1] - a[1]) * q], [b[0] - a[0] || 0.001, b[1] - a[1]]];
+    }
+    left -= seg[i];
+  }
+  return [poly[poly.length - 1], [1, 0]];
 }

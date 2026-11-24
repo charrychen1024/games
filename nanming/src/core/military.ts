@@ -42,7 +42,7 @@ export function moveArmies(s: GameState): Contact[] {
         a.mix = { ...a.mix, inf: a.mix.inf + nv, navy: 0 };
         if (a.name.endsWith('水师')) a.name = a.name.slice(0, -2) + '部';
         a.morale = Math.max(10, a.morale - 4);
-        if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', node: a.location, text: `${a.name}行至${nodeName(a.location)}舍舟登岸，船只留泊，水师改为步卒。`, src: { kind: 'order', ref: a.id } });
+        if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}行至${nodeName(a.location)}舍舟登岸，船只留泊，水师改为步卒。`, src: { kind: 'order', ref: a.id } });
       }
       if (a.progress < r.days) continue;
       a.location = next; a.path.shift(); a.progress = 0;
@@ -191,7 +191,7 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
     attLoss, defLoss, summary, manual });
   const involved = [b.att.faction, b.def.faction].some(f => topOf(s, f) === s.player || friendly(s, f, s.player));
   const direct = [b.att.faction, b.def.faction].includes(s.player) || b.att.armies.concat(b.def.armies).some(id => s.armies[id]?.faction === s.player);
-  report(s, { cat: '军报', urgent: direct, node: b.node, faction: involved ? undefined : b.att.faction,
+  report(s, { cat: '军报', act: 'battle', from: b.att.faction, to: b.def.faction, urgent: direct, node: b.node, faction: involved ? undefined : b.att.faction,
     text: `${nodeName(b.node)}${b.kind === 'field' ? '野战' : b.kind === 'naval' ? '水战' : '攻城战'}：${b.att.commanderName}（${b.att.name}）对${b.def.commanderName}（${b.def.name}）。${summary}攻方折损 ${troopsText(attLoss)}，守方折损 ${troopsText(defLoss)}。`,
     src: { kind: 'battle', ref: b.id } });
 
@@ -229,14 +229,14 @@ export function retreat(s: GameState, a: Army, routed: boolean) {
     const from = a.location;
     a.location = opts[0].to; a.path = []; a.progress = 0; a.order = { kind: 'hold' };
     a.morale = Math.max(5, a.morale - (routed ? 12 : 5));
-    report(s, { cat: '军报', node: a.location, text: `${a.name}自${nodeName(from)}退往${nodeName(a.location)}。`, faction: a.faction });
+    report(s, { cat: '军报', act: 'retreat', from: a.faction, node: a.location, text: `${a.name}自${nodeName(from)}退往${nodeName(a.location)}。`, faction: a.faction });
   } else {
     // 无路可退：残部溃散
     const lost = Math.round(a.troops * 0.5);
     a.troops -= lost;
     a.morale = Math.max(5, a.morale - 20);
     a.path = []; a.order = { kind: 'hold' };
-    report(s, { cat: '军报', node: a.location, text: `${a.name}退路断绝，溃散 ${troopsText(lost)}。`, faction: a.faction });
+    report(s, { cat: '军报', act: 'retreat', from: a.faction, node: a.location, text: `${a.name}退路断绝，溃散 ${troopsText(lost)}。`, faction: a.faction });
   }
   if (a.troops < 300) disband(s, a);
 }
@@ -364,13 +364,13 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
   s.flags['lost_' + node] = s.turn;
   s.flags['lost_how_' + node] = how;
   if (c.controller === old) {
-    report(s, { cat: '易主', urgent: true, node, text: `${nodeName(node)}守将${gov?.name ?? ''}率${factionName(s, old)}开城，正式归附${factionName(s, newCtrl)}。城仍由${factionName(s, old)}实控，改奉${s.factions[old].polity === 'qing' ? '清' : factionName(s, topOf(s, newCtrl))}。`, src });
+    report(s, { cat: '易主', act: 'join', from: old, to: newCtrl, urgent: true, node, text: `${nodeName(node)}守将${gov?.name ?? ''}率${factionName(s, old)}开城，正式归附${factionName(s, newCtrl)}。城仍由${factionName(s, old)}实控，改奉${s.factions[old].polity === 'qing' ? '清' : factionName(s, topOf(s, newCtrl))}。`, src });
     s.flags['lost_' + node] = s.turn;
     return;
   }
   const byName = by ? charName(s, by) : factionName(s, newCtrl);
   const verb = how === '陷城' ? `攻破${nodeName(node)}` : how === '献城' ? `受${nodeName(node)}献城` : `受${nodeName(node)}归附`;
-  report(s, { cat: '易主', urgent: topOf(s, old) === s.player || topOf(s, newCtrl) === s.player, node,
+  report(s, { cat: '易主', act: how === '陷城' ? 'breach' : how === '献城' ? 'yield' : 'join', from: old, to: newCtrl, urgent: topOf(s, old) === s.player || topOf(s, newCtrl) === s.player, node,
     text: `${nodeName(node)}易主（${how}）：${byName}${verb}。此城原属${factionName(s, old)}，${how === '陷城' ? '守军覆没，百姓遭兵燹' : how === '献城' ? `${gov ? gov.name + '率' : ''}守军易帜` : '一体改奉'}。现由${factionName(s, c.controller)}控制。`,
     src });
   // 都城失守
@@ -413,7 +413,7 @@ export function updateSieges(s: GameState): string[] {
       if (existing) {
         delete s.sieges[node];
         const inv = friendly(s, city.controller, s.player) || friendly(s, existing.attacker, s.player);
-        report(s, { cat: '军报', node, urgent: topOf(s, city.controller) === s.player, faction: inv ? undefined : existing.attacker, text: `${nodeName(node)}之围已解（历 ${existing.months} 月）。` });
+        report(s, { cat: '军报', act: 'lift', from: existing.attacker, to: city.controller, node, urgent: topOf(s, city.controller) === s.player, faction: inv ? undefined : existing.attacker, text: `${nodeName(node)}之围已解（历 ${existing.months} 月）。` });
       }
       continue;
     }
@@ -423,7 +423,7 @@ export function updateSieges(s: GameState): string[] {
       s.flags['sieged_' + node] = s.turn;
       const inv = friendly(s, city.controller, s.player) || friendly(s, here[0].faction, s.player);
       const mineDirect = city.controller === s.player || here[0].faction === s.player;
-      report(s, { cat: '军报', node, urgent: mineDirect, faction: inv ? undefined : here[0].faction,
+      report(s, { cat: '军报', act: 'siege', from: here[0].faction, to: city.controller, node, urgent: mineDirect, faction: inv ? undefined : here[0].faction,
         text: `${factionName(s, here[0].faction)}${charName(s, here[0].commander)}兵临${nodeName(node)}城下，开始围城。守军 ${troopsText(city.garrison)}，城防 ${Math.round(city.wall)}。` });
     } else {
       existing.armies = here.map(a => a.id);

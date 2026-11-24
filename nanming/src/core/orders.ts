@@ -331,7 +331,7 @@ function commandVassal(s: GameState, f: string, o: Extract<Order, { kind: 'comma
       break;
   }
   text += `（${ob.factors.join('，')}；合计 ${ob.score}）`;
-  if (f === s.player) report(s, { cat: '交涉', node: a.location, text, src });
+  if (f === s.player) report(s, { cat: '交涉', node: a.location, ok: ob.result === 'comply' || ob.result === 'half', text, src });
   // 被反复催逼会伤及关系
   if (ob.result !== 'comply' && leader) adjustAtt(s, v.leader, 'loyalty', -1, '朝廷催逼');
 }
@@ -385,7 +385,7 @@ function resolveEnvoy(s: GameState, f: string, o: Extract<Order, { kind: 'envoy'
     adjustAtt(s, o.char, 'loyalty', 2, `出使${t.name}，${aimText}成功`);
   }
   const text = `${charName(s, o.char)}出使${t.name}，${aimText}${ok ? '议成' : '未成'}。${ok && o.aim === 'alliance' ? '两家结为盟好，各守其城，互不相犯。' : ''}（${factors.join('，')}，临事 ${r >= 0 ? '+' : ''}${r}；合计 ${total}，需 55）`;
-  if (f === s.player || o.target === s.player) report(s, { cat: '交涉', node: t.capital, text, src });
+  if (f === s.player || o.target === s.player) report(s, { cat: '交涉', node: t.capital, ok, origin: s.factions[f]?.capital, text, src });
 }
 
 function setStanceExplicit(s: GameState, a: string, b: string, st: 'alliance' | 'truce' | 'neutral', until?: number) {
@@ -422,11 +422,11 @@ function resolvePersuade(s: GameState, f: string, o: Extract<Order, { kind: 'per
   const src = { kind: 'diplomacy' as const, ref: o.id, turn: s.turn };
   const old = city.controller;
   if (ok) {
-    report(s, { cat: '交涉', node: o.node, text: `${env.name}入${nodeName(o.node)}劝降，守将应允。（成功率 ${Math.round(p * 100)}%：${factors.join('，')}）`, src });
+    report(s, { cat: '交涉', node: o.node, ok: true, origin: s.factions[f]?.capital, text: `${env.name}入${nodeName(o.node)}劝降，守将应允。（成功率 ${Math.round(p * 100)}%：${factors.join('，')}）`, src });
     capture(s, o.node, f, '献城');
   } else {
     const detained = rng.chance(0.2);
     if (detained) { env.status = 'captured'; env.location = s.factions[old]?.capital ?? o.node; }
-    if (f === s.player || old === s.player) report(s, { cat: '交涉', node: o.node, text: `${env.name}赴${nodeName(o.node)}劝降，${detained ? '被扣留' : '无功而返'}。（成功率 ${Math.round(p * 100)}%：${factors.join('，')}）`, src });
+    if (f === s.player || old === s.player) report(s, { cat: '交涉', node: o.node, ok: false, origin: s.factions[f]?.capital, text: `${env.name}赴${nodeName(o.node)}劝降，${detained ? '被扣留' : '无功而返'}。（成功率 ${Math.round(p * 100)}%：${factors.join('，')}）`, src });
   }
 }

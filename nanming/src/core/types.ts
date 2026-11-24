@@ -92,6 +92,8 @@ export interface Character {
   bio: string;
   /** 登场回合（offstage 人物） */
   appear?: number;
+  /** 女子：画像不画须、换发式 */
+  female?: boolean;
   /** 宗室：可被拥立；era 为即位后所用年号 */
   royal?: { era: string; claim: number };
 }
@@ -213,10 +215,24 @@ export interface ReportEntry {
   history?: string;
   /** 只给某个势力看（情报），缺省为玩家可见 */
   faction?: FactionId;
+  /** 这条军报讲的是哪一类事：陷城、献城、归附、反正、交战、围城、解围、退兵、行军。演出与配声据此区分 */
+  act?: ReportAct;
+  /** 失去一方（易主）或攻方（交战、围城） */
+  from?: FactionId;
+  /** 得到一方（易主）或守方（交战、围城） */
+  to?: FactionId;
+  /** 号令（遣使、劝降、号令藩镇）的成败 */
+  ok?: boolean;
+  /** 使者从哪里出发（演出用） */
+  origin?: NodeId;
+  /** 史事与线索的声音基调 */
+  tone?: 'lament' | 'death' | 'edict' | 'turn' | 'war' | 'court' | 'omen';
 }
+export type ReportAct = 'breach' | 'yield' | 'join' | 'revolt' | 'battle' | 'siege' | 'lift' | 'retreat' | 'march';
 
 /* ---------- 史事与线索的运行记录 ---------- */
-export interface EventRecord { id: string; turn: number; variant: 'history' | 'altered' }
+/** player：此事关乎玩家所选势力的作为，本局由玩家作主，只作史实提示、不按史实代行 */
+export interface EventRecord { id: string; turn: number; variant: 'history' | 'altered' | 'player' }
 
 export interface BattleRecord {
   id: string;

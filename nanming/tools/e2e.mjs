@@ -26,7 +26,7 @@ async function nextMonth(manualBattle = false, probe = null) {
   const before = await text('#date-label');
   await page.click('#btn-next');
   const t0 = Date.now();
-  let battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false;
+  let battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false, marched = 0;
   while (Date.now() - t0 < 150000) {
     if (await visible('[data-choice]')) {
       if (probe && !probe.done) {
@@ -53,19 +53,32 @@ async function nextMonth(manualBattle = false, probe = null) {
       if (manualBattle && !manualDone) {
         // 亲自指挥一回合：三路都下令
         const orders = await page.locator('#battle-ui .ord2[data-lane="0"]').count();
-        if (orders) { await page.locator('#battle-ui .ord2[data-lane="0"]').nth(1).click({ timeout: 1000 }).catch(() => {}); await page.locator('#battle-ui .ord2[data-lane="2"]').nth(0).click({ timeout: 1000 }).catch(() => {}); }
+        if (orders) {
+          await page.click('#battle-ui [data-pick="0"]', { timeout: 1000 }).catch(() => {}); await page.locator('#battle-ui .ord2[data-lane="0"]').nth(1).click({ timeout: 1000 }).catch(() => {});
+          await page.click('#battle-ui [data-pick="2"]', { timeout: 1000 }).catch(() => {}); await page.locator('#battle-ui .ord2[data-lane="2"]').nth(0).click({ timeout: 1000 }).catch(() => {});
+        }
         await page.click('#battle-go', { timeout: 2000 }).catch(() => {}); manualDone = true; await wait(1800); continue;
       }
       await page.click('#battle-auto', { timeout: 600 }).catch(() => {});
       await wait(400); continue;
     }
-    if (await visible('#news-skip')) { newsSeen = true; await page.click('#news-skip', { timeout: 1000 }).catch(() => {}); await wait(450); continue; }
+    marched = Math.max(marched, await page.evaluate(() => Object.keys(NM.map.view.anim?.paths ?? {}).length).catch(() => 0));
+    if (await visible('#news-skip')) {
+      newsSeen = true;
+      if (probe && !probe.enter) {
+        // 视听审查 4：焦点在“看全部军情”上按回车，执行的是这个按钮，不是翻到下一条
+        probe.enter = true;
+        probe.cardSound = await page.evaluate(() => document.querySelector('#news .nw-card')?.dataset.sound ?? '');
+        await page.focus('#news-skip'); await page.keyboard.press('Enter'); await wait(450); continue;
+      }
+      await page.click('#news-skip', { timeout: 1000 }).catch(() => {}); await wait(450); continue;
+    }
     // 结算、翻月动画、要闻都过去之后才算这个月结束
     if (!(await page.evaluate(() => NM.resolving))) break;
     await wait(150);
   }
   await wait(200);
-  return { before, after: await text('#date-label'), battles, choices, battleScene, newsSeen };
+  return { before, after: await text('#date-label'), battles, choices, battleScene, newsSeen, marched };
 }
 
 try {
@@ -162,8 +175,10 @@ try {
   check('强制决断：Tab 焦点留在弹窗内', probe.focusIn === true, JSON.stringify(probe));
   check('强制决断：点背景不关闭', probe.bg === true, JSON.stringify(probe));
   check('本月战报逐条播放过', m1.newsSeen, JSON.stringify(m1));
+  check('每条战报都有配声', !!probe.cardSound, JSON.stringify(probe));
+  check('月末军队沿路行进有动画', m1.marched > 0, JSON.stringify(m1));
   await wait(300);
-  check('点“看全部军情”后军情面板随即打开', await visible('#report-entries'));
+  check('焦点在“看全部军情”上按回车，军情面板随即打开', await visible('#report-entries'));
   if (!(await visible('#report-entries'))) await page.click('#btn-report');
   await wait(300);
   check('军情面板有内容', await visible('#report-entries .entry'));
@@ -173,6 +188,10 @@ try {
   await page.locator('#report-entries .locate').first().click();
   await wait(250);
   check('点“定位”打开对应城池', await visible('#city-name'));
+  check('城池面板有主官或守将头像', await visible('#city-gov img'), await text('#city-gov'));
+  check('左上角不显示剧本进度条', (await page.locator('#topbar .yearbar').count()) === 0);
+  const eras = await page.evaluate(() => { const s = NM.s; const t0 = s.turn; const out = []; for (const y of [1644, 1647, 1652, 1658]) { s.turn = (y - 1644) * 12 + 2; NM.musicForState(); out.push(NM_audio().era); } s.turn = t0; NM.musicForState(); return out; });
+  check('地图配乐随年代自动换曲（四段）', JSON.stringify(eras) === '[0,1,2,3]', JSON.stringify(eras));
   await page.evaluate(() => NM.selectNode('nanjing'));
   await wait(150);
   await page.click('#tab-ledger');
@@ -201,6 +220,22 @@ try {
   await wait(500);
   check('读档后日期一致', (await text('#date-label')) === saved, `${saved} vs ${await text('#date-label')}`);
   check('存档压缩存放', (await page.evaluate(() => localStorage.getItem('nanming:slot:1') ?? '')).startsWith('LZ1:'));
+
+  console.log('声音与演出（视听审查 2、4）');
+  await page.click('#btn-menu');
+  check('菜单有配乐、环境、音效三条滑杆', (await page.locator('#menu input[type=range]').count()) === 3 && await visible('#vol-amb'));
+  for (const k of ['music', 'amb', 'sfx']) await page.locator('#vol-' + k).fill('0');
+  await wait(900);
+  const lv = await page.evaluate(() => NM_audio().levels);
+  check('三条滑杆拉到零，对应总线连同混响归零', !lv || (lv.music < 0.01 && lv.amb < 0.01 && lv.sfx < 0.01), JSON.stringify(lv));
+  for (const [k, v] of [['music', '55'], ['amb', '50'], ['sfx', '80']]) await page.locator('#vol-' + k).fill(v);
+  check('菜单可切换简化演出', await visible('#btn-motion'));
+  await page.click('#btn-motion');
+  check('切换后页面标记为简化演出', await page.evaluate(() => document.documentElement.classList.contains('reduced')));
+  await page.click('#btn-motion');
+  await page.click('#btn-menu');
+  const store = await page.evaluate(() => { const s = NM.s; const own = Object.values(s.cities).filter(c => c.controller === s.player); return { grain: own.reduce((n, c) => n + c.grain, 0), n: own.length, tip: document.querySelectorAll('#topbar .pill')[1]?.dataset.tip ?? '' }; });
+  check('左上角仓粮是本势力各城之和', store.tip.includes(`所辖 ${store.n} 城`), store.tip);
 
   console.log('存档写入失败（审查 02）');
   const old1 = await page.evaluate(() => localStorage.getItem('nanming:slot:1'));
@@ -283,8 +318,17 @@ try {
     await page.click('#deploy-go');
     await wait(500);
     check(`${kind === 'naval' ? '水战' : '野战'}每路有探报与克制提示`, (await page.locator('#battle-ui .l2-intel').count()) === 3 && (await page.locator('#battle-ui .ord2 em').count()) > 0);
-    if (kind === 'naval') check('水战命令为舷炮、冲犁、接舷、火船', ['舷炮', '冲犁', '接舷', '火船'].every(t => true) && (await text('#battle-ui')).includes('冲犁') && (await text('#battle-ui')).includes('火船'));
-    if (kind === 'field') check('战斗标明地点与谁在指挥', (await text('#battle-where')).includes('·') && /指挥|号令/.test(await text('#battle-ui .bh-who')), await text('#battle-ui .bh-mid'));
+    // 战斗界面 v3：每路只亮出所下之令，点令牌才展开其余命令
+    check(`${kind === 'naval' ? '水战' : '野战'}每路一枚令牌，其余命令收起`, (await page.locator('#battle-ui .l2-order').count()) === 3 && !(await visible('#battle-ui .ords2.open')));
+    await page.click('#battle-ui [data-pick="0"]');
+    await wait(250);
+    check(`${kind === 'naval' ? '水战' : '野战'}点令牌展开该路命令`, await visible('#battle-ui .lane2[data-lane-box="0"] .ords2.open .ord2'));
+    if (kind === 'naval') check('水战命令为舷炮、冲犁、接舷、火船', ['舷炮', '冲犁', '接舷', '火船'].every(w => true) && (await text('#battle-ui')).includes('冲犁') && (await text('#battle-ui')).includes('火船'));
+    await page.locator('#battle-ui .lane2[data-lane-box="0"] .ord2').first().click();
+    await wait(150);
+    check(`${kind === 'naval' ? '水战' : '野战'}选定后命令收起、令牌显示新令`, !(await visible('#battle-ui .ords2.open')));
+    if (kind === 'field') check('战斗标明地点与谁在指挥', (await text('#battle-where')).includes('·') && /指挥|号令/.test(await text('#battle .bh-who')), await text('#battle .bh-mid'));
+    check(`${kind === 'naval' ? '水战' : '野战'}战场两侧标出我军、敌军`, (await page.locator('#battle-stage .btag.mine').count()) === 1 && (await page.locator('#battle-stage .btag').count()) === 2 && (await text('#battle-stage .bhud .bm.mine .bm-tag')) === '我军');
     await page.click('#lead-1');
     await page.click('#battle-go');
     let tick = 0;
@@ -299,7 +343,11 @@ try {
       await page.setViewportSize({ width: 1440, height: 900 });
       await wait(800);
     } else await wait(4500);
-    check(`${kind === 'naval' ? '水战' : '野战'}回合结算后战报浮字出现`, (kind === 'field' ? tick : await page.locator('#battle-stage .bticker').count()) > 0);
+    check(`${kind === 'naval' ? '水战' : '野战'}回合结算后出现本合战果横幅`, (kind === 'field' ? tick : await page.locator('#battle-stage .bticker').count()) > 0);
+    await page.click('#battle-log');
+    await wait(150);
+    check(`${kind === 'naval' ? '水战' : '野战'}“战况”收着逐合详情`, (await text('#battle-ui .blog2')).includes('第1合'), await text('#battle-ui .blog2'));
+    await page.click('#battle-log');
     await page.click('#battle-auto').catch(() => {});
     for (let i = 0; i < 60 && !(await visible('#battle-done')); i++) await wait(300);
     await page.click('#battle-done');

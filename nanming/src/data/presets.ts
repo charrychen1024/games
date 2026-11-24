@@ -73,8 +73,8 @@ export function yangzhouSiegeState(seed = 1645): GameState {
   s.events = ['xs_jiashen', 'xs_tifa1', 'ss_dushi', 'ss_gaojie_yz', 'xs_shandong', 'ss_mashiying', 'ss_zheng_feng', 'ss_chongqing', 'xs_shun_west', 'ss_letter', 'xs_fushe', 'xs_haimao', 'ss_tuqiao', 'ss_chengdu',
     'xs_huaiyang', 'xs_liuzeqing', 'ss_qing_south', 'ss_daxi', 'xs_xuanshunv', 'ss_tongguan', 'ss_gaojie_killed', 'xs_sanan', 'ss_zuo_east', 'ss_duoduo_huai'].map(id => ({ id, turn: 0, variant: 'history' as const }));
   s.reports.push({ turn: s.turn - 1, cat: '急报', urgent: true, node: 'yangzhou', text: '清豫亲王多铎兵临扬州城下，督师史可法闭城固守。守军 2.4 万，城防 78。', src: { kind: 'siege', ref: 'yangzhou' } });
-  s.reports.push({ turn: s.turn - 1, cat: '易主', node: 'sizhou', text: '泗州易主（陷城）：清军渡淮，攻破泗州。现由清控制。' });
-  s.reports.push({ turn: s.turn - 1, cat: '易主', node: 'fengyang', text: '刘良佐率刘良佐部正式归附清朝。凤阳、寿州一体改奉清朝，实控者不变。' });
+  s.reports.push({ turn: s.turn - 1, cat: '易主', act: 'breach', from: 'hongguang', to: 'qing', node: 'sizhou', text: '泗州易主（陷城）：清军渡淮，攻破泗州。现由清控制。' });
+  s.reports.push({ turn: s.turn - 1, cat: '易主', act: 'join', from: 'liuliangzuo', to: 'qing', node: 'fengyang', text: '刘良佐率刘良佐部正式归附清朝。凤阳、寿州一体改奉清朝，实控者不变。' });
   s.reports.push({ turn: s.turn - 1, cat: '军报', node: 'jiujiang', text: '左良玉部占九江，左良玉病死军中，其子左梦庚继统。' });
   s.turnLimit = s.turn + 2;
   return s;

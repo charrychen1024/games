@@ -216,6 +216,9 @@ export function createState1644(seed = 1644): GameState {
       policy: 'balanced' as Policy, governor, trade, uncertain: UNCERTAIN[n.id],
     };
   }
+  // 增补人物出任开局主官
+  const GOV: Record<string, string> = { suzhou: 'qibiaojia', ningbo: 'wangzhiren', chengdu: 'longwenguang', xuzhousc: 'fanyiheng', zunyi: 'wangyingxiong', taiyuan: 'chenyongfu', hanzhong: 'hezhen', datong: 'jiangxiang' };
+  for (const [id, g] of Object.entries(GOV)) if (cities[id] && !cities[id].governor && CHARACTERS.some(c => c.id === g && c.faction === cities[id].controller)) cities[id].governor = g;
   const relations: GameState['relations'] = {};
   const set = (a: string, b: string, stance: GameState['relations'][string]['stance']) => { relations[[a, b].sort().join('|')] = { stance }; };
   set('hongguang', 'shun', 'war');

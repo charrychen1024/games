@@ -3,7 +3,7 @@
 import type { EventDef } from '../core/events';
 import type { GameState } from '../core/types';
 import { turnOf } from '../core/calendar';
-import { adjustAtt, adjustLoyalty, bump, setStance, hostile, report, armiesOf } from '../core/state';
+import { adjustAtt, adjustLoyalty, bump, setStance, hostile, report, armiesOf, topOf } from '../core/state';
 import { setArmyOrder, captureChar, succession } from '../core/military';
 import { shortestPath, NODE } from './geography';
 import { LATE_EVENTS } from './events-late';
@@ -39,6 +39,7 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'xs_fushe', kind: 'xiansuo', title: '阮大铖与复社', from: 3, to: 3, node: 'nanjing',
+    cond: s => s.flags.mashi !== 0,
     text: () => '阮大铖起用之后，与当年具名《留都防乱公揭》的复社诸生积怨难解，朝中门户之争愈烈，东林、复社人士多不自安。',
     history: '崇祯十一年复社诸生发《留都防乱公揭》驱逐阮大铖；弘光朝阮大铖复起，大兴党狱。',
     source: SRC_GU + '第三章',
@@ -72,6 +73,7 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'xs_xuanshunv', kind: 'xiansuo', title: '宫中采选', from: 7, to: 7, node: 'nanjing',
+    involves: ['hongguang'],
     text: () => '宫中选淑女、采办繁兴，又以各种名目加派。江南士民多有怨言，前线将士则时有欠饷。',
     history: '弘光帝在南京选淑女、修宫殿，用度浩繁，时人多有讥评。',
     source: SRC_GU + '第三章',
@@ -104,7 +106,7 @@ export const EVENTS: EventDef[] = [
       s.chars.shikefa.title = '督师 · 东阁大学士';
       const a = s.armies.a_shi;
       // 玩家已给标营下了别的命令，就不替玩家改
-      if (a && (a.faction !== s.player || (a.order.kind === 'hold' && !a.path.length))) setArmyOrder(s, a, { kind: 'move', target: 'yangzhou', attack: false });
+      if (a && topOf(s, a.faction) !== topOf(s, s.player)) setArmyOrder(s, a, { kind: 'move', target: 'yangzhou', attack: false });
       for (const f of ['gaojie', 'liuzeqing', 'liuliangzuo', 'huangdegong']) adjustLoyalty(s, f, 4, '督师调和');
       adjustAtt(s, 'mashiying', 'loyalty', 2, '独揽朝政');
     },
@@ -145,12 +147,11 @@ export const EVENTS: EventDef[] = [
     text: () => '马士英以拥立之功独揽朝政，荐阮大铖入兵部。东林旧人相继去位，镇守武昌的左良玉对朝中权臣愈加不满。',
     history: '甲申夏秋，马士英为首辅，阮大铖以兵部右侍郎起用，旋升尚书，朝局为之一变。',
     source: '《明史·奸臣传》；' + SRC_GU + '第三章',
-    effect: s => {
-      adjustAtt(s, 'zuoliangyu', 'loyalty', -6, '马阮掌权');
-      adjustLoyalty(s, 'zuoliangyu', -5, '马阮掌权');
-      adjustAtt(s, 'qianqianyi', 'surrender', 4, '仕途失意');
-      adjustAtt(s, 'shikefa', 'loyalty', -2, '为权臣所排');
-    },
+    chooser: ['hongguang'],
+    choices: () => [
+      { label: '倚重马士英，起用阮大铖', desc: '朝中号令归一；左良玉不满，钱谦益等失意。（史实）', apply: s => { maRuan(s); s.flags.mashi = 1; return '马士英为首辅。'; } },
+      { label: '抑马阮，留用东林旧人', desc: '左良玉忠诚 +3；马士英忠诚 −10，阮大铖不得起用。', apply: s => { adjustAtt(s, 'zuoliangyu', 'loyalty', 3, '朝廷留用东林'); adjustAtt(s, 'mashiying', 'loyalty', -10, '不得专权'); s.flags.mashi = 0; return '朝局未变。'; } },
+    ],
   },
   {
     id: 'ss_zheng_feng', kind: 'shishi', title: '郑芝龙受封', from: 1, to: 4, node: 'anping',
@@ -158,10 +159,15 @@ export const EVENTS: EventDef[] = [
     text: () => '朝廷加封郑芝龙为南安伯，令其弟郑鸿逵率水师守镇江江面。郑家受恩，但仍以海上为根本。',
     history: '弘光朝封郑芝龙为南安伯，郑鸿逵以总兵守镇江。',
     source: '《台湾外记》；' + SRC_GU,
-    effect: s => { adjustLoyalty(s, 'zheng', 8, '受封南安伯'); adjustAtt(s, 'zhenghongkui', 'loyalty', 5, '受命守江'); },
+    chooser: ['hongguang'],
+    choices: () => [
+      { label: '加封南安伯，令郑鸿逵守江', desc: '郑氏服从 +8，郑鸿逵忠诚 +5。（史实）', apply: s => { adjustLoyalty(s, 'zheng', 8, '受封南安伯'); adjustAtt(s, 'zhenghongkui', 'loyalty', 5, '受命守江'); return '郑芝龙受封。'; } },
+      { label: '暂不加封', desc: '郑氏服从 −5。', apply: s => { adjustLoyalty(s, 'zheng', -5, '朝廷吝封'); return '郑氏未受封。'; } },
+    ],
   },
   {
     id: 'ss_chongqing', kind: 'shishi', title: '张献忠破重庆', from: 1, to: 3, node: 'chongqing',
+    involves: ['xi'],
     cond: s => ctrl(s, 'chongqing') === 'xi',
     altered: s => ctrl(s, 'chongqing') !== 'xi' && !!s.factions.xi && !s.factions.xi.defunct,
     text: (_s, v) => v === 'history' ? '西营溯江而上，攻破重庆，川东震恐。' : '西营攻重庆不下，在川东徘徊。',
@@ -216,6 +222,7 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'ss_chengdu', kind: 'shishi', title: '张献忠破成都', from: 3, to: 5, node: 'chengdu',
+    involves: ['xi'],
     cond: s => ctrl(s, 'chengdu') === 'xi',
     altered: s => ctrl(s, 'chengdu') !== 'xi' && ctrl(s, 'chongqing') === 'xi',
     text: (_s, v) => v === 'history' ? '西营破成都，蜀王府被毁，四川大部落入张献忠之手。' : '西营据重庆，攻成都未克，川西明军死守。',
@@ -229,13 +236,11 @@ export const EVENTS: EventDef[] = [
     text: () => '清廷以南京“擅立”、拒不归附为由，命豫亲王多铎统兵南征，英亲王阿济格西击大顺。清与弘光朝廷正式为敌。',
     history: '顺治元年十月，清廷命多铎南下、阿济格西征；多铎先转攻潼关，乙酉二月再自河南南下。',
     source: SRC_GU + '第四章',
-    effect: s => {
-      setStance(s, 'qing', 'hongguang', 'war');
-      s.flags.qing_south = s.turn;
-      report(s, { cat: '急报', urgent: true, node: 'beijing', text: '清与弘光朝廷正式为敌。江北各镇须早作防备。' });
-      if (s.flags.zuomaodi_mission !== undefined && alive(s, 'zuomaodi')) captureChar(s, 'zuomaodi', 'qing', '北使不屈');
-      for (const id of ['liuzeqing', 'liuliangzuo', 'libenshen', 'zhaozhilong', 'qianqianyi']) adjustAtt(s, id, 'surrender', 3, '清兵将至');
-    },
+    chooser: ['qing'],
+    choices: () => [
+      { label: '命多铎南征', desc: '与弘光朝廷正式为敌，江北诸将降意上升。（史实）', apply: s => { qingSouth(s); return '大军南下。'; } },
+      { label: '暂缓南下，先定西北', desc: '与弘光维持现状；可日后自行宣战。', apply: s => { s.flags.qing_south_at = s.turn + 3; return '南征暂缓。'; } },
+    ],
   },
   {
     id: 'ss_daxi', kind: 'shishi', title: '大西建国', from: 6, to: 7, node: 'chengdu',
@@ -243,10 +248,15 @@ export const EVENTS: EventDef[] = [
     text: () => '张献忠在成都称帝，国号大西，改元大顺，以成都为西京。',
     history: '甲申十一月十六日张献忠在成都即位，国号大西。',
     source: SRC_GU + '第六章',
-    effect: s => { s.flags.daxi = s.turn; s.factions.xi.name = '大西'; s.factions.xi.capital = 'chengdu'; },
+    chooser: ['xi'],
+    choices: () => [
+      { label: '在成都称帝，国号大西', desc: '定都成都，以成都为西京。张献忠主战 +5。（史实）', apply: s => { s.flags.daxi = s.turn; s.factions.xi.name = '大西'; s.factions.xi.capital = 'chengdu'; adjustAtt(s, 'zhangxianzhong', 'hawk', 5, '称帝'); return '张献忠即位成都。'; } },
+      { label: '暂不称帝，仍以西营行事', desc: '不改国号、不迁治所。', apply: () => '西营暂不建号。' },
+    ],
   },
   {
     id: 'ss_tongguan', kind: 'shishi', title: '李自成失潼关', from: 7, to: 9, node: 'tongguan',
+    involves: ['qing', 'shun'],
     cond: s => ctrl(s, 'tongguan') === 'qing',
     altered: s => ctrl(s, 'tongguan') === 'shun',
     text: (s, v) => v === 'history' ? `清军破潼关，${s.chars.lizicheng.status === 'active' ? '李自成' : '大顺余部'}放弃西安，经商洛南走湖广。` : '清军未能叩开潼关，大顺仍据关中，但已显疲态。',
@@ -368,3 +378,19 @@ export function nearby(s: GameState, faction: string, node: string): boolean {
   return Object.values(s.armies).some(a => a.faction === faction && (a.location === node || shortestPath(a.location, node, false)?.length === 1));
 }
 export { T };
+
+/** 清廷南征 */
+function qingSouth(s: GameState) {
+      setStance(s, 'qing', 'hongguang', 'war');
+      s.flags.qing_south = s.turn;
+      report(s, { cat: '急报', urgent: true, node: 'beijing', text: '清与弘光朝廷正式为敌。江北各镇须早作防备。' });
+      if (s.flags.zuomaodi_mission !== undefined && alive(s, 'zuomaodi')) captureChar(s, 'zuomaodi', 'qing', '北使不屈');
+      for (const id of ['liuzeqing', 'liuliangzuo', 'libenshen', 'zhaozhilong', 'qianqianyi']) adjustAtt(s, id, 'surrender', 3, '清兵将至');
+}
+/** 马阮掌权 */
+function maRuan(s: GameState) {
+      adjustAtt(s, 'zuoliangyu', 'loyalty', -6, '马阮掌权');
+      adjustLoyalty(s, 'zuoliangyu', -5, '马阮掌权');
+      adjustAtt(s, 'qianqianyi', 'surrender', 4, '仕途失意');
+      adjustAtt(s, 'shikefa', 'loyalty', -2, '为权臣所排');
+}

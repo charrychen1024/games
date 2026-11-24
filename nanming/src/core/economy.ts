@@ -245,3 +245,10 @@ export function supplyBlock(s: GameState, f: string, from: string, to: string): 
   }
   return `去${nodeName(to)}的路被敌方隔断`;
 }
+
+/** 势力仓廪：所辖各城府库、仓粮之和（左上角显示用） */
+export function storeOf(s: GameState, f: string): { silver: number; grain: number; cities: number } {
+  let silver = 0, grain = 0, cities = 0;
+  for (const c of Object.values(s.cities)) if (c.controller === f) { silver += c.silver; grain += c.grain; cities++; }
+  return { silver, grain, cities };
+}

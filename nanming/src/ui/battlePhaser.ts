@@ -4,6 +4,7 @@
  * - 补间：前进、冲锋、交锋、倒地、溃逃、云梯攀登、炮弹
  * - 镜头：震屏、炮火闪光；后期：暗角、泛光 */
 import { battleSfx } from './audio';
+import { isReduced } from './motion';
 import Phaser from 'phaser';
 import type { BattleState, RoundLog, LaneOrder } from '../core/battle';
 import { BattleScene, drawSoldier, drawCavalry, drawStandard, drawShip, shade, type SideLook } from './battleScene';
@@ -45,8 +46,15 @@ export class BattleView {
     sc.endRound(to);
   }
   async showResult(win: boolean, text: string) { await this.ready; this.scene.result = [win, text]; this.scene.showResult(win, text); }
-  /** 布阵预览：按新的三路兵力重排阵列 */
-  preview(b: BattleState) { if (!this.scene) return; this.scene.b = b; for (let i = 0; i < 3; i++) for (const sd of ['att', 'def'] as const) this.scene.buildGroup(sd, i, b); }
+  /** 布阵预览、部将代打后的结局：按新局面重排阵列；full 时连同城墙破损、城头守军、天候一起同步 */
+  preview(b: BattleState, full = false) {
+    const sc = this.scene;
+    if (!sc) return;
+    if (full && b.weather !== sc.b.weather) { sc.b = b; sc.scene.restart(); return; }
+    sc.b = b;
+    for (let i = 0; i < 3; i++) for (const sd of ['att', 'def'] as const) sc.buildGroup(sd, i, b);
+    if (full && b.kind === 'siege') { sc.drawWall(b); sc.buildDefenders(b); }
+  }
   destroy() { this.game.destroy(true); }
 }
 
@@ -105,7 +113,10 @@ class WarScene extends Phaser.Scene {
       cam.postFX.addVignette(0.5, 0.55, 0.92, 0.35);
       cam.postFX.addBloom(0xffffff, 1, 1, 0.8, 0.6, 2);
     }
-    cam.fadeIn(500, 20, 12, 6);
+    if (!this.quietFade) cam.fadeIn(500, 20, 12, 6);
+    this.quietFade = false;
+    // 简化演出：不震屏、不闪光
+    if (isReduced()) { (cam as any).shake = () => cam; (cam as any).flash = () => cam; }
     this.scale.off('resize');
     this.scale.on('resize', () => {
       // 动画进行中不重启（重启会丢掉正在等待的动画），等本回合演完再按新尺寸重画
@@ -122,9 +133,12 @@ class WarScene extends Phaser.Scene {
   /** 回合收尾：记下新局面；若期间窗口变过，按新尺寸重画 */
   endRound(to: BattleState) {
     this.playing = false;
+    const weatherChanged = to.weather !== this.b.weather;
     this.b = to;
-    if (this.pendingResize) { this.pendingResize = false; this.scene.restart(); }
+    // 天候在这一合里变了（转雨、起雾）：立刻按新天候重画，不等窗口变化
+    if (this.pendingResize || weatherChanged) { this.pendingResize = false; this.quietFade = true; this.scene.restart(); }
   }
+  quietFade = false;
 
   /* ---------- 贴图 ---------- */
   canvasTex(key: string, w: number, h: number, draw: (g: CanvasRenderingContext2D) => void, ox: number, oy: number) {
@@ -339,8 +353,8 @@ class WarScene extends Phaser.Scene {
     // 1. 计策
     for (const st of log.stratagems) {
       const label = `${st.side === 'att' ? from.att.commanderName : from.def.commanderName} · ${{ ambush: '伏兵', fire: '火攻', night: '夜袭', persuade: '劝降' }[st.kind]}${st.ok ? '得手' : '未成'}`;
-      const box = this.add.rectangle(this.W / 2, this.H * 0.16, 360, 54, 0x140c06, 0.82).setStrokeStyle(2, st.ok ? 0xe0b25b : 0x6f6252).setDepth(9500).setScale(0.6).setAlpha(0);
-      const txt = this.add.text(this.W / 2, this.H * 0.16, label, { fontFamily: '"Ma Shan Zheng","Noto Serif SC",serif', fontSize: '30px', color: st.ok ? '#ffe2a0' : '#cfc2ae' }).setOrigin(0.5).setDepth(9501).setAlpha(0);
+      const box = this.add.rectangle(this.W / 2, this.H * 0.32, 360, 54, 0x140c06, 0.82).setStrokeStyle(2, st.ok ? 0xe0b25b : 0x6f6252).setDepth(9500).setScale(0.6).setAlpha(0);
+      const txt = this.add.text(this.W / 2, this.H * 0.32, label, { fontFamily: '"Ma Shan Zheng","Noto Serif SC",serif', fontSize: '30px', color: st.ok ? '#ffe2a0' : '#cfc2ae' }).setOrigin(0.5).setDepth(9501).setAlpha(0);
       this.tweens.add({ targets: [box, txt], alpha: 1, scale: 1, duration: 260 * d, ease: 'Back.out' });
       const foe = st.side === 'att' ? 'def' : 'att';
       if (st.ok) battleSfx[st.kind]();
@@ -363,7 +377,7 @@ class WarScene extends Phaser.Scene {
         let dx = dir * this.W * (REACH[order] ?? 0);
         if (this.b.kind === 'siege' && side === 'att' && order === 'storm') dx = this.geo.wallX(this.geo.laneY(i)) - 34 * this.geo.laneS(i) - g.baseX;
         if (order === 'volley' || order === 'cannonade') { this.setPose(side, i, 'aim'); this.volley(side, i, d); if (order === 'cannonade') this.cameras.main.shake(160 * d, 0.004); }
-        if (order === 'fireship' && i === 1) { battleSfx.fire(); }
+        if (order === 'fireship') this.time.delayedCall(i * 140 * d, () => battleSfx.fire());
         if (order === 'fireship') { const foeG = this.groups[(side === 'att' ? 'def' : 'att') + i]; if (foeG) this.time.delayedCall(500 * d, () => this.flames.explode(30, foeG.c.x, foeG.c.y - 20)); }
         else if (order === 'bombard') { this.bombard(i, d); }
         else if (Math.abs(dx) > 1) { if (i === 1) { battleSfx.advance(order === 'charge' || g.units.some(u => u.kind === 'cav')); if (order === 'charge' || order === 'storm') battleSfx.shout(); } this.setPose(side, i, 'walk'); advances.push(this.tween({ targets: g.c, x: g.baseX + dx, duration: (order === 'charge' ? 420 : 600) * d, ease: order === 'charge' ? 'Quad.in' : 'Sine.inOut' })); }
@@ -435,7 +449,7 @@ class WarScene extends Phaser.Scene {
     const guns = g.units.filter(u => u.kind === 'gun' || u.kind === 'ship');
     const shooters = guns.length ? guns : g.units.slice(0, 4);
     this.time.delayedCall(180 * d, () => {
-      if (guns.length) battleSfx.muskets(); else battleSfx.arrows();
+      if (this.b.kind === 'naval') battleSfx.broadside(); else if (guns.length) battleSfx.muskets(); else battleSfx.arrows();
       for (const u of shooters) {
         const x = g.c.x + u.bx + dir * 20 * s, y = g.c.y + u.by - 19 * s;
         this.smoke.explode(3, x, y);

@@ -297,7 +297,7 @@ export function aiDefections(s: GameState) {
     if (roll < p) {
       defectFaction(s, f.id, 'qing');
       adjustAtt(s, leader.id, 'loyalty', 70 - leader.att.loyalty, '归附清朝');
-      report(s, { cat: '易主', urgent: true, node: f.capital,
+      report(s, { cat: '易主', act: 'join', from: f.id, to: 'qing', urgent: true, node: f.capital,
         text: `${leader.name}率${f.name}正式归附清朝。其所据${citiesOf(s, f.id).map(c => nodeName(c.id)).join('、') || '营伍'}一体改奉清朝，实控者不变。（降意 ${leader.att.surrender}，服从度 ${f.loyalty}）`,
         src: { kind: 'diplomacy', ref: 'defect:' + f.id } });
     }

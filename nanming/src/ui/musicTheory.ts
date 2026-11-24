@@ -77,7 +77,9 @@ export function dangerOf(s: GameState): number {
   }
   d += Math.min(0.35, front.size * 0.06);
   d += Math.min(0.25, s.reports.filter(r => r.turn === s.turn - 1 && r.urgent && (!r.faction || r.faction === s.player)).length * 0.06);
-  d += Math.min(0.3, Object.keys(s.flags).filter(k => k.startsWith('lost_') && !k.startsWith('lost_how') && !k.startsWith('lost_caught') && s.flags[k] === s.turn - 1).length * 0.05);
+  // 只算本方失城：远处第三方之间易主，不该把本方配乐推到告急
+  const lostMine = s.reports.filter(r => r.turn === s.turn - 1 && r.cat === '易主' && r.from && s.factions[r.from] && topOf(s, r.from) === me && !(r.to && s.factions[r.to] && topOf(s, r.to) === me)).length;
+  d += Math.min(0.3, lostMine * 0.1);
   return Math.max(0, Math.min(1, d));
 }
 
@@ -91,3 +93,12 @@ export function paletteOf(polity: string): { gong: number; mode: Mode; lead: 'qi
     default: return { gong: 50, mode: 'gong', lead: 'qin', color: 'literati' };
   }
 }
+
+/** 地图配乐的年代段：越往后越急。0 甲申乙酉（舒缓）、1 丙戌至己丑、2 庚寅至甲午、3 乙未以后（最急） */
+export const MAP_ERAS = [
+  { name: '江南春尽', bpm: 76, mode: null as Mode | null, lead: null as null | 'qin' | 'pipa' | 'zheng' | 'dizi', busy: 0.45 },
+  { name: '烽火连营', bpm: 90, mode: 'shang' as Mode, lead: 'zheng' as const, busy: 0.6 },
+  { name: '两蹶名王', bpm: 104, mode: 'zhi' as Mode, lead: 'pipa' as const, busy: 0.75 },
+  { name: '天南残照', bpm: 116, mode: 'yu' as Mode, lead: 'pipa' as const, busy: 0.9 },
+];
+export function eraOf(year: number): number { return year < 1646 ? 0 : year < 1650 ? 1 : year < 1655 ? 2 : 3; }

@@ -45,3 +45,12 @@ describe('局势紧张度', () => {
     expect(siege).toBeLessThanOrEqual(1);
   });
 });
+
+import { eraOf, MAP_ERAS } from '../src/ui/musicTheory';
+describe('地图配乐随年代换曲', () => {
+  it('前期舒缓，越往后越快，共四段', () => {
+    expect([1644, 1645, 1646, 1650, 1655, 1662].map(eraOf)).toEqual([0, 0, 1, 2, 3, 3]);
+    for (let i = 1; i < MAP_ERAS.length; i++) expect(MAP_ERAS[i].bpm).toBeGreaterThan(MAP_ERAS[i - 1].bpm);
+    expect(new Set(MAP_ERAS.map(e => e.name)).size).toBe(4);
+  });
+});

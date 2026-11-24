@@ -34,7 +34,7 @@ function revolt(s: GameState, node: string, to: string, chief: string, troops: n
     location: node, path: [], progress: 0, order: { kind: 'hold' }, supply: node, hunger: 0 };
   for (const a of armiesAt(s, node)) if (a.id !== id && hostile(s, a.faction, to)) retreat(s, a, true);
   s.flags['lost_' + node] = s.turn;
-  report(s, { cat: '易主', urgent: true, node, text: `${nodeName(node)}易主（反正）：${ch?.name ?? ''}据城反正，改奉${s.factions[to]?.name ?? ''}。此城原属${s.factions[old]?.name ?? ''}。` });
+  report(s, { cat: '易主', act: 'revolt', from: old, to, urgent: true, node, text: `${nodeName(node)}易主（反正）：${ch?.name ?? ''}据城反正，改奉${s.factions[to]?.name ?? ''}。此城原属${s.factions[old]?.name ?? ''}。` });
 }
 
 /** 明室一方（朝廷或其盟友），供反正者归属 */
@@ -126,16 +126,14 @@ export const LATE_EVENTS: EventDef[] = [
       return `浙东士绅与张国维、张煌言等奉鲁王朱以海监国于绍兴，凭钱塘江防守，不再听${nodeName(f.capital)}的${f.name}${lord ? '（' + lord.name + '）' : ''}号令。两家各奉一主，争明室正统。`; },
     history: '乙酉七月，鲁王在绍兴称监国，与福州隆武朝廷争正统，两家互不相下。',
     source: SRC + '第八章',
+    chooser: ['hongguang', 'mingprov'],
+    choices: s => (courtOf(s) && topOf(s, courtOf(s)!) === topOf(s, s.player)) ? [
+      { label: '听其监国，暂不相争', desc: '浙东数城另立鲁监国，与朝廷中立，共抗清军。（史实）', apply: s2 => { luSplit(s2); return '浙东自奉鲁王。'; } },
+      { label: '遣使责令鲁王归附', desc: '浙东诸城仍归朝廷；张国维、张煌言等心怀不平，忠诚 −8。', apply: s2 => { for (const id of ['zhangguowei', 'zhanghuangyan', 'zhangmingzhen']) adjustAtt(s2, id, 'loyalty', -8, '朝廷不许鲁王监国'); return '鲁王奉诏，浙东未分。'; } },
+    ] : [],
     effect: s => {
-      const court = courtOf(s)!;
-      const east = ['shaoxing', 'ningbo', 'taizhou', 'zhoushan', 'wenzhou', 'chuzhouzj'].filter(n => s.factions[ctrl(s, n) ?? '']?.polity === 'ming' && topOf(s, ctrl(s, n)!) === court && ctrl(s, n) !== 'zheng');
-      if (!east.length) return;
-      const lu = splitFaction(s, ctrl(s, east[0])!, { id: 'lu', name: '鲁监国', short: '鲁', color: '#a0522d', leader: 'zhuyihai', cities: east, armies: [], chars: ['zhuyihai', 'zhanghuangyan', 'zhangmingzhen', 'zhangguowei'].filter(id => alive(s, id)), polity: 'ming', capital: east.includes('shaoxing') ? 'shaoxing' : east[0], doctrine: '凭钱塘江守浙东，与福建朝廷争正统。' });
-      lu.playable = false;
-      s.chars.zhuyihai.title = '监国';
-      setStance(s, 'lu', court, 'neutral');
-      setStance(s, 'lu', 'qing', 'war');
-      for (const n of east) if (s.cities[n].governor && s.chars[s.cities[n].governor!]?.faction !== 'lu') s.cities[n].governor = undefined;
+      if (courtOf(s) && topOf(s, courtOf(s)!) === topOf(s, s.player)) return;
+      luSplit(s);
     },
   }),
   ev({
@@ -177,6 +175,7 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'ss_tingzhou', kind: 'shishi', title: '汀州之变', from: T(1646, 7), to: T(1646, 10), node: 'tingzhou',
+    involves: s => (s.chars.zhuyujian && !Object.values(s.cities).some(c => c.id === s.chars.zhuyujian.location && topOf(s, c.controller) === topOf(s, s.chars.zhuyujian.faction)) ? [] : [s.chars.zhuyujian?.faction ?? '']),
     cond: s => courtLeader(s) === 'zhuyujian' && ['fuzhou', 'yanping', 'jianning'].some(n => qingHolds(s, n)),
     text: () => '清军入闽，隆武帝自延平出奔，行至汀州为清军追及，殉国。',
     history: '丙戌八月，隆武帝在汀州被清军所执，旋死。',
@@ -209,6 +208,7 @@ export const LATE_EVENTS: EventDef[] = [
   /* ---------------- 丁亥—己丑（1647—1649） ---------------- */
   ev({
     id: 'ss_kewang_dian', kind: 'shishi', title: '孙可望入滇', from: T(1647, 3), to: T(1647, 10), node: 'kunming',
+    involves: ['xi'],
     cond: s => !s.factions.xi?.defunct && s.flags.xi_south !== undefined,
     text: () => '大西余部经贵州入云南，平定沙定洲之乱，据有滇中。孙可望整饬军纪，劝课农桑，云南渐成抗清根本。',
     history: '丁亥年，孙可望等入滇，击败沙定洲，经营云南，“滇人大悦”。',
@@ -220,7 +220,7 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'ss_jinshenghuan', kind: 'shishi', title: '金声桓江西反正', from: T(1648, 1), to: T(1648, 3), node: 'nanchang',
-    cond: s => alive(s, 'jinshenghuan') && topOf(s, s.chars.jinshenghuan.faction) === 'qing' && qingHolds(s, 'nanchang') && !!courtOf(s),
+    cond: s => alive(s, 'jinshenghuan') && (topOf(s, s.player) !== 'qing' || s.chars.jinshenghuan.att.loyalty < 50) && topOf(s, s.chars.jinshenghuan.faction) === 'qing' && qingHolds(s, 'nanchang') && !!courtOf(s),
     text: () => '降清总兵金声桓不满清廷赏薄，与王得仁在南昌反正，奉永历正朔。江西大震。',
     history: '戊子正月，金声桓、王得仁据南昌反正；次年正月南昌城破，金声桓投水死。',
     source: SRC + '第十四章',
@@ -228,18 +228,18 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'ss_lichengdong', kind: 'shishi', title: '李成栋广东反正', from: T(1648, 4), to: T(1648, 6), node: 'guangzhou',
-    cond: s => alive(s, 'lichengdong') && topOf(s, s.chars.lichengdong.faction) === 'qing' && qingHolds(s, 'guangzhou') && !!courtOf(s),
+    cond: s => alive(s, 'lichengdong') && (topOf(s, s.player) !== 'qing' || s.chars.lichengdong.att.loyalty < 50) && topOf(s, s.chars.lichengdong.faction) === 'qing' && qingHolds(s, 'guangzhou') && !!courtOf(s),
     text: () => '清两广提督李成栋在广州剪辫反正，迎永历帝。广东全省一时复归明室。',
     history: '戊子四月，李成栋在广州反正，迎永历帝驻肇庆；次年三月兵败信丰，溺水死。',
     source: SRC + '第十四章',
     effect: s => {
       revolt(s, 'guangzhou', mingSide(s)!, 'lichengdong', 50000);
-      for (const n of ['zhaoqing', 'huizhougd', 'shaozhou', 'gaozhou']) if (qingHolds(s, n) && s.cities[n].garrison < 6000) { s.cities[n].controller = mingSide(s)!; report(s, { cat: '易主', node: n, text: `${nodeName(n)}随李成栋反正。` }); }
+      for (const n of ['zhaoqing', 'huizhougd', 'shaozhou', 'gaozhou']) if (qingHolds(s, n) && s.cities[n].garrison < 6000) { s.cities[n].controller = mingSide(s)!; report(s, { cat: '易主', act: 'revolt', from: 'qing', to: mingSide(s)!, node: n, text: `${nodeName(n)}随李成栋反正。` }); }
     },
   }),
   ev({
     id: 'ss_jiangxiang', kind: 'shishi', title: '姜瓖大同反正', from: T(1648, 12), to: T(1649, 3), node: 'datong',
-    cond: s => alive(s, 'jiangxiang') && qingHolds(s, 'datong'),
+    cond: s => alive(s, 'jiangxiang') && (topOf(s, s.player) !== 'qing' || s.chars.jiangxiang.att.loyalty < 50) && qingHolds(s, 'datong'),
     text: () => '大同总兵姜瓖易帜反清，山西、陕北各地纷纷响应。清廷震动，多尔衮亲征。',
     history: '戊子十二月，姜瓖在大同反清，晋陕一带响应者众；己丑八月大同城破。',
     source: '《清史稿·姜瓖传》；' + SRC,
@@ -254,6 +254,7 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'ss_hetengjiao', kind: 'shishi', title: '何腾蛟殉于湘潭', from: T(1649, 1), to: T(1649, 3), node: 'changsha',
+    involves: s => (s.chars.hetengjiao && qingHolds(s, s.chars.hetengjiao.location) ? [] : [s.chars.hetengjiao?.faction ?? '']),
     cond: s => alive(s, 'hetengjiao') && ['changsha', 'hengzhou', 'baoqing'].some(n => qingHolds(s, n)),
     text: () => '明督师何腾蛟在湘潭被清军所执，不屈而死。湖南明军群龙无首。',
     history: '己丑正月，何腾蛟在湘潭被清军俘获，绝食七日后遇害。',
@@ -263,6 +264,7 @@ export const LATE_EVENTS: EventDef[] = [
   /* ---------------- 庚寅—壬辰（1650—1652） ---------------- */
   ev({
     id: 'ss_qushisi', kind: 'shishi', title: '瞿式耜殉桂林', from: T(1650, 10), to: T(1651, 2), node: 'guilin',
+    involves: s => (s.chars.qushisi && qingHolds(s, s.chars.qushisi.location) ? [] : [s.chars.qushisi?.faction ?? '']),
     cond: s => alive(s, 'qushisi') && qingHolds(s, 'guilin'),
     text: () => '清定南王孔有德攻破桂林，留守瞿式耜与总督张同敞从容就义。',
     history: '庚寅十一月，孔有德破桂林，瞿式耜、张同敞被执不屈，同遇害。',
@@ -298,6 +300,7 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'ss_guilin_victory', kind: 'shishi', title: '桂林大捷', from: T(1652, 5), to: T(1652, 9), node: 'guilin',
+    involves: ['qing', 'xi'],
     cond: s => s.flags.xi_ming !== undefined && alive(s, 'lidingguo') && qingHolds(s, 'guilin') && !s.factions.xi?.defunct,
     text: () => '李定国出湖南，下全州，直捣桂林。清定南王孔有德兵败，阖门自焚。两广震动，“天下震动”。',
     history: '壬辰七月四日，李定国攻克桂林，孔有德自焚死。',
@@ -311,6 +314,7 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'ss_hengyang', kind: 'shishi', title: '衡州斩尼堪', from: T(1652, 10), to: T(1653, 1), node: 'hengzhou',
+    involves: ['qing', 'xi'],
     cond: s => s.flags.xi_ming !== undefined && alive(s, 'lidingguo') && alive(s, 'nikan'),
     text: () => '清敬谨亲王尼堪率军南下，在衡州中李定国伏兵，阵亡。李定国“两蹶名王”，声威大振。',
     history: '壬辰十一月二十三日，尼堪在衡州战死。',
@@ -338,6 +342,7 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'ss_three_routes', kind: 'shishi', title: '清军三路入滇', from: T(1658, 2), to: T(1658, 12), node: 'guiyang',
+    involves: ['qing'],
     cond: s => ['guiyang', 'zunyi', 'chenzhou', 'liuzhou', 'chongqing'].some(n => qingHolds(s, n)) && citiesOf(s, 'qing').length > 60,
     text: () => '清廷以吴三桂、洛托、卓布泰分兵三路，自四川、湖南、广西会攻贵州、云南。',
     history: '戊戌年清军三路入黔，十二月会师，次年正月入昆明。',
@@ -346,6 +351,7 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'ss_burma', kind: 'shishi', title: '永历入缅', from: T(1659, 1), to: T(1659, 6), node: 'yongchang',
+    involves: ['qing'],
     cond: s => courtLeader(s) === 'zhuyoulang' && qingHolds(s, 'kunming'),
     text: () => '清军入昆明，永历帝西走永昌，渡怒江入缅甸。李定国转战滇西，磨盘山一战，清军伤亡甚重。',
     history: '己亥正月清军入昆明；闰正月永历帝入缅；二月磨盘山之战。',
@@ -397,14 +403,11 @@ export const LATE_EVENTS: EventDef[] = [
     text: () => '清廷下令沿海居民内迁三十至五十里，片板不许下海，以断郑氏接济。沿海村落尽成废墟。',
     history: '顺治十八年八月，清廷颁迁界令，自山东至广东沿海居民内迁。',
     source: SRC + '第二十五章',
-    effect: s => {
-      for (const c of Object.values(s.cities)) {
-        if (!qingHolds(s, c.id) || !['port'].includes(NODE[c.id].kind) || !['福建', '广东', '浙江', '南直隶', '山东'].includes(NODE[c.id].area)) continue;
-        bump(s, c.id, 'commerce', -20, '迁界', { kind: 'event', ref: 'xs_qianjie' });
-        bump(s, c.id, 'minxin', -8, '迁界', { kind: 'event', ref: 'xs_qianjie' });
-        if (c.trade) c.trade = Math.round(c.trade * 50) / 100;
-      }
-    },
+    chooser: ['qing'],
+    choices: () => [
+      { label: '颁迁界令', desc: '沿海清属港口商业 −20、民心 −8、海贸减半，以断郑氏接济。（史实）', apply: s2 => { qianjie(s2); return '沿海居民内迁。'; } },
+      { label: '不迁界，严守海口', desc: '沿海民生无损；郑氏仍可从沿海得到接济。', apply: () => '沿海如旧。' },
+    ],
   }),
   ev({
     id: 'ss_taiwan', kind: 'shishi', title: '东征台湾', from: T(1661, 3), to: T(1662, 1), node: 'dayuan',
@@ -421,6 +424,7 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'ss_yongli_end', kind: 'shishi', title: '永历帝蒙难', from: T(1661, 7), to: T(1662, 6), node: 'kunming',
+    involves: s => (s.chars.zhuyoulang && !Object.values(s.cities).some(c => c.id === s.chars.zhuyoulang.location && topOf(s, c.controller) === topOf(s, s.chars.zhuyoulang.faction)) ? [] : [s.chars.zhuyoulang?.faction ?? '']),
     cond: s => courtLeader(s) === 'zhuyoulang' && qingHolds(s, 'kunming') && citiesOf(s, courtOf(s)!).length <= 3,
     text: () => '缅甸发生政变，新王将永历帝交给吴三桂。永历帝被押回昆明，以弓弦绞死于篦子坡。',
     history: '辛丑七月咒水之难；十二月缅人献永历帝于吴三桂；壬寅四月永历帝遇害。',
@@ -473,6 +477,7 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'xs_shunzhi_rule', kind: 'xiansuo', title: '顺治亲政', from: T(1651, 2), to: T(1651, 2), node: 'beijing',
+    involves: ['qing'],
     text: () => '顺治帝亲政，重用汉官，整顿吏治，蠲免钱粮，北方渐趋安定。',
     history: '顺治八年正月，福临亲政。',
     source: '《清史稿·世祖本纪》',
@@ -513,7 +518,7 @@ function zhengSplit(s: GameState, playerFollowsChenggong: boolean) {
   if (heir) s.factions.zheng.leader = heir;
   setStance(s, 'zheng', 'zhengcg', 'war');
   if (s.player === 'zheng' && playerFollowsChenggong) s.player = 'zhengcg';
-  report(s, { cat: '易主', urgent: true, node: 'xiamen', text: `郑氏分裂：郑芝龙降清北上，郑成功率部据中左所抗清。${s.player === 'zhengcg' ? '你统领郑成功部。' : ''}` });
+  report(s, { cat: '易主', act: 'revolt', from: 'zheng', to: 'zhengcg', urgent: true, node: 'xiamen', text: `郑氏分裂：郑芝龙降清北上，郑成功率部据中左所抗清。${s.player === 'zhengcg' ? '你统领郑成功部。' : ''}` });
 }
 
 /** 孙可望降清：孙出走，大西余部由李定国统领 */
@@ -555,4 +560,27 @@ function tifaApply(s: GameState, strict: 0 | 1) {
     bump(s, c.id, 'minxin', strict ? -8 : -2, strict ? '剃发令' : '剃发令暂缓', { kind: 'event', ref: 'ss_tifa' });
   }
   if (strict) for (const ch of Object.values(s.chars)) if (ch.status === 'active' && s.factions[ch.faction]?.polity === 'ming') adjustAtt(s, ch.id, 'hawk', 5, '闻剃发令');
+}
+
+/** 鲁王监国：浙东诸城另立一家 */
+function luSplit(s: GameState) {
+      const court = courtOf(s)!;
+      const east = ['shaoxing', 'ningbo', 'taizhou', 'zhoushan', 'wenzhou', 'chuzhouzj'].filter(n => s.factions[ctrl(s, n) ?? '']?.polity === 'ming' && topOf(s, ctrl(s, n)!) === court && ctrl(s, n) !== 'zheng');
+      if (!east.length) return;
+      const lu = splitFaction(s, ctrl(s, east[0])!, { id: 'lu', name: '鲁监国', short: '鲁', color: '#a0522d', leader: 'zhuyihai', cities: east, armies: [], chars: ['zhuyihai', 'zhanghuangyan', 'zhangmingzhen', 'zhangguowei'].filter(id => alive(s, id)), polity: 'ming', capital: east.includes('shaoxing') ? 'shaoxing' : east[0], doctrine: '凭钱塘江守浙东，与福建朝廷争正统。' });
+      lu.playable = false;
+      s.chars.zhuyihai.title = '监国';
+      setStance(s, 'lu', court, 'neutral');
+      setStance(s, 'lu', 'qing', 'war');
+      for (const n of east) if (s.cities[n].governor && s.chars[s.cities[n].governor!]?.faction !== 'lu') s.cities[n].governor = undefined;
+}
+
+/** 迁界：沿海清属港口内迁 */
+function qianjie(s: GameState) {
+      for (const c of Object.values(s.cities)) {
+        if (!qingHolds(s, c.id) || !['port'].includes(NODE[c.id].kind) || !['福建', '广东', '浙江', '南直隶', '山东'].includes(NODE[c.id].area)) continue;
+        bump(s, c.id, 'commerce', -20, '迁界', { kind: 'event', ref: 'xs_qianjie' });
+        bump(s, c.id, 'minxin', -8, '迁界', { kind: 'event', ref: 'xs_qianjie' });
+        if (c.trade) c.trade = Math.round(c.trade * 50) / 100;
+      }
 }
