@@ -244,6 +244,11 @@ export class FieldView extends RtView {
   }
 
   /** 点选：一营（含敌营），或地面一点 */
+  /** 某营在画布上的点选位置（测试与截图用，与 pick 同一算法） */
+  unitScreen(id: string): [number, number] | null {
+    const u = this.sim.units.find(x => x.id === id); if (!u) return null;
+    const [x, y, s] = this.PU(u.x, u.y); return [x, y - this.H * s * 0.1];
+  }
   pick(sx: number, sy: number): { unit?: string; ground?: [number, number] } {
     let best: string | undefined, bd = 1e9;
     for (const u of this.sim.units) {

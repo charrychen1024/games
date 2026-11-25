@@ -269,6 +269,19 @@ export class SiegeView extends RtView {
   }
 
   /** 点选：一营或城墙一段 */
+  /** 某营在画布上的点选位置（测试与截图用，与 pick 同一算法） */
+  unitScreen(id: string): [number, number] | null {
+    const u = this.sim.units.find(x => x.id === id); if (!u) return null;
+    const w = this.where(u); if (!w) return null;
+    const [x, y, s] = this.PU(w.x, w.y, w.z); return [x, y - this.H * s * 0.1];
+  }
+  /** 某段城墙在画布上的点选位置 */
+  segScreen(seg: number): [number, number] {
+    const [, wy, ws] = this.P(500, WALL_Y);
+    const h = WALL_H * ws * this.H / 260;
+    const [x] = this.P((seg + 0.5) * 1000 / SEGMENTS, WALL_Y);
+    return [x, wy - h * 0.5];
+  }
   pick(sx: number, sy: number): { unit?: string; seg?: number } {
     let best: string | undefined, bd = 1e9;
     for (const u of this.sim.units) {

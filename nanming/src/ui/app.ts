@@ -395,6 +395,8 @@ export class App {
     if (this.forcedModal && /^[1-9]$/.test(e.key)) { ($(`#modal .opt[data-choice="${+e.key - 1}"]`) as HTMLElement | null)?.click(); return; }
     if (!this.s || this.resolving || !$('#modal').classList.contains('hidden')) return;
     if (e.key === 'r' || e.key === 'R') this.toggleReport();
+    // 政令台快捷键 1—9
+    if (/^[1-9]$/.test(e.key) && !$('#cmddock').classList.contains('hidden')) { ($(`#cmddock .dk-btn[data-key="${e.key}"]`) as HTMLElement | null)?.click(); return; }
     const sel = this.map.view.selectedArmy;
     if (sel && (e.key === 'm' || e.key === 'M')) $('#ring-march')?.click();
     if (sel && (e.key === 'h' || e.key === 'H')) $('#ring-hold')?.click();
@@ -705,7 +707,7 @@ export class App {
     this.showRing(id);
     this.renderArmyBar();
   }
-  closePanel() { $('#panel').classList.add('hidden'); this.map.view.selected = null; this.map.view.selectedArmy = null; this.hideRing(); this.renderArmyBar(); }
+  closePanel() { $('#panel').classList.add('hidden'); this.renderDock(null); this.map.view.selected = null; this.map.view.selectedArmy = null; this.hideRing(); this.renderArmyBar(); }
 
   /* ================= 军队栏与军令环 ================= */
   renderArmyBar() {
@@ -865,51 +867,28 @@ export class App {
     const sec = h('div', { class: 'sec' });
     panel.append(sec);
     if (this.cityTab === 'main') {
-      sec.append(h('div', { class: 'sec-title' }, ic('troops'), '城情'));
-      sec.append(h('div', { class: 'tiles' },
-        this.tile('troops', '驻军', known ? wan(c.garrison) : roughTroops(c.garrison), { id: 'city-garrison', d: known ? delta('garrison') : 0, ...(known ? { raw: c.garrison, key: id + ':garrison' } : {}) }),
-        this.tile('wall', '城防', String(Math.round(c.wall)), { meter: c.wall, raw: c.wall, key: id + ':wall', fmt: n => String(Math.round(n)) }),
-        this.tile('minxin', '民心', known ? String(Math.round(c.minxin)) : c.minxin > 60 ? '稳' : c.minxin > 40 ? '浮动' : '离散', { meter: known ? c.minxin : undefined, ...(known ? { raw: c.minxin, key: id + ':minxin', fmt: (n: number) => String(Math.round(n)) } : {}) }),
-        this.tile('grain', '仓粮', known ? wan(c.grain - this.pendingSpend(id, 'grain')) : '不详', { id: 'city-grain', d: known ? delta('grain') : 0, ...(known ? { raw: c.grain - this.pendingSpend(id, 'grain'), key: id + ':grain' } : {}) }),
-        this.tile('silver', '府库', known ? wan(c.silver - this.pendingSpend(id, 'silver')) : '不详', { id: 'city-silver', d: known ? delta('silver') : 0, ...(known ? { raw: c.silver - this.pendingSpend(id, 'silver'), key: id + ':silver' } : {}) }),
-        this.tile('pop', '人口', `${Math.round(c.pop)}`, { unit: '万', raw: c.pop, key: id + ':pop', fmt: n => String(Math.round(n)) }),
-      ));
+      // 看板：三项家底（兵、粮、银，含每月进出）→ 三枚城况轮盘（城防、民心、吏治）→ 三条经营刻度（农、商、文）→ 方针与市价徽记
+      const inc = known ? monthlyIncome(s, c) : null, up = known ? upkeepOf(s, c) : null;
+      const gNet = inc && up ? inc.grain - up.grain : 0, sNet = inc && up ? inc.silver + inc.trade - up.silver : 0;
+      sec.append(h('div', { class: 'cres' },
+        this.resCounter('troops', '驻军', known ? wan(c.garrison) : roughTroops(c.garrison), known ? delta('garrison') : 0, '上月', { id: 'city-garrison', ...(known ? { raw: c.garrison, key: id + ':garrison' } : {}) }),
+        this.resCounter('grain', '仓粮', known ? wan(c.grain - this.pendingSpend(id, 'grain')) : '不详', gNet, '每月', { id: 'city-grain', ...(known ? { raw: c.grain - this.pendingSpend(id, 'grain'), key: id + ':grain' } : {}) }),
+        this.resCounter('silver', '府库', known ? wan(c.silver - this.pendingSpend(id, 'silver')) : '不详', sNet, '每月', { id: 'city-silver', ...(known ? { raw: c.silver - this.pendingSpend(id, 'silver'), key: id + ':silver' } : {}) })));
+      sec.append(h('div', { class: 'crings' },
+        this.ring('wall', '城防', c.wall, String(Math.round(c.wall))),
+        this.ring('minxin', '民心', known ? c.minxin : -1, known ? String(Math.round(c.minxin)) : c.minxin > 60 ? '稳' : c.minxin > 40 ? '浮' : '散'),
+        this.ring('order', '吏治', known ? c.order : -1, known ? String(Math.round(c.order)) : '?')));
       if (known) {
-        const inc = monthlyIncome(s, c), up = upkeepOf(s, c);
-        sec.append(h('div', { class: 'rows', style: { marginTop: '6px' } },
-          h('div', { class: 'row' }, ic('grain'), h('span', { class: 't' }, '每月粮 进 / 出'), h('b', { class: inc.grain >= up.grain ? 'up' : 'down' }, `${wan(inc.grain)} / ${wan(up.grain)}`)),
-          h('div', { class: 'row' }, ic('silver'), h('span', { class: 't' }, '每月银 进 / 出'), h('b', { class: inc.silver + inc.trade >= up.silver ? 'up' : 'down' }, `${wan(inc.silver + inc.trade)} / ${wan(up.silver)}`)),
-          h('div', { class: 'row', id: 'city-price', 'data-tip': '粮价随地区、季节、战事与本城存粮浮动；粮贱时籴、粮贵时粜' }, ic('commerce'), h('span', { class: 't' }, '市价 · 市面'), h('b', null, `每石 ${grainPrice(s, c).toFixed(2)} 两 · 月容 ${wan(marketCap(s, c))} 石`))));
-      }
-      // 行动
-      const acts = h('div', { class: 'acts' });
-      const has = (k: Order['kind']) => this.orders.some(o => o.kind === k && ((o as any).node === id || (o as any).from === id));
-      const A = (aid: string, icon: string, label: string, onclick: () => void, done = false, primary = false) => h('button', { class: 'act' + (done ? ' done' : '') + (primary ? ' primary' : ''), id: aid, onclick }, ic(icon), label);
-      if (mine) {
-        acts.append(A('act-policy', 'policy', '方针', () => this.formPolicy(id), has('policy')),
-          A('act-recruit', 'recruit', '募兵', () => this.formRecruit(id), has('recruit')),
-          A('act-trade', 'grain', '粜籴', () => this.formTrade(id), has('trade')),
-          A('act-loan', 'silver', '劝饷', () => this.formLoan(id), has('loan')),
-          A('act-raise', 'army', '出兵', () => this.formRaise(id), this.orders.some(o => o.kind === 'raise' && o.node === id), c.garrison >= 3000),
-          A('act-transfer', 'transfer', '调拨', () => this.formTransfer(id), has('transfer')),
-          A('act-appoint', 'appoint', '任命', () => this.formAppoint(id), has('appoint')));
-      } else if (vassal) {
-        acts.append(A('act-reward', 'reward', '犒赏', () => this.formReward(c.controller)), A('act-supply', 'transfer', '拨粮', () => this.formTransfer(s.factions[s.player].capital, id)));
-      } else if (!friendly(s, s.player, c.controller)) {
-        acts.append(A('act-persuade', 'persuade', '劝降', () => this.formPersuade(id), s.missions.some(m => (m.order as any).node === id) || this.orders.some(o => o.kind === 'persuade' && o.node === id), true));
-      }
-      if (acts.childNodes.length) { sec.append(h('div', { class: 'sec-title' }, ic('policy'), mine ? '政令' : vassal ? '下属' : '交涉')); sec.append(acts); }
-      if (known) {
-        sec.append(h('div', { class: 'sec-title' }, ic('agri'), '长期'));
-        sec.append(h('div', { class: 'tiles' },
-          this.tile('order', '吏治', String(Math.round(c.order)), { meter: c.order }),
-          this.tile('agri', '农业', String(Math.round(c.agri)), { meter: c.agri }),
-          this.tile('commerce', '商业', String(Math.round(c.commerce)), { meter: c.commerce }),
-          this.tile('edu', '文教', String(Math.round(c.edu)), { meter: c.edu }),
-          this.tile('policy', '方针', POLICY_NAME[((this.orders.find(o => o.kind === 'policy' && o.node === id) as any)?.policy ?? c.policy) as Policy]),
-          c.trade ? this.tile('port', '海贸', `×${c.trade}`) : this.tile('city', '类型', n.detail ? '细作' : '大区'),
-        ));
-      }
+        const pips = (icon: string, k: string, v: number) => h('div', { class: 'cpip' }, ic(icon), h('span', { class: 'k' }, k),
+          h('div', { class: 'pips' }, ...Array.from({ length: 10 }, (_, i) => h('i', { class: v >= (i + 1) * 10 ? 'on' : v > i * 10 ? 'half' : '' }))), h('b', null, String(Math.round(v))));
+        sec.append(h('div', { class: 'cpips' }, pips('agri', '农', c.agri), pips('commerce', '商', c.commerce), pips('edu', '文', c.edu)));
+        const pol = ((this.orders.find(o => o.kind === 'policy' && o.node === id) as any)?.policy ?? c.policy) as Policy;
+        sec.append(h('div', { class: 'cchips' },
+          h('span', { class: 'cseal', 'data-tip': POLICY_HINT[pol] }, ic(POLICY_ICON[pol]), h('small', null, '方针'), h('b', null, POLICY_NAME[pol])),
+          h('span', { class: 'cchip' }, ic('pop'), h('b', null, String(Math.round(c.pop))), h('small', null, '万口')),
+          h('span', { class: 'cchip', id: 'city-price', 'data-tip': `粮价随地区、季节、战事与本城存粮浮动；粮贱时籴、粮贵时粜。市面每月可容 ${wan(marketCap(s, c))} 石` }, ic('commerce'), h('b', null, grainPrice(s, c).toFixed(2)), h('small', null, '两/石')),
+          c.trade ? h('span', { class: 'cchip' }, ic('port'), h('b', null, `×${c.trade}`), h('small', null, '海贸')) : null));
+      } else sec.append(h('div', { class: 'cfog' }, ic('info'), '非我方之城 · 钱粮虚实难知'));
       if (here.length) {
         sec.append(h('div', { class: 'sec-title' }, ic('army'), `城下军队 ${here.length}`));
         for (const a of here.slice(0, 4)) sec.append(this.unitRow(a.id));
@@ -922,6 +901,66 @@ export class App {
       if (!here.length) sec.append(h('div', { class: 'note' }, '无'));
       for (const a of here) sec.append(this.unitRow(a.id));
     }
+    this.renderDock(id);
+  }
+
+  /** 政令台：选中城池时浮在地图下方，与右侧看板分开。按 1—7 也可下令 */
+  renderDock(id: string | null) {
+    const dock = $('#cmddock');
+    clear(dock);
+    const s = this.s;
+    if (!s || !id || !s.cities[id] || this.resolving || s.ended) { dock.classList.add('hidden'); return; }
+    const c = s.cities[id];
+    const ctrl = s.factions[c.controller];
+    const mine = c.controller === s.player, vassal = !mine && ctrl.overlord === s.player;
+    const has = (k: Order['kind']) => this.orders.some(o => o.kind === k && ((o as any).node === id || (o as any).from === id));
+    type Cmd = { id: string; icon: string; label: string; tip: string; fn: () => void; done?: boolean; primary?: boolean; free?: boolean };
+    const cmds: Cmd[] = [];
+    if (mine) cmds.push(
+      { id: 'act-policy', icon: 'policy', label: '方针', tip: '定下本城逐月照行的方针', fn: () => this.formPolicy(id), done: has('policy') },
+      { id: 'act-recruit', icon: 'recruit', label: '募兵', tip: `本月最多再募 ${wan(recruitLeft(s, id))} 人`, fn: () => this.formRecruit(id), done: has('recruit') },
+      { id: 'act-raise', icon: 'army', label: '出兵', tip: '抽驻军编成一军，择将统领', fn: () => this.formRaise(id), done: this.orders.some(o => o.kind === 'raise' && o.node === id), primary: c.garrison >= 3000 },
+      { id: 'act-transfer', icon: 'transfer', label: '调拨', tip: '把钱粮运往别城', fn: () => this.formTransfer(id), done: has('transfer') },
+      { id: 'act-trade', icon: 'grain', label: '粜籴', tip: '买粮卖粮', fn: () => this.formTrade(id), done: has('trade') },
+      { id: 'act-loan', icon: 'silver', label: '劝饷', tip: '向绅商劝捐银两（伤民心）', fn: () => this.formLoan(id), done: has('loan') },
+      { id: 'act-appoint', icon: 'appoint', label: '任命', tip: '派人主政此城', fn: () => this.formAppoint(id), done: has('appoint') });
+    else if (vassal) cmds.push(
+      { id: 'act-reward', icon: 'reward', label: '犒赏', tip: `犒赏${ctrl.short}部，提高服从`, fn: () => this.formReward(c.controller) },
+      { id: 'act-supply', icon: 'transfer', label: '拨粮', tip: '从治所拨钱粮给此城', fn: () => this.formTransfer(s.factions[s.player].capital, id) });
+    else if (!friendly(s, s.player, c.controller)) cmds.push(
+      { id: 'act-persuade', icon: 'persuade', label: '劝降', tip: '遣使入城说降守将', fn: () => this.formPersuade(id), done: s.missions.some(m => (m.order as any).node === id) || this.orders.some(o => o.kind === 'persuade' && o.node === id), primary: true });
+    if (!cmds.length) { dock.classList.add('hidden'); return; }
+    const bud = orderBudget(s, s.player), used = ordersUsed(this.orders);
+    dock.classList.remove('hidden');
+    dock.append(h('div', { class: 'dk-seal', style: { '--fc': ctrl.color } as any },
+      h('b', null, NODE[id].name), h('small', null, mine ? '政令' : vassal ? '下属' : '交涉'),
+      h('div', { class: 'dk-pips', 'data-tip': `本月政令 ${used}/${bud.total}` }, ...Array.from({ length: bud.total }, (_, i) => h('i', { class: i < used ? 'used' : '' })))));
+    const row = h('div', { class: 'dk-row' });
+    cmds.forEach((m, i) => row.append(h('button', { class: 'dk-btn' + (m.done ? ' done' : '') + (m.primary ? ' primary' : ''), id: m.id, 'data-tip': m.tip, 'data-key': String(i + 1), onclick: () => { click(); m.fn(); } },
+      h('span', { class: 'dk-medal' }, ic(m.icon), m.done ? h('span', { class: 'dk-ok' }, ic('ok')) : null), h('b', null, m.label), h('kbd', null, String(i + 1)))));
+    dock.append(row);
+    if (!isReduced() && dock.dataset.city !== id) gsap.fromTo(row.children, { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, stagger: 0.03, ease: 'back.out(1.7)' });
+    dock.dataset.city = id;
+  }
+
+  /** 家底计数：大徽章、大数字、每月进出 */
+  resCounter(icon: string, k: string, v: string, d: number, dl: string, opts: { id?: string; raw?: number; key?: string }): HTMLElement {
+    const el = this.tile(icon, k, v, { ...opts });
+    const num = el.querySelector('.num')!;
+    return h('div', { class: 'rc' },
+      h('span', { class: 'rc-medal' }, ic(icon)),
+      h('div', { class: 'rc-v', id: opts.id }, num),
+      h('small', { class: 'rc-k' }, k),
+      d ? h('span', { class: 'rc-d ' + (d > 0 ? 'up' : 'down') }, `${d > 0 ? '▲' : '▼'}${wan(Math.abs(d))}`, h('i', null, dl)) : h('span', { class: 'rc-d flat' }, '—'));
+  }
+
+  /** 城况轮盘：圆环表数值，中间是图标 */
+  ring(icon: string, k: string, v: number, label: string): HTMLElement {
+    const pct = Math.max(0, Math.min(100, v));
+    const col = v < 0 ? 'var(--faint)' : mcol(v);
+    return h('div', { class: 'cring', 'data-tip': `${k} ${label}` },
+      h('div', { class: 'cr-disc', style: { background: `conic-gradient(${col} ${v < 0 ? 0 : pct * 3.6}deg, rgba(255,255,255,0.08) 0)` } }, h('div', { class: 'cr-in' }, ic(icon))),
+      h('b', null, label), h('small', null, k));
   }
 
   ledgerView(id: string, turn: number): HTMLElement {
@@ -980,6 +1019,7 @@ export class App {
     const mine = a.faction === s.player;
     const vassal = f.overlord === s.player;
     const visible = mine || vassal || friendly(s, s.player, a.faction);
+    this.renderDock(null);
     const panel = this.panelShell(f.color, a.name, f.name, 'army', 'army-name');
     panel.classList.remove('hidden');
     const sec = h('div', { class: 'sec' });
@@ -1805,6 +1845,7 @@ export class App {
   async endTurn() {
     if (!this.s || this.resolving || this.s.ended) return;
     this.resolving = true;
+    this.renderDock(null);
     endTurnSfx();
     this.hideRing();
     gsap.fromTo('#btn-next', { scale: 0.9 }, { scale: 1, duration: 0.4, ease: 'back.out(3)' });

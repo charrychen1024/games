@@ -1,9 +1,10 @@
-/* 即时战斗 · 界面与操控（攻城、守城、野战、水战共用）：布阵 → 即时交战（可暂停、倍速、随时改令）→ 收尾。
+/* 即时战斗 · 界面与操控（攻城、守城、野战、水战共用）：一开场就交战（可暂停、倍速、随时改令）→ 打完自动收场。
  * 规则在 core/siege.ts、core/field.ts；画面在 siegeView.ts、fieldView.ts。
- * 指挥台：底栏左边是我军各营卡片，右边是全军号令与速度；选中一营时，战场下方浮出这一营的号令牌。 */
+ * 只有一种下令法：在战场上点我军一营选中，再点目标——点敌营即进击（火器、炮营即开火），点地面即移阵，
+ * 点城墙按兵种定（步营登城、撞门，炮营轰墙，火器压制；守军守段、再点本段修城）。底栏只放看板（各营兵数士气）与全军号令。 */
 import type { GameState } from '../core/types';
 import type { BattleState } from '../core/battle';
-import { createSiege, stepSiege, aiCommands, command, drum, defDecision, toBattleResult, runSiege, legal, segName, persuade, persuadeOdds, SEGMENTS, GATE_SEG, type SUnit, type SOrder } from '../core/siege';
+import { createSiege, stepSiege, aiCommands, command, drum, defDecision, toBattleResult, runSiege, legal, segName, persuade, persuadeOdds, SEGMENTS, GATE_SEG, WALL_Y, type SUnit, type SOrder } from '../core/siege';
 import { createField, stepField, aiField, commandF, drumF, legalF, toFieldResult, runField, KIND_NAME, DUSK, type FUnit, type FOrder } from '../core/field';
 import { SiegeView } from './siegeView';
 import { FieldView } from './fieldView';
@@ -20,7 +21,6 @@ const ic = (name: string) => { const sp = h('span', { style: { display: 'content
 const KIND_ICON: Record<string, string> = { inf: 'inf', cav: 'cav', gun: 'gun', art: 'bombard', fire: 'fire' };
 type AnyUnit = SUnit | FUnit;
 type AnyOrder = SOrder | FOrder;
-interface Tile { key: string; label: string; icon: string; tip: string; order?: AnyOrder; pick?: 'seg' | 'target' | 'ground'; t?: string }
 
 const SIEGE_ORDER_TEXT = (o: SOrder): string => {
   switch (o.t) {
@@ -72,7 +72,6 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   };
   let phase: 'deploy' | 'fight' | 'end' = 'deploy';
   let paused = true, speed = 1, autoMe = false, manual = false;
-  let pending: Tile | null = null;
   let raf = 0, last = performance.now(), acc = 0, aiNext = 0, lastEv = 0, sfxNext = 0;
   const colorOf = (f: string) => s.factions[f]?.color ?? '#777';
   const myUnits = () => units().filter(u => u.side === side && u.troops >= 1 && (u.state !== 'gone' || phase === 'end'));
@@ -82,7 +81,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   const hud = h('div', { class: 'shud' });
   const toast = h('div', { class: 'stoast' });
   const banner = h('div', { class: 'sbanner hidden' });
-  const tray = h('div', { class: 'otray hidden' });
+  const tray = h('div', { class: 'selchip hidden' });
   const hint = h('div', { class: 'rt-hint' });
   stage.append(hud, toast, banner, tray, hint);
   const face = (id: string, sz: number) => { const c = s.chars[id]; const f = c ? s.factions[c.faction] : undefined; return c ? h('img', { class: 'bface', src: portrait(c, f?.color ?? '#6a5a48', f?.polity ?? 'none'), style: { width: sz + 'px', height: sz + 'px' } }) : h('div', { class: 'bface coin', style: { width: sz + 'px', height: sz + 'px', background: '#555' } }, '守'); };
@@ -142,67 +141,34 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     setIntensity(Math.min(1, 0.2 + (1 - sim.resolve[side] / 100) * 0.6 + (ssim ? ssim.capture / 200 : 0)));
   }
 
-  /* ---------- 一营可下的令 ---------- */
-  function tilesFor(u: AnyUnit): Tile[] {
-    const out: Tile[] = [];
-    const add = (t: Tile) => { const probe = t.order ?? (t.pick === 'seg' ? ({ t: t.t, seg: GATE_SEG } as SOrder) : t.pick === 'target' ? ({ t: t.t, target: units().find(x => x.side === foe)?.id ?? '' } as FOrder) : ({ t: 'move', x: 500, y: 500 } as AnyOrder)); if (isLegal(u, probe)) out.push(t); };
+  /* ---------- 选中一营：战场下方一枚小牌，写明此营现况和“点哪里做什么” ---------- */
+  function clickGuide(u: AnyUnit): string {
     if (ssim) {
-      if (side === 'att') {
-        add({ key: 'assault', label: '登城', icon: 'storm', tip: '点一段城墙：架云梯攀登；有缺口则由缺口入城', pick: 'seg', t: 'assault' });
-        add({ key: 'ram', label: '撞门', icon: 'navy', tip: '推冲车撞城门（城头箭铳专打撞门者）', order: { t: 'ram' } });
-        add({ key: 'bombard', label: '炮击', icon: 'bombard', tip: '点一段城墙：轰塌它', pick: 'seg', t: 'bombard' });
-        add({ key: 'cover', label: '压制', icon: 'volley', tip: '点一段城墙：火器压制城头守军，掩护登城', pick: 'seg', t: 'cover' });
-        add({ key: 'enter', label: '入城', icon: 'capture', tip: '由城门或缺口杀入城中', order: { t: 'enter' } });
-        add({ key: 'hold', label: '待命', icon: 'hold', tip: '退到箭铳射程之外待命', order: { t: 'hold', x: u.x, y: Math.max(u.y, 560) } });
-        add({ key: 'retreat', label: '撤退', icon: 'withdraw', tip: '此营撤出战场', order: { t: 'retreat' } });
-      } else {
-        add({ key: 'man', label: '守段', icon: 'hold', tip: '点一段城墙：去守它', pick: 'seg', t: 'man' });
-        add({ key: 'repair', label: '修城', icon: 'repair', tip: '点一段城墙：边守边修（火力减半）', pick: 'seg', t: 'repair' });
-        add({ key: 'sortie', label: '出击', icon: 'sortie', tip: '开门出击城门外之敌（城门须完好）', order: { t: 'sortie' } });
-        add({ key: 'reserve', label: '预备', icon: 'city', tip: '回城内待命，敌入城时巷战', order: { t: 'reserve' } });
-      }
-    } else {
-      const ranged = u.kind === 'gun' || u.kind === 'art';
-      if (ranged) add({ key: 'fire', label: u.kind === 'art' ? '炮击' : '射击', icon: u.kind === 'art' ? 'bombard' : 'volley', tip: '点一营敌军：推进到射程之内向它开火', pick: 'target', t: 'fire' });
-      add({ key: 'attack', label: u.kind === 'cav' ? '冲锋' : u.kind === 'fire' ? '纵火' : naval ? '接舷' : '进击', icon: u.kind === 'cav' ? 'charge' : u.kind === 'fire' ? 'fire' : 'attack', tip: u.kind === 'cav' ? '点一营敌军：纵马冲阵（有冲势时杀伤加倍，绕到背后更狠）' : u.kind === 'fire' ? '点一营敌船：火船撞上去点燃，顺风大成' : '点一营敌军：压上去厮杀', pick: 'target', t: 'attack' });
-      add({ key: 'move', label: '移阵', icon: 'move', tip: '点战场一处：移到那里（可绕到敌营侧后）', pick: 'ground', t: 'move' });
-      add({ key: 'hold', label: '坚守', icon: 'hold', tip: '原地结阵：火器原地射击，敌来则迎战', order: { t: 'hold' } });
-      add({ key: 'retreat', label: '撤退', icon: 'withdraw', tip: '此营撤出战场', order: { t: 'retreat' } });
+      if (side === 'def') return '点城墙一段：调去守它 · 点本营所守之段：边守边修 · 点城外敌营：开门出击 · 点城内：回城预备';
+      if (u.kind === 'art') return '点城墙一段：炮击 · 点地面：移阵';
+      if (u.kind === 'gun') return '点城墙一段：火器压制城头 · 点地面：移阵';
+      if (u.kind === 'cav') return '点城门或缺口：杀入城中 · 点地面：移阵';
+      return '点城门：撞门 · 点城墙：登城 · 点缺口：入城 · 点地面：移阵';
     }
-    return out;
+    const ranged = u.kind === 'gun' || u.kind === 'art';
+    return `点敌营：${ranged ? (u.kind === 'art' ? '炮击' : '射击') : u.kind === 'cav' ? '冲锋' : u.kind === 'fire' ? '纵火' : naval ? '接舷' : '进击'} · 点地面：移阵 · 再点本营：原地坚守`;
   }
-  function useTile(u: AnyUnit, t: Tile) {
-    click();
-    if (t.pick) { pending = pending?.key === t.key ? null : t; if (fview) fview.aiming = !!pending; renderTray(); return; }
-    issue(u, t.order!);
-  }
-
-  /* ---------- 号令牌（选中一营时浮在战场下方） ---------- */
   function renderTray() {
     clear(tray);
     const u = selUnit();
-    hint.classList.toggle('hidden', !!u || phase === 'end');
-    if (!u) {
+    if (!u || phase === 'end') {
       tray.classList.add('hidden');
-      hint.textContent = phase === 'deploy' ? (siege && side === 'def' ? '' : '点选我军一营，再点战场把它挪到想要的位置') : siege ? '点选我军一营，再点城墙下令 · Tab 换营 · 空格暂停' : '点选我军一营，再点敌营进击、点地面移阵 · Tab 换营 · 空格暂停';
-      hint.classList.toggle('hidden', !hint.textContent || phase === 'end');
+      hint.textContent = phase === 'deploy' || phase === 'end' ? '' : '点我军一营选中，再点目标下令 · 右键或 Esc 取消 · 空格暂停';
+      hint.classList.toggle('hidden', !hint.textContent);
       return;
     }
+    hint.classList.add('hidden');
     tray.classList.remove('hidden');
     const kn = kindLabel(u);
     tray.append(h('div', { class: 'ot-head' }, ic(KIND_ICON[u.kind] ?? 'inf'), h('b', null, u.name), kn ? h('i', null, kn) : null,
       h('span', { class: 'ot-chip' }, ic('troops'), wan(u.troops)), h('span', { class: 'ot-chip' }, ic('morale'), String(Math.round(u.morale))), h('span', { class: 'ot-chip' }, ic('supply'), String(Math.round(u.stamina))),
-      h('em', null, `${orderText(u.order)} · ${STATE_TEXT[u.state] ?? ''}`),
-      h('button', { class: 'ot-x', onclick: () => { view.selected = null; pending = null; renderTray(); renderUi(); } }, '✕')));
-    if (phase === 'deploy') { tray.append(h('div', { class: 'ot-tip' }, ic('locate'), '点战场上本阵之内的空地，把此营挪过去')); return; }
-    const keys = 'QWERTYU';
-    const row = h('div', { class: 'ot-tiles' });
-    tilesFor(u).forEach((t, i) => row.append(h('button', { class: 'otile' + (pending?.key === t.key ? ' on' : ''), 'data-order': t.key, 'data-tip': t.tip, title: t.tip, onclick: () => useTile(u, t) }, ic(t.icon), h('b', null, t.label), h('kbd', null, keys[i]))));
-    tray.append(row);
-    if (pending?.pick === 'seg' && ssim) {
-      tray.append(h('div', { class: 'segpick' }, h('small', null, '点城墙一段，或选：'), ...Array.from({ length: SEGMENTS }, (_, i) => h('button', { class: 'sp' + (ssim.segs[i].hp <= 0 ? ' broken' : ''), 'data-seg': i, onclick: () => { click(); issue(u, { t: pending!.t, seg: i } as SOrder); } }, segName(i), h('em', null, ssim.segs[i].hp <= 0 ? '缺口' : String(Math.round(ssim.segs[i].hp)))))));
-    } else if (pending?.pick === 'target') tray.append(h('div', { class: 'ot-tip aim' }, ic('target'), `点一营敌军：${pending.label}`));
-    else if (pending?.pick === 'ground') tray.append(h('div', { class: 'ot-tip' }, ic('locate'), '点战场一处：移阵到那里'));
+      h('em', null, `${orderText(u.order)} · ${STATE_TEXT[u.state] ?? ''}`)),
+      h('div', { class: 'ot-tip' }, ic('pointing'), clickGuide(u)));
   }
 
   /* ---------- 底栏：各营卡片 + 全军号令 ---------- */
@@ -225,7 +191,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     const cards = h('div', { class: 'ucards' });
     for (const u of myUnits()) {
       const pct = Math.max(0, u.troops / u.start);
-      cards.append(h('button', { class: 'ucard' + (u.id === view.selected ? ' on' : '') + (u.state === 'rout' ? ' rout' : ''), 'data-unit': u.id, onclick: () => selectUnit(u.id) },
+      cards.append(h('div', { class: 'ucard' + (u.id === view.selected ? ' on' : '') + (u.state === 'rout' ? ' rout' : ''), 'data-unit': u.id },
         h('div', { class: 'uc-h' }, h('span', { class: 'uc-ic k-' + u.kind }, ic(KIND_ICON[u.kind] ?? 'inf')), h('b', null, u.name), h('em', null, wan(u.troops))),
         h('div', { class: 'uc-bars' }, h('i', { class: 'tr', style: { width: pct * 100 + '%' } }), h('i', { class: 'mo', style: { width: Math.max(0, u.morale) + '%' } })),
         h('small', { class: 'uc-st s-' + u.state }, `${orderText(u.order)} · ${STATE_TEXT[u.state] ?? ''}`)));
@@ -233,9 +199,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     const all = h('div', { class: 'uall' });
     const A = (id: string, label: string, icon: string, fn: () => void, on = false, tip = '', cls = '') => h('button', { class: 'atile' + (on ? ' on' : '') + (cls ? ' ' + cls : ''), id, 'data-tip': tip, title: tip, onclick: () => { click(); fn(); } }, ic(icon), h('b', null, label));
     if (phase === 'deploy') {
-      all.append(h('div', { class: 'atiles' },
-        h('button', { class: 'drum', id: 'siege-go', onclick: () => start() }, ic('attack'), h('b', null, '开战')),
-        A('battle-auto', '部将代打', 'auto', () => { autoMe = true; start(); }, false, '由部将按常法指挥我军，你只看战况')));
+      // 只有守城大计在开战前（见上）
     } else if (phase === 'fight') {
       const S = (id: string, label: string, on: boolean, fn: () => void, tip: string) => h('button', { class: 'spd' + (on ? ' on' : ''), id, title: tip, onclick: () => { click(); fn(); } }, label);
       const cd = sim.drum[side === 'att' ? 'cdAtt' : 'cdDef'];
@@ -264,23 +228,20 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
             A('def-abandon2', '弃城', 'withdraw', () => { manual = true; defDecision(ssim!, 'abandon'); }, false, '弃城突围：守军退走（交战中的营伍折损一成五），城归敌手', 'warn'),
             A('def-surrender2', '投降', 'persuade', () => { manual = true; defDecision(ssim!, 'surrender'); }, false, '开城投降：城与守军一并归敌', 'warn')] : [
             A('battle-retreat', '鸣金', 'withdraw', () => { manual = true; if (ssim) command(ssim, { unit: 'all', side, order: { t: 'retreat' } }); else commandF(fsim!, { unit: 'all', side, order: { t: 'retreat' } }); say('鸣金收兵，各营撤回。'); renderUi(); }, false, siege ? '全军撤出，结果为“未克”，围城照旧' : '全军撤出战场，保全兵力', 'warn')])));
-    } else {
-      all.append(h('div', { class: 'atiles' }, h('button', { class: 'drum', id: 'battle-done', onclick: () => done() }, ic('ok'), h('b', null, resultWord().win ? '凯旋' : '收兵'))));
     }
     ui.append(h('div', { class: 'su-body' }, cards, all));
     renderTray();
   }
   function selectUnit(id: string | null) {
     click();
-    view.selected = view.selected === id ? null : id;
-    pending = null; if (fview) fview.aiming = false;
+    view.selected = id;
+    if (fview) fview.aiming = false;
     renderUi();
   }
   function issue(u: AnyUnit, o: AnyOrder) {
     if (!isLegal(u, o)) return;
     manual = true;
     cmd(u.id, o);
-    pending = null; if (fview) fview.aiming = false;
     say(`${u.name}：${orderText(o)}`);
     if (!siege && (o as FOrder).t === 'attack' && u.kind === 'cav') battleSfx.advance(true);
     renderUi();
@@ -295,68 +256,89 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     renderUi();
   }
 
-  /* ---------- 点战场 ---------- */
+  /* ---------- 点战场：唯一的下令法 ---------- */
+  /** 攻城一方点了城墙某段：按兵种定做什么 */
+  function segOrder(u: SUnit, seg: number): SOrder | null {
+    const open = ssim!.segs[seg].hp <= 0 || (seg === GATE_SEG && ssim!.gate.hp <= 0);
+    if (side === 'def') return u.state === 'wall' && u.seg === seg ? ((u.order as SOrder).t === 'repair' ? { t: 'man', seg } : { t: 'repair', seg }) : { t: 'man', seg };
+    if (u.kind === 'art') return { t: 'bombard', seg };
+    if (u.kind === 'gun') return { t: 'cover', seg };
+    if (open) return { t: 'enter' };
+    if (u.kind === 'cav') return null;
+    return seg === GATE_SEG ? { t: 'ram' } : { t: 'assault', seg };
+  }
   view.cv.addEventListener('pointermove', e => {
-    const r = view.cv.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top;
-    if (sview) { const p = sview.pick(sx, sy); sview.hoverSeg = pending?.pick === 'seg' && p.seg !== undefined ? p.seg : null; }
-    if (fview) { const p = fview.pick(sx, sy); const u = p.unit ? units().find(x => x.id === p.unit) : undefined; fview.hoverUnit = u && (u.side === side || pending?.pick === 'target' || selUnit()) ? u.id : null; view.cv.style.cursor = u && u.side === foe && selUnit() ? 'crosshair' : u ? 'pointer' : 'default'; }
-  });
-  view.cv.addEventListener('pointerdown', e => {
     const r = view.cv.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top;
     const sel = selUnit();
     if (sview) {
       const p = sview.pick(sx, sy);
-      if (pending?.pick === 'seg' && sel && p.seg !== undefined) { click(); issue(sel, { t: pending.t, seg: p.seg } as SOrder); return; }
-      if (p.unit) { const u = units().find(x => x.id === p.unit)!; if (u.side === side) { click(); view.selected = u.id; pending = null; renderUi(); return; } }
-      if (phase === 'deploy' && sel && side === 'att') {
-        const [x, y] = view.unproject(sx, sy);
-        sel.x = Math.max(120, Math.min(880, x)); sel.y = Math.max(600, Math.min(830, y)); (sel as SUnit).order = { t: 'hold', x: sel.x, y: sel.y };
-        click(); renderUi(); return;
+      const pu = p.unit ? units().find(x => x.id === p.unit) as SUnit : undefined;
+      const seg = p.seg ?? (pu && pu.side !== side || (pu && sel && pu.id !== sel.id && side === 'def') ? pu?.seg : undefined);
+      sview.hoverSeg = sel && seg !== undefined ? seg : null;
+      view.cv.style.cursor = sel && seg !== undefined ? 'crosshair' : pu && pu.side === side ? 'pointer' : 'default';
+    }
+    if (fview) { const p = fview.pick(sx, sy); const u = p.unit ? units().find(x => x.id === p.unit) : undefined; fview.hoverUnit = u && (u.side === side || sel) ? u.id : null; view.cv.style.cursor = u && u.side === foe && sel ? 'crosshair' : u ? 'pointer' : sel ? 'cell' : 'default'; }
+  });
+  view.cv.addEventListener('contextmenu', e => { e.preventDefault(); if (view.selected) selectUnit(null); });
+  view.cv.addEventListener('pointerdown', e => {
+    if (e.button === 2) return;
+    if (phase === 'end') { done(); return; }
+    if (phase !== 'fight') return;
+    const r = view.cv.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top;
+    const sel = selUnit();
+    if (sview) {
+      const p = sview.pick(sx, sy);
+      const pu = p.unit ? units().find(x => x.id === p.unit) as SUnit : undefined;
+      // 没选中：点我军一营就选中
+      if (!sel) { if (pu && pu.side === side) selectUnit(pu.id); return; }
+      if (pu && pu.id === sel.id) {
+        if (side === 'def' && (sel as SUnit).state === 'wall' && (sel as SUnit).seg !== undefined) { click(); issue(sel, segOrder(sel as SUnit, (sel as SUnit).seg!)!); }
+        else { click(); issue(sel, side === 'att' ? { t: 'hold', x: sel.x, y: Math.max(sel.y, 560) } : { t: 'reserve' }); }
+        return;
       }
-      if (phase === 'fight' && sel && side === 'att' && p.seg === undefined) {
-        const [x, y] = view.unproject(sx, sy);
-        if (y > 150) issue(sel, { t: 'move', x: Math.max(60, Math.min(940, x)), y: Math.min(950, y) });
+      // 点到的是另一营：守方点城头某营即调去增援那一段，其余情况改选那一营
+      if (pu && pu.side === side && !(side === 'def' && pu.state === 'wall' && pu.seg !== undefined)) { selectUnit(pu.id); return; }
+      const seg = p.seg ?? pu?.seg;
+      if (seg !== undefined && (pu === undefined || pu.side !== side || side === 'def')) {
+        const o = segOrder(sel as SUnit, seg);
+        if (!o || !isLegal(sel, o)) { say(side === 'att' && sel.kind === 'cav' ? '骑营须待城门或城墙打开缺口' : '此营做不了这件事'); return; }
+        click(); issue(sel, o); return;
       }
+      const [x, y] = view.unproject(sx, sy);
+      if (side === 'def') {
+        if (pu && pu.side === foe && isLegal(sel, { t: 'sortie' })) { click(); issue(sel, { t: 'sortie' }); return; }
+        if (y < WALL_Y) { click(); issue(sel, { t: 'reserve' }); return; }
+        selectUnit(null); return;
+      }
+      if (y > 150) { click(); issue(sel, { t: 'move', x: Math.max(60, Math.min(940, x)), y: Math.min(950, y) }); }
       return;
     }
     const fv = fview!;
     const p = fv.pick(sx, sy);
     const u = p.unit ? units().find(x => x.id === p.unit) : undefined;
-    if (u && u.side === side && !(pending?.pick === 'ground')) { view.selected = u.id; pending = null; fv.aiming = false; click(); renderUi(); return; }
-    if (!sel) return;
-    if (phase === 'deploy') {
-      if (p.ground) {
-        const [x, y] = p.ground;
-        sel.x = Math.max(80, Math.min(920, x)); sel.y = side === 'att' ? Math.max(600, Math.min(920, y)) : Math.max(80, Math.min(400, y));
-        (sel as FUnit).order = { t: 'hold' };
-        click(); renderUi();
-      }
-      return;
-    }
+    if (!sel) { if (u && u.side === side) selectUnit(u.id); return; }
+    if (u && u.id === sel.id) { click(); issue(sel, { t: 'hold' }); return; }
+    if (u && u.side === side) { selectUnit(u.id); return; }
     if (u && u.side === foe) {
-      // 点敌营：火器、炮射之，其余进击（或按所选号令）
+      // 点敌营：火器、炮射之，其余进击
       const ranged = sel.kind === 'gun' || sel.kind === 'art';
-      const t = pending?.pick === 'target' ? pending.t : ranged ? 'fire' : 'attack';
-      issue(sel, { t, target: u.id } as FOrder);
+      click(); issue(sel, { t: ranged ? 'fire' : 'attack', target: u.id } as FOrder);
       return;
     }
-    if (p.ground && (pending?.pick === 'ground' || !pending)) {
+    if (p.ground) {
       const [x, y] = p.ground;
-      issue(sel, { t: 'move', x: Math.max(30, Math.min(970, x)), y: Math.max(30, Math.min(970, y)) });
+      click(); issue(sel, { t: 'move', x: Math.max(30, Math.min(970, x)), y: Math.max(30, Math.min(970, y)) });
     }
   });
-  const keys = 'qwertyu';
   const onKey = (e: KeyboardEvent) => {
-    if (phase === 'end') return;
+    if (phase === 'end') { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') { e.preventDefault(); done(); } return; }
     if (e.key === 'Tab') {
       e.preventDefault();
       const list = myUnits(); if (!list.length) return;
       const i = list.findIndex(u => u.id === view.selected);
-      view.selected = list[(i + 1) % list.length].id; pending = null; renderUi(); return;
+      view.selected = list[(i + 1) % list.length].id; renderUi(); return;
     }
-    if (e.key === 'Escape') { if (pending) { pending = null; renderTray(); } else { view.selected = null; renderUi(); } return; }
-    const k = keys.indexOf(e.key.toLowerCase());
-    if (k >= 0 && phase === 'fight') { const u = selUnit(); if (u) { const t = tilesFor(u)[k]; if (t) useTile(u, t); } return; }
+    if (e.key === 'Escape') { view.selected = null; renderUi(); return; }
     if (phase !== 'fight') return;
     if (e.key === ' ') { e.preventDefault(); paused = !paused; renderUi(); }
     else if (e.key === '1') { speed = 1; paused = false; renderUi(); }
@@ -469,21 +451,31 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     phase = 'end';
     gsap.killTweensOf(banner); banner.classList.add('hidden');
     paused = false;
-    pending = null; view.selected = null;
+    view.selected = null;
     const r = resultWord();
     gong(r.win);
     bark('me', r.win ? 'win' : 'lose');
     const card = h('div', { class: 'sresult ' + r.tone }, h('b', null, r.big), h('p', null, r.text),
-      h('small', null, `历时 ${Math.floor(sim.t / 60)} 分 ${Math.round(sim.t % 60)} 秒 · 我军伤亡 ${wan(lost(side))} · 敌军伤亡 ${wan(lost(foe))}`));
+      h('small', null, `历时 ${Math.floor(sim.t / 60)} 分 ${Math.round(sim.t % 60)} 秒 · 我军伤亡 ${wan(lost(side))} · 敌军伤亡 ${wan(lost(foe))}`),
+      h('i', { class: 'sr-timer' }), h('em', { class: 'sr-auto' }, '片刻后自回地图 · 点一下即走'));
     stage.append(card);
     gsap.fromTo(card, { opacity: 0, scale: 1.4 }, { opacity: 1, scale: 1, duration: 0.5, ease: 'back.out(1.5)' });
     renderUi();
+    // 不必点确认：战果亮出数秒后自行收场回地图（点一下或按回车可提早）
+    card.addEventListener('click', () => done());
+    gsap.to(card.querySelector('.sr-timer'), { scaleX: 0, duration: AUTO_EXIT / 1000, ease: 'none' });
+    exitTimer = window.setTimeout(() => done(), AUTO_EXIT);
   }
+  const AUTO_EXIT = 3600;
+  let exitTimer = 0, closed = false;
   const lost = (sd: 'att' | 'def') => Math.round(sim[sd].start - units().filter(u => u.side === sd).reduce((n, u) => n + Math.max(0, u.troops), 0));
 
   let resolveFn!: (v: { result: BattleState; manual: boolean }) => void;
   const finished = new Promise<{ result: BattleState; manual: boolean }>(r => (resolveFn = r));
   function done() {
+    if (closed) return;
+    closed = true;
+    clearTimeout(exitTimer);
     cancelAnimationFrame(raf);
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', onResize);
@@ -491,6 +483,8 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   }
   renderUi(); updateHud();
   raf = requestAnimationFrame(frame);
+  // 不另布阵：各营按常法列阵，一开场就交战（守城先定大计）
+  if (!(siege && side === 'def')) start();
   return finished;
 
   function finish(result: BattleState, man: boolean) {

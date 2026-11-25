@@ -42,21 +42,29 @@ async function nextMonth(manualBattle = false, probe = null) {
       }
       await page.click('[data-choice="0"]', { timeout: 1000 }).catch(() => {}); choices++; await wait(150); continue;
     }
-    // 即时战斗（攻城、守城、野战、水战）：守城先择大计，其余先布阵；亲征则下一道令，再由部将快进打完
-    if (await visible('#def-hold') || await visible('#siege-go')) {
+    // 即时战斗（攻城、守城、野战、水战）：一开场即交战，守城先择大计；亲征则在战场上选一营下一道令，再由部将快进打完；打完自行收场
+    if (await visible('#battle .shud') && !(await page.evaluate(() => !!window.NM_siege?.sim?.over))) {
       if (['battle', 'siege', 'naval'].includes(await page.evaluate(() => NM_audio().want))) battleScene = true;
       const def = await visible('#def-hold');
       if (manualBattle && !manualDone) {
-        await page.click(def ? '#def-hold' : '#siege-go'); await wait(300);
-        await page.locator('#battle-ui .ucard').first().click(); await wait(150);
-        if (def) { await page.click('.otray [data-order="repair"]').catch(() => {}); await wait(100); await page.click('.otray [data-seg="0"]').catch(() => {}); }
-        else { await page.click('#all-assault').catch(() => {}); }
-        siegeProbe = { cards: await page.locator('#battle-ui .ucard').count(), resolve: await visible('.sres'), def };
+        if (def) { await page.click('#def-hold'); await wait(300); }
+        const me = await page.evaluate(() => { const v = NM_siege.view; const u = NM_siege.sim.units.find(x => x.side === v.o.me && x.state !== 'gone' && x.troops >= 1); const q = v.unitScreen(u.id); const r = v.cv.getBoundingClientRect(); return { id: u.id, x: r.left + q[0], y: r.top + q[1] }; });
+        await page.mouse.click(me.x, me.y); await wait(150);
+        const picked = await page.evaluate(() => NM_siege.view.selected);
+        if (def) {
+          // 再点本营所守之段：边守边修
+          await page.mouse.click(me.x, me.y); await wait(150);
+        } else {
+          const seg = await page.evaluate(() => { const v = NM_siege.view; const q = v.segScreen?.(2) ?? null; const r = v.cv.getBoundingClientRect(); return q ? [r.left + q[0], r.top + q[1]] : null; });
+          if (seg) { await page.mouse.click(seg[0], seg[1]); await wait(150); }
+        }
+        const ord = await page.evaluate(id => NM_siege.sim.units.find(u => u.id === id)?.order, me.id);
+        siegeProbe = { cards: await page.locator('#battle-ui .ucard').count(), resolve: await visible('.sres'), def, picked: picked === me.id, order: ord?.t, tray: await page.locator('.otray, .otile').count() };
         await wait(800); manualDone = true;
-      } else { await page.click('#battle-auto').catch(() => {}); await wait(200); }
-      await page.evaluate(() => window.NM_siegeSkip?.()); await wait(900); continue;
+      } else if (def) { await page.click('#battle-auto').catch(() => {}); await wait(200); }
+      await page.evaluate(() => window.NM_siegeSkip?.()); await wait(300); continue;
     }
-    if (await visible('#battle-done')) { await page.click('#battle-done', { timeout: 1000 }).catch(() => {}); battles++; await wait(200); continue; }
+    if (await visible('.sresult')) { battles++; await page.waitForFunction(() => document.querySelector('#battle')?.classList.contains('hidden'), null, { timeout: 8000 }).catch(() => {}); continue; }
     marched = Math.max(marched, await page.evaluate(() => Object.keys(NM.map.view.anim?.paths ?? {}).length).catch(() => 0));
     if (await visible('#news-skip')) {
       newsSeen = true;
@@ -199,7 +207,7 @@ try {
   // 钱粮：粜籴、劝饷
   await page.evaluate(() => NM.selectNode('nanjing'));
   await wait(300);
-  check('城池面板显示市价与市面', (await text('#city-price')).includes('每石'), await text('#city-price'));
+  check('城池面板显示粮价，市面写在提示里', (await text('#city-price')).includes('两/石') && /市面/.test(await page.getAttribute('#city-price', 'data-tip')), await text('#city-price'));
   await page.click('#act-trade'); await wait(400);
   check('粜籴弹窗可买可卖', await visible('#trade-buy') && await visible('#trade-sell'));
   await page.click('#trade-sell').catch(() => {}); await wait(150);
@@ -328,33 +336,47 @@ try {
   await wait(300);
   check('出兵加入本月命令', (await text('#orders')).includes('出兵'), await text('#orders'));
 
-  console.log('战斗画面：布阵与操作');
+  console.log('战斗画面：一开场即交战，只在战场上下令');
+  const unitXY = id => page.evaluate(id => { const v = NM_siege.view; const q = v.unitScreen(id); const r = v.cv.getBoundingClientRect(); return [r.left + q[0], r.top + q[1]]; }, id);
   for (const kind of ['field', 'naval']) {
     const K = kind === 'naval' ? '水战' : '野战';
     const done = page.evaluate(k => NM_testBattle(k, 'att'), kind);
     await wait(1400);
-    check(`${K}是即时战斗：先布阵，各营卡片与开战按钮`, (await page.locator('#battle-ui .ucard').count()) >= 4 && await visible('#siege-go'), String(await page.locator('#battle-ui .ucard').count()));
+    check(`${K}不另布阵：一开场就在交战，没有“开战”按钮`, (await page.evaluate(() => NM_siege.sim.t)) > 0 && !(await visible('#siege-go')), String(await page.evaluate(() => NM_siege.sim.t)));
+    check(`${K}底栏各营看板只看不点（不是按钮）`, (await page.locator('#battle-ui .ucard').count()) >= 4 && (await page.locator('#battle-ui button.ucard').count()) === 0);
     if (kind === 'field') check('战斗标明地点与谁在指挥', (await text('#battle-where')).includes('·') && /指挥|号令/.test(await text('#battle .bh-who')), await text('#battle .sh-mid'));
     check(`${K}头部标出我军、敌军与两军军心`, (await text('#battle .sh-side.mine .bm-tag')) === '我军' && (await page.locator('#battle .sres').count()) === 2);
     check(`${K}写明距日暮多久${kind === 'naval' ? '、风向' : '、地形'}`, /日暮/.test(await text('#battle .sh-info')) && (kind === 'naval' ? /风/.test(await text('#battle .sh-info')) : /平原|丘陵|隔河/.test(await text('#battle .sh-info'))), await text('#battle .sh-info'));
-    // 布阵：选一营，点战场挪动
-    await page.locator('#battle-ui .ucard').first().click(); await wait(150);
-    const before = await page.evaluate(() => { const u = NM_siege.sim.units.find(x => x.id === NM_siege.view.selected); return [u.x, u.y]; });
-    const box = await page.locator('#battle-stage canvas').boundingBox();
-    await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.62); await wait(150);
-    const after = await page.evaluate(() => { const u = NM_siege.sim.units.find(x => x.id === NM_siege.view.selected); return [u.x, u.y]; });
-    check(`${K}布阵可点战场挪动一营`, before[0] !== after[0] || before[1] !== after[1], JSON.stringify([before, after]));
-    await page.click('#siege-go'); await wait(400);
     check(`${K}主帅阵前有话`, (await page.evaluate(() => window.NM_barks ?? 0)) > 0, '');
-    check(`${K}开战后有倍速、全军进击、固守、擂鼓、代打、鸣金`, await visible('#siege-x2') && await visible('#all-assault') && await visible('#all-hold') && await visible('#siege-drum') && await visible('#siege-auto') && await visible('#battle-retreat'));
-    // 选一营：浮出号令牌；点敌营下令进击
-    await page.locator('#battle-ui .ucard').last().click(); await wait(200);
-    check(`${K}选中一营浮出号令牌（有字有图标）`, await visible('.otray') && (await page.locator('.otray .otile').count()) >= 4 && (await page.locator('.otray .otile .ic').count()) >= 4, await text('.otray'));
-    const foe = await page.evaluate(() => { const v = NM_siege.view; const f = NM_siege.sim.units.find(u => u.side !== 'att' && u.state !== 'gone'); const p = v.PU(f.x, f.y); return { id: f.id, x: p[0], y: p[1] - 8 }; });
-    await page.mouse.click(box.x + foe.x, box.y + foe.y); await wait(200);
-    const ord = await page.evaluate(() => { const u = NM_siege.sim.units.find(x => x.id === NM_siege.view.selected); return u ? u.order : null; });
-    check(`${K}点敌营即对它进击`, !!ord && (ord.t === 'attack' || ord.t === 'fire') && !!ord.target, JSON.stringify(ord));
-    await page.click('#siege-x4'); await wait(2500);
+    check(`${K}有倍速、全军进击、固守、擂鼓、代打、鸣金`, await visible('#siege-x2') && await visible('#all-assault') && await visible('#all-hold') && await visible('#siege-drum') && await visible('#siege-auto') && await visible('#battle-retreat'));
+    await page.click('#siege-pause'); await wait(150);
+    // 点我军一营：选中，下方小牌写明“点哪里做什么”，没有号令按钮
+    const mine = await page.evaluate(() => NM_siege.sim.units.find(u => u.side === 'att' && u.state !== 'gone' && u.kind !== 'gun' && u.kind !== 'art').id);
+    let xy = await unitXY(mine);
+    await page.mouse.click(xy[0], xy[1]); await wait(200);
+    check(`${K}点战场上的我军一营即选中`, (await page.evaluate(() => NM_siege.view.selected)) === mine, String(await page.evaluate(() => NM_siege.view.selected)));
+    check(`${K}选中后只有一枚说明小牌，没有号令牌菜单`, await visible('.selchip') && /点敌营/.test(await text('.selchip')) && (await page.locator('.otile, .otray').count()) === 0, await text('.selchip'));
+    // 点地面：移阵
+    const box = await page.locator('#battle-stage canvas').boundingBox();
+    // 找一处没有人的空地
+    const gp = await page.evaluate(() => { const v = NM_siege.view; const r = v.cv.getBoundingClientRect(); for (let fy = 0.55; fy < 0.85; fy += 0.05) for (let fx = 0.15; fx < 0.9; fx += 0.05) { const p = v.pick(r.width * fx, r.height * fy); if (p.ground) return [r.left + r.width * fx, r.top + r.height * fy]; } return null; });
+    await page.mouse.click(gp[0], gp[1]); await wait(150);
+    let ord = await page.evaluate(id => NM_siege.sim.units.find(x => x.id === id).order, mine);
+    check(`${K}再点地面即移阵`, ord.t === 'move', JSON.stringify(ord));
+    // 点敌营：进击
+    const foe = await page.evaluate(() => NM_siege.sim.units.find(u => u.side !== 'att' && u.state !== 'gone').id);
+    xy = await unitXY(foe);
+    await page.mouse.click(xy[0], xy[1]); await wait(200);
+    ord = await page.evaluate(id => NM_siege.sim.units.find(x => x.id === id).order, mine);
+    check(`${K}再点敌营即对它进击（一步，不必先选动作）`, (ord.t === 'attack' || ord.t === 'fire') && ord.target === foe, JSON.stringify(ord));
+    // 再点本营：原地坚守；右键取消选择
+    xy = await unitXY(mine);
+    await page.mouse.click(xy[0], xy[1]); await wait(150);
+    ord = await page.evaluate(id => NM_siege.sim.units.find(x => x.id === id).order, mine);
+    check(`${K}再点本营即原地坚守`, ord.t === 'hold', JSON.stringify(ord));
+    await page.mouse.click(box.x + 40, box.y + 200, { button: 'right' }); await wait(150);
+    check(`${K}右键取消选择`, (await page.evaluate(() => NM_siege.view.selected)) === null);
+    await page.click('#siege-x4'); await wait(2000);
     const moved = await page.evaluate(() => NM_siege.sim.t);
     check(`${K}不分回合，时间连续推进`, moved > 3, String(moved));
     if (kind === 'field') {
@@ -364,9 +386,10 @@ try {
       await page.setViewportSize({ width: 1440, height: 900 }); await wait(400);
     }
     await page.evaluate(() => window.NM_siegeSkip?.()); await wait(900);
-    check(`${K}打完出结果大字与“凯旋/收兵”`, await visible('.sresult') && await visible('#battle-done'), await text('.sresult'));
-    await page.click('#battle-done');
+    check(`${K}打完出结果大字，没有确认按钮`, await visible('.sresult') && !(await visible('#battle-done')), await text('.sresult'));
+    const t0 = Date.now();
     const res = await done;
+    check(`${K}结果亮出数秒后自行收场`, Date.now() - t0 < 6000 && await page.evaluate(() => document.querySelector('#battle').classList.contains('hidden')), String(Date.now() - t0));
     check(`${K}打完，记为亲征`, res.manual === true && res.result.over === true);
   }
 
@@ -404,7 +427,9 @@ try {
   await page.screenshot({ path: `${OUT}/02-siege.png` });
   const sm = await nextMonth(true);
   check('扬州攻城战进入战斗画面并完成', sm.battles >= 1, JSON.stringify(sm));
-  check('守城是即时战斗：先择大计，各营卡片与军心条可见', !!sm.siegeProbe && sm.siegeProbe.def && sm.siegeProbe.cards >= 5 && sm.siegeProbe.resolve, JSON.stringify(sm.siegeProbe));
+  check('守城是即时战斗：先择大计，各营看板与军心条可见', !!sm.siegeProbe && sm.siegeProbe.def && sm.siegeProbe.cards >= 5 && sm.siegeProbe.resolve, JSON.stringify(sm.siegeProbe));
+  check('守城只在战场上下令：点城头一营选中，再点本段即修城；没有号令牌菜单', !!sm.siegeProbe?.picked && sm.siegeProbe?.order === 'repair' && sm.siegeProbe?.tray === 0, JSON.stringify(sm.siegeProbe));
+  check('战斗打完不用点确认，自行回到地图', await page.evaluate(() => document.querySelector('#battle').classList.contains('hidden')));
   check('战斗时切换战斗配乐', sm.battleScene === true, JSON.stringify(sm));
   await page.click('#btn-report');
   await wait(300);
