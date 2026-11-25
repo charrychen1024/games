@@ -165,6 +165,9 @@ export interface Siege {
   armies: ArmyId[];
   startTurn: number;
   months: number;
+  /** 上一次攻城留下的损坏：各段城墙城防、城门完好程度（0—1）。守军逐月修补。 */
+  segs?: number[];
+  gate?: number;
 }
 
 /* ---------- 命令 ---------- */

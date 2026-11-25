@@ -2,7 +2,7 @@
  * 收入：赋税（人口 × 商业 × 吏治）、田粮（人口 × 农业 × 民心，秋收加成）、海贸。
  * 支出：驻军粮饷、以本城为粮台的军队粮饷、方针开销、起运上缴。 */
 import type { City, GameState, LedgerEntry, Policy } from './types';
-import { bump, report, nodeName, topOf, troopsText, charName, hostile } from './state';
+import { bump, report, nodeName, topOf, troopsText, charName, hostile, friendly } from './state';
 import { neighbors, NODE } from '../data/geography';
 import { lunarOf } from './calendar';
 import { shortDate } from './calendar';
@@ -277,8 +277,9 @@ export function governorText(s: GameState, c: City): string { return charName(s,
 
 /** 粮道：手动调拨、粮台支给、起运解饷共用。被围之城运不进也运不出，敌城阻隔。返回不通的原因，通则 null。 */
 export function supplyBlock(s: GameState, f: string, from: string, to: string): string | null {
-  if (s.sieges[to]) return `${nodeName(to)}被围，粮道不通`;
-  if (s.sieges[from]) return `${nodeName(from)}被围，运不出城`;
+  // 被围的是守方：运不进、运不出。围城一方的营寨在城外，只要后路未断，照常受粮
+  if (s.sieges[to] && !friendly(s, f, s.sieges[to].attacker)) return `${nodeName(to)}被围，粮道不通`;
+  if (s.sieges[from] && !friendly(s, f, s.sieges[from].attacker)) return `${nodeName(from)}被围，运不出城`;
   const seen = new Set([from]);
   const queue = [from];
   while (queue.length) {

@@ -1,11 +1,12 @@
 /* 制作要求第六节“十二回合试玩”的验收条件，逐条写成自动测试。 */
 import { describe, it, expect } from 'vitest';
-import { createSiege, stepSiege, aiCommands, toBattleResult } from '../src/core/siege';
+import { createSiege, stepSiege, aiCommands, toBattleResult, persuade } from '../src/core/siege';
 import { createState1644 } from '../src/data/scenario1644';
 import { trialState, yangzhouSiegeState } from '../src/data/presets';
 import { runMonthAuto, resolveMonth, type Interrupt, type Answer } from '../src/core/turn';
 import { serialize, deserialize } from '../src/core/save';
-import { autoResolve, resolveRound, aiChoice, type BattleState } from '../src/core/battle';
+import { autoResolve, type BattleState } from '../src/core/battle';
+import { createField, stepField, aiField, toFieldResult } from '../src/core/field';
 import { persuadeChance, envoyScore, obedience } from '../src/core/orders';
 import { setStance, stance } from '../src/core/state';
 import { turnOf } from '../src/core/calendar';
@@ -113,10 +114,13 @@ describe('验收四：献城后改属', () => {
       s.chars.haoge.ab.wai = 95;
       s = runMonthAuto(s, [], (it: Interrupt): Answer | undefined => {
         if (it.type !== 'battle' || it.battle.kind !== 'siege') return undefined;
-        let b: BattleState = it.battle;
-        b = resolveRound(b, { lanes: ['blockade', 'blockade', 'blockade'], stratagem: 'persuade' }, aiChoice(b, 'def'));
-        if (!b.over) b = autoResolve(b);
-        return { type: 'battle', result: b, manual: true };
+        const b: BattleState = it.battle;
+        // 开战即遣使劝降；不成则照常打
+        const sim = createSiege(b);
+        persuade(sim);
+        let next = 0;
+        while (!sim.over && sim.t < 3600) { if (sim.t >= next) { aiCommands(sim, 'att'); aiCommands(sim, 'def'); next = sim.t + 2; } stepSiege(sim, 0.2); }
+        return { type: 'battle', result: toBattleResult(b, sim), manual: true };
       });
       if (s.battles.some(b => b.node === 'yangzhou' && b.summary.includes('开城出降'))) {
         found = true;
@@ -178,15 +182,17 @@ describe('验收七：手动战斗与自动结算在相同选择下结果一致'
     viaAuto = runMonthAuto(s, [], it => it.type === 'battle' ? { type: 'battle', result: autoResolve(it.battle), manual: false } : undefined);
     viaManual = runMonthAuto(s, [], it => {
       if (it.type !== 'battle') return undefined;
-      let b = it.battle;
+      const b = it.battle;
       if (b.kind === 'siege') {
         // 攻城是即时模拟：逐步推进、每两秒照电脑之令下达，与快进结果一致
         const sim = createSiege(b); let next = 0;
         while (!sim.over && sim.t < 3600) { if (sim.t >= next) { aiCommands(sim, 'att'); aiCommands(sim, 'def'); next = sim.t + 2; } stepSiege(sim, 0.2); }
         return { type: 'battle', result: toBattleResult(b, sim), manual: false };
       }
-      while (!b.over) b = resolveRound(b, aiChoice(b, 'att'), aiChoice(b, 'def'));
-      return { type: 'battle', result: b, manual: false };
+      // 野战、水战同理
+      const fs = createField(b); let nx = 0;
+      while (!fs.over && fs.t < 1000) { if (fs.t >= nx) { aiField(fs, 'att'); aiField(fs, 'def'); nx = fs.t + 2; } stepField(fs, 0.2); }
+      return { type: 'battle', result: toFieldResult(b, fs), manual: false };
     });
     expect(JSON.stringify(viaManual)).toBe(JSON.stringify(viaAuto));
   });

@@ -163,7 +163,7 @@ export function buildSiegeBattle(s: GameState, node: string): BattleState | null
   // 每一方的 surrender 是本方主将的降意：攻方劝降成功率看守将降意，城中人心离散时更高
   def.surrender = Math.min(100, (s.chars[def.commander]?.att.surrender ?? 45) + Math.max(0, 50 - city.minxin) / 2);
   return createBattle({ id: newId(s, 'bt'), kind: 'siege', node, nodeName: nodeName(node), terrain: 'city', weather: weatherFor(s, node),
-    att, def, wall: city.wall, seed: rngFor(s.seed, 'siege', s.turn, node).int(1, 2 ** 30) });
+    att, def, wall: city.wall, segs: siege.segs, gate: siege.gate, seed: rngFor(s.seed, 'siege', s.turn, node).int(1, 2 ** 30) });
 }
 
 /** 把战斗结果写回局势 */
@@ -182,6 +182,9 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
     const src = { kind: 'battle' as const, ref: b.id };
     bump(s, b.node, 'garrison', -garrisonLoss, `${factionName(s, b.att.faction)}攻城，守军伤亡`, src);
     bump(s, b.node, 'wall', Math.round(b.wall - city.wall), '攻城战损毁', src);
+    // 围城未解：这一战打出的缺口、撞坏的城门留到下月
+    const sg = s.sieges[b.node];
+    if (sg && b.segs) { sg.segs = b.segs.slice(); sg.gate = b.gate; }
   } else distribute(defArmies, defLoss, endMorale(b.def));
 
   const winnerSide = b.winner === 'att' ? b.att : b.def;
@@ -454,6 +457,9 @@ export function updateSieges(s: GameState): string[] {
         text: `${factionName(s, here[0].faction)}${charName(s, here[0].commander)}兵临${nodeName(node)}城下，开始围城。守军 ${troopsText(city.garrison)}，城防 ${Math.round(city.wall)}。` });
     } else {
       existing.armies = here.map(a => a.id);
+      // 守军逐月修补：城门修回三成，塌段补起一些（修不到原有城防之上）
+      if (existing.gate !== undefined) existing.gate = Math.min(1, existing.gate + 0.3);
+      if (existing.segs) existing.segs = existing.segs.map(h => Math.min(city.wall, h + 4));
     }
     s.sieges[node].months++;
     if (here.some(a => a.order.kind === 'siege' && a.order.assault)) assaults.push(node);

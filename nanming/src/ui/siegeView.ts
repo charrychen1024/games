@@ -1,114 +1,38 @@
 /* 攻城战画面：纵深透视（Canvas 2D 自绘）。
  * 攻城时镜头在攻方阵后，望向城门；守城时镜头在城头身后，望向城外。城后的房屋不画。
- * 画面只读模拟状态（core/siege.ts），不改它。 */
-import { SEGMENTS, GATE_SEG, WALL_Y, segX, type SiegeSim, type SUnit } from '../core/siege';
-import type { SideLook } from './battleScene';
-import { shade } from './battleScene';
-
-export interface ViewOpts { me: 'att' | 'def'; look: { att: SideLook; def: SideLook }; }
-interface Float { x: number; y: number; text: string; t0: number; color: string }
-interface Shot { x0: number; y0: number; x1: number; y1: number; t0: number; dur: number; kind: 'ball' | 'arrow' | 'smoke' }
+ * 画面只读模拟状态（core/siege.ts），不改它。共用部分在 rtView.ts。 */
+import { SEGMENTS, GATE_SEG, WALL_Y, segX, segName, type SiegeSim, type SUnit } from '../core/siege';
+import { RtView, type ViewOpts, type Camera } from './rtView';
+export type { ViewOpts } from './rtView';
 
 const WALL_H = 78;   // 城墙高（世界单位）
 
-export class SiegeView {
-  cv: HTMLCanvasElement; g: CanvasRenderingContext2D;
-  W = 0; H = 0; dpr = 1;
-  sim: SiegeSim; o: ViewOpts;
-  selected: string | null = null;
+export class SiegeView extends RtView {
+  sim: SiegeSim;
   hoverSeg: number | null = null;
-  floats: Float[] = [];
-  shots: Shot[] = [];
-  shake = 0;
-  now = 0;
-  sprites = new Map<string, HTMLCanvasElement>();
-  bg: HTMLCanvasElement | null = null; bgKey = '';
-  hitAcc = new Map<string, number>();
-  lastFloat = 0;
-  reduced = false;
 
   constructor(parent: HTMLElement, sim: SiegeSim, o: ViewOpts) {
-    this.sim = sim; this.o = o;
-    this.cv = document.createElement('canvas');
-    this.cv.className = 'siege-cv';
-    parent.append(this.cv);
-    this.g = this.cv.getContext('2d')!;
-    this.resize();
+    super(parent, o);
+    this.sim = sim;
+    this.flipDef = false;
   }
-  resize() {
-    const r = this.cv.parentElement!.getBoundingClientRect();
-    this.dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.W = Math.max(320, r.width); this.H = Math.max(240, r.height);
-    this.cv.width = Math.round(this.W * this.dpr); this.cv.height = Math.round(this.H * this.dpr);
-    this.cv.style.width = this.W + 'px'; this.cv.style.height = this.H + 'px';
-    this.bg = null;
-  }
+  cam(): Camera { return this.o.me === 'att' ? { near: 1340, far: 0, k: 0.25, kx: 1.2, ky: 1 } : { near: 0, far: 400, k: 0.2, kx: 1.05, ky: 1.05 }; }
 
-  /* ---------- 透视 ---------- */
-  get hz() { return this.H * 0.13; }
-  /** 离镜头的距离：攻城时阵后为近、城墙为远；守城时反之 */
-  depth(y: number) { return this.o.me === 'att' ? 1420 - y : y + 330; }
-  scale(y: number) { const k = this.H * (this.o.me === 'att' ? 0.25 : 0.2) * 1300; return k / this.depth(y) / this.H; }
-  P(x: number, y: number, z = 0): [number, number, number] {
-    const s = this.scale(y);
-    const kx = this.W * (this.o.me === 'att' ? 1.2 : 1.05);
-    const sx = this.W / 2 + (x - 500) * kx * s / 1000 * (this.o.me === 'att' ? 1 : -1) * 2.1;
-    const sy = this.hz + this.H * s * (this.o.me === 'att' ? 1 : 1.05) - z * s * this.H / 260;
-    return [sx, sy, s];
-  }
-  /** 屏幕坐标反算到地面（点选用） */
-  unproject(sx: number, sy: number): [number, number] {
-    let lo = -300, hi = 1100;
-    for (let k = 0; k < 30; k++) { const m = (lo + hi) / 2; const [, py] = this.P(500, m); if ((py < sy) === (this.o.me === 'att')) lo = m; else hi = m; }
-    const y = (lo + hi) / 2;
-    const s = this.scale(y), kx = this.W * (this.o.me === 'att' ? 1.2 : 1.05);
-    const x = 500 + (sx - this.W / 2) / (kx * s / 1000 * 2.1) * (this.o.me === 'att' ? 1 : -1);
-    return [x, y];
-  }
-
-  /* ---------- 小兵贴图（预渲染） ---------- */
-  sprite(side: 'att' | 'def', kind: string, facing: 'back' | 'front', frame: number): HTMLCanvasElement {
-    const key = `${side}${kind}${facing}${frame}`;
-    let c = this.sprites.get(key);
-    if (c) return c;
-    const look = this.o.look[side];
-    c = document.createElement('canvas'); c.width = 48; c.height = 64;
-    const g = c.getContext('2d')!;
-    g.translate(24, 60);
-    const col = look.color, dark = shade(col, -0.4), skin = '#e2b98f';
-    const helmet = look.helmet === 'qing' ? '#3a3d44' : look.helmet === 'ming' ? '#8a8d93' : look.helmet === 'shun' ? '#6b5638' : look.helmet === 'xi' ? '#5a4632' : '#555';
-    const step = frame ? 2 : -2;
-    g.lineCap = 'round';
-    if (kind === 'cav') {
-      g.fillStyle = '#5a3b22'; g.beginPath(); g.ellipse(0, -14, 9, 14, 0, 0, Math.PI * 2); g.fill();          // 马（前后看是窄长）
-      g.strokeStyle = '#3a2614'; g.lineWidth = 3; g.beginPath(); g.moveTo(-4, -4); g.lineTo(-4 - step * 0.5, 0); g.moveTo(4, -4); g.lineTo(4 + step * 0.5, 0); g.stroke();
-      if (facing === 'front') { g.fillStyle = '#5a3b22'; g.beginPath(); g.ellipse(0, -26, 4, 7, 0, 0, Math.PI * 2); g.fill(); }
-      g.fillStyle = col; g.fillRect(-6, -36, 12, 13);
-      g.fillStyle = facing === 'front' ? skin : dark; g.beginPath(); g.arc(0, -40, 4.5, 0, Math.PI * 2); g.fill();
-      g.fillStyle = helmet; g.beginPath(); g.arc(0, -42, 4.8, Math.PI, Math.PI * 2); g.fill();
-      g.strokeStyle = '#6b4a2a'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(8, -24); g.lineTo(11, -58); g.stroke();
-      g.fillStyle = '#d8d8d0'; g.beginPath(); g.moveTo(11, -58); g.lineTo(9.5, -52); g.lineTo(12.5, -52); g.fill();
-    } else if (kind === 'art') {
-      g.fillStyle = '#4a3420'; g.fillRect(-14, -10, 28, 5);
-      g.fillStyle = '#2f2e2b'; g.beginPath(); g.ellipse(0, facing === 'back' ? -14 : -12, 6, facing === 'back' ? 10 : 6, 0, 0, Math.PI * 2); g.fill();
-      for (const wx of [-12, 12]) { g.fillStyle = '#5a3b22'; g.beginPath(); g.ellipse(wx, -8, 3, 7, 0, 0, Math.PI * 2); g.fill(); }
-      for (const dx of [-18, 18]) { g.fillStyle = col; g.fillRect(dx - 4, -26, 8, 12); g.fillStyle = facing === 'front' ? skin : dark; g.beginPath(); g.arc(dx, -29, 3.5, 0, Math.PI * 2); g.fill(); g.fillStyle = helmet; g.beginPath(); g.arc(dx, -31, 3.8, Math.PI, Math.PI * 2); g.fill(); }
-    } else {
-      // 步卒、火器手：腿、身、头盔、兵器
-      g.strokeStyle = dark; g.lineWidth = 3.5;
-      g.beginPath(); g.moveTo(-3, -14); g.lineTo(-3 - step * 0.6, 0); g.moveTo(3, -14); g.lineTo(3 + step * 0.6, 0); g.stroke();
-      g.fillStyle = col; g.beginPath(); g.moveTo(-7, -14); g.lineTo(-6, -30); g.lineTo(6, -30); g.lineTo(7, -14); g.closePath(); g.fill();
-      g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(-7, -20, 14, 2.5);
-      g.fillStyle = facing === 'front' ? skin : shade(skin, -0.35); g.beginPath(); g.arc(0, -34, 4.6, 0, Math.PI * 2); g.fill();
-      g.fillStyle = helmet; g.beginPath(); g.arc(0, -36, 5, Math.PI, Math.PI * 2); g.fill();
-      if (look.helmet === 'ming') { g.strokeStyle = '#c8352a'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(0, -41); g.lineTo(0, -46); g.stroke(); }
-      if (look.helmet === 'qing') { g.strokeStyle = '#d6b05a'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(0, -41); g.lineTo(0, -48); g.stroke(); }
-      if (kind === 'gun') { g.strokeStyle = '#3a2a1a'; g.lineWidth = 2; g.beginPath(); g.moveTo(5, -24); g.lineTo(9, -46); g.stroke(); }
-      else { g.strokeStyle = '#6b4a2a'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(7, -18); g.lineTo(9, -56); g.stroke(); g.fillStyle = '#d8d8d0'; g.beginPath(); g.moveTo(9, -56); g.lineTo(7.5, -50); g.lineTo(10.5, -50); g.fill(); }
-      if (kind === 'inf' && facing === 'front') { g.fillStyle = shade(col, -0.2); g.beginPath(); g.ellipse(-6, -22, 4, 6, 0, 0, Math.PI * 2); g.fill(); }
+  /** 一营画在哪里：攻方入城、登城之后，画在缺口、城头上，不再被城墙挡住；巷战时城中守军也现出来 */
+  where(u: SUnit): { x: number; y: number; z: number; note?: string } | null {
+    const sim = this.sim;
+    const attIn = sim.units.filter(a => a.side === 'att' && a.troops >= 1 && a.state === 'inside');
+    if (u.side === 'def' && u.state === 'wall') return { x: u.x, y: WALL_Y, z: WALL_H };
+    if (u.side === 'att' && u.state === 'wall') return { x: segX(u.seg ?? GATE_SEG), y: WALL_Y, z: WALL_H, note: '登城' };
+    if (this.o.me === 'att') {
+      if (u.side === 'att' && u.state === 'inside') { const k = attIn.indexOf(u); return { x: segX(u.seg ?? GATE_SEG) + (k % 2 ? 38 : -38) * Math.ceil(k / 2), y: WALL_Y + 8, z: 0, note: '入城巷战' }; }
+      const insideDef = u.side === 'def' && (u.state === 'inside' || (u.state === 'move' && u.y < WALL_Y));
+      if (insideDef) {
+        if (!attIn.length) return null;          // 平时看不见城里
+        return { x: segX(attIn[0].seg ?? GATE_SEG) + 70, y: WALL_Y + 4, z: 0, note: '巷战' };
+      }
     }
-    this.sprites.set(key, c);
-    return c;
+    return { x: u.x, y: u.y, z: 0 };
   }
 
   /* ---------- 背景（缓存） ---------- */
@@ -118,17 +42,7 @@ export class SiegeView {
     const c = document.createElement('canvas'); c.width = this.cv.width; c.height = this.cv.height;
     const g = c.getContext('2d')!; g.scale(this.dpr, this.dpr);
     const { W, H } = this, hz = this.hz;
-    const rain = this.sim.weather === 'rain', fog = this.sim.weather === 'fog';
-    const sky = g.createLinearGradient(0, 0, 0, hz + 30);
-    sky.addColorStop(0, rain ? '#5d6670' : fog ? '#b9bcb4' : '#6f9fc9'); sky.addColorStop(1, rain ? '#a3a9a8' : fog ? '#dad8cc' : '#e9e0c4');
-    g.fillStyle = sky; g.fillRect(0, 0, W, hz + 40);
-    // 远山
-    for (let k = 0; k < 3; k++) {
-      g.fillStyle = ['rgba(110,130,140,0.55)', 'rgba(90,110,105,0.6)', 'rgba(80,95,80,0.75)'][k];
-      g.beginPath(); g.moveTo(0, hz + 10);
-      for (let x = 0; x <= W; x += 30) g.lineTo(x, hz + 6 - k * 3 - Math.abs(Math.sin(x / (90 + k * 40) + k)) * (22 - k * 5));
-      g.lineTo(W, hz + 12); g.lineTo(0, hz + 12); g.fill();
-    }
+    this.skyAndHills(g, this.sim.weather);
     // 大地：近浓远淡，田垄随透视收拢
     const gr = g.createLinearGradient(0, hz, 0, H);
     gr.addColorStop(0, '#9aa07a'); gr.addColorStop(0.4, '#7f8a5a'); gr.addColorStop(1, '#5e6a3f');
@@ -220,7 +134,7 @@ export class SiegeView {
       // 选段高亮
       if (this.hoverSeg === s) { g.strokeStyle = 'rgba(255,214,120,0.95)'; g.lineWidth = 3; g.strokeRect(L + 2, ay - h - m - 2, R - L - 4, h + m + 4); }
       // 段名与城防条
-      const barW = (R - L) * 0.6, bx0 = (L + R) / 2 - barW / 2, by0 = ay - h - m - (s === GATE_SEG ? h * 1.25 : 12);
+      const barW = (R - L) * 0.6, bx0 = (L + R) / 2 - barW / 2, by0 = ay - h - m - (s === GATE_SEG && this.o.me === 'att' ? h * 1.25 : 12);
       g.fillStyle = 'rgba(15,10,6,0.75)'; g.fillRect(bx0 - 1, by0 - 1, barW + 2, 6);
       g.fillStyle = f > 0.6 ? '#9fd18f' : f > 0.3 ? '#e8a447' : '#e0503f'; g.fillRect(bx0, by0, barW * Math.max(0, f), 4);
       if (s === GATE_SEG) { const gf = Math.max(0, sim.gate.hp / sim.gate.max); g.fillStyle = 'rgba(15,10,6,0.75)'; g.fillRect(bx0 - 1, by0 + 6, barW + 2, 5); g.fillStyle = '#c9a457'; g.fillRect(bx0, by0 + 7, barW * gf, 3); }
@@ -245,13 +159,13 @@ export class SiegeView {
   drawUnit(g: CanvasRenderingContext2D, u: SUnit) {
     if (u.state === 'gone' || u.troops < 1) return;
     const sim = this.sim;
-    const onWall = u.side === 'def' && u.state === 'wall';
-    const insideDef = u.side === 'def' && (u.state === 'inside' || u.state === 'move' && u.y < WALL_Y);
-    if (insideDef && this.o.me === 'att') return;       // 攻方看不见城里
-    const [cx, cy, s] = this.P(u.x, u.y, onWall ? WALL_H : 0);
+    const w = this.where(u);
+    if (!w) return;
+    const onWall = w.z > 0;
+    const [cx, cy, s] = this.PU(w.x, w.y, w.z);
     const facing: 'back' | 'front' = (u.side === this.o.me) ? 'back' : 'front';
     const n = Math.max(3, Math.min(onWall ? 9 : 30, Math.round(Math.sqrt(u.troops) / (onWall ? 7 : 4))));
-    const px = this.H * s * 0.11 * (onWall ? 1.7 : 1);   // 一个小兵的高度（像素）；城头守军画大些，免得远看只剩刻痕
+    const px = this.H * s * 0.11 * (onWall ? 1.7 : this.o.me === 'att' && w.y < 240 ? 1.3 : 1);   // 一个小兵的高度（像素）；城头守军画大些，免得远看只剩刻痕
     const moving = u.state === 'move' || u.state === 'rout';
     const frame = moving ? Math.floor(this.now / 180 + u.x) % 2 : 0;
     const cols = onWall ? n : Math.ceil(Math.sqrt(n * 2.2));
@@ -270,7 +184,7 @@ export class SiegeView {
         const bob = moving ? Math.abs(Math.sin(this.now / 120 + k)) * px * 0.05 : 0;
         if (onWall) {
           // 城头守军：只露半身于垛口之后
-          const sp = this.sprite(u.side, u.kind === 'gun' ? 'gun' : 'inf', this.o.me === 'def' ? 'back' : 'front', 0);
+          const sp = this.sprite(u.side, u.kind === 'gun' ? 'gun' : 'inf', u.side === this.o.me ? 'back' : 'front', 0);
           g.save(); g.beginPath(); g.rect(x - px, y - px * 2, px * 2, px * 1.45); g.clip();
           g.drawImage(sp, x - px * 0.375, y - px - bob, px * 0.75, px); g.restore();
         } else {
@@ -301,107 +215,57 @@ export class SiegeView {
       g.fillStyle = '#2a1d12'; g.fillRect(gx - w * 0.06, gy - w * 0.3 - push, w * 0.12, w * 0.3);
     }
     // 旗与头顶读数：兵数（滚动）、士气条
-    const top = cy - rows * gapY - px * 1.25;
+    // 守城视角里城头守军近在眼前：读数贴着头顶，不飘到城外敌阵里去
+    const top = onWall && u.side === this.o.me ? cy - px * 0.95 : cy - rows * gapY - px * 1.25;
     const look = this.o.look[u.side];
-    if (!(onWall && this.o.me === 'def')) {   // 守城视角里近处城头不插大旗，免得遮挡来敌
+    if (!(onWall && u.side === this.o.me && this.o.me === 'def')) {   // 守城视角里近处城头不插大旗，免得遮挡来敌
       g.strokeStyle = '#2a1d12'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(cx + cols * gapX * 0.35, cy - px * 0.4); g.lineTo(cx + cols * gapX * 0.35, top); g.stroke();
       g.fillStyle = look.color; g.fillRect(cx + cols * gapX * 0.35, top, px * 0.6, px * 0.4);
     }
-    const label = `${u.name} ${fmt(u.troops)}`;
-    g.font = `700 ${Math.max(10, Math.min(14, px * 0.32))}px "Noto Serif SC", serif`;
-    const tw = g.measureText(label).width + 10;
-    const ly = top - 16;
-    g.fillStyle = u.side === this.o.me ? 'rgba(20,12,6,0.85)' : 'rgba(60,12,8,0.85)';
-    g.fillRect(cx - tw / 2, ly - 9, tw, 15);
-    g.fillStyle = u.state === 'rout' ? '#ff9a8a' : '#f3e6c8'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(u.state === 'rout' ? `${u.name} 溃` : label, cx, ly - 1.5);
-    const mw = tw - 8, mf = u.morale / 100;
-    g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(cx - mw / 2, ly + 7, mw, 3);
-    g.fillStyle = mf > 0.5 ? '#9fd18f' : mf > 0.28 ? '#e8a447' : '#e0503f'; g.fillRect(cx - mw / 2, ly + 7, mw * mf, 3);
+    this.label(g, u, cx, top, px, w.note ?? (u.side === 'def' && u.name === '城内预备' && u.state === 'wall' && u.seg !== undefined ? '援' + segName(u.seg) : undefined));
     void sim;
   }
 
   /* ---------- 一帧 ---------- */
   render(now: number) {
-    this.now = now;
+    this.now = now; this.labelRects = [];
     const g = this.g, sim = this.sim;
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const sh = this.shake > 0 && !this.reduced ? (Math.random() - 0.5) * this.shake : 0;
     g.translate(sh, sh * 0.6);
     this.shake = Math.max(0, this.shake - 0.6);
     g.drawImage(this.background(), 0, 0, this.W, this.H);
-    // 先画墙后（守城视角：城内与城外远处的攻方）或墙前（攻城视角）
-    const units = sim.units.filter(u => u.state !== 'gone').sort((a, b) => this.depth(b.y) - this.depth(a.y));
-    const farOfWall = (u: SUnit) => this.o.me === 'att' ? u.y < WALL_Y - 1 : u.y > WALL_Y + 1;
-    for (const u of units) if (farOfWall(u) && !(u.side === 'def' && u.state === 'wall')) this.drawUnit(g, u);
+    // 墙外远处（守城视角里的攻方，攻城视角里看不见的城内）→ 城墙 → 城头 → 墙前近处
+    const placed = sim.units.filter(u => u.state !== 'gone').map(u => ({ u, w: this.where(u) })).filter(p => p.w) as { u: SUnit; w: NonNullable<ReturnType<SiegeView['where']>> }[];
+    placed.sort((a, b) => this.depth(b.w.y) - this.depth(a.w.y));
+    const far = (p: typeof placed[number]) => p.w.z === 0 && (this.o.me === 'att' ? p.w.y < WALL_Y - 1 : p.w.y > WALL_Y + 1);
+    for (const p of placed) if (far(p)) this.drawUnit(g, p.u);
     this.drawWall(g);
-    for (const u of units) if (u.side === 'def' && u.state === 'wall') this.drawUnit(g, u);
-    for (const u of units) if (!farOfWall(u) && !(u.side === 'def' && u.state === 'wall')) this.drawUnit(g, u);
+    for (const p of placed) if (p.w.z > 0) this.drawUnit(g, p.u);
+    for (const p of placed) if (!far(p) && p.w.z === 0) this.drawUnit(g, p.u);
     this.drawShots(g, now);
     this.drawFloats(g, now);
-    if (sim.weather === 'rain') { g.strokeStyle = 'rgba(210,220,230,0.35)'; g.lineWidth = 1; for (let k = 0; k < 90; k++) { const x = (k * 97 + now * 0.5) % this.W, y = (k * 53 + now * 0.9) % this.H; g.beginPath(); g.moveTo(x, y); g.lineTo(x - 4, y + 12); g.stroke(); } }
-    // 军心将溃：边缘泛红
-    const r = sim.resolve[this.o.me];
-    if (r < 30 && !sim.over) {
-      const a = (30 - r) / 30 * (0.35 + 0.15 * Math.sin(now / 250));
-      const vg = g.createRadialGradient(this.W / 2, this.H / 2, this.H * 0.35, this.W / 2, this.H / 2, this.H * 0.8);
-      vg.addColorStop(0, 'rgba(160,20,10,0)'); vg.addColorStop(1, `rgba(160,20,10,${a})`);
-      g.fillStyle = vg; g.fillRect(0, 0, this.W, this.H);
-    }
+    if (sim.weather === 'rain') this.rain(g, now);
+    this.vignette(g, sim.resolve[this.o.me], !!sim.over, now);
   }
 
   /** 从模拟里取这一步的伤亡、开火，变成飘字与弹道 */
   harvest(now: number) {
     const sim = this.sim;
-    for (const u of sim.units) {
-      if (u.hit > 0) this.hitAcc.set(u.id, (this.hitAcc.get(u.id) ?? 0) + u.hit);
-    }
-    if (now - this.lastFloat > 650) {
-      this.lastFloat = now;
-      for (const [id, n] of this.hitAcc) {
-        if (n < 1) continue;
-        const u = sim.units.find(x => x.id === id); if (!u) continue;
-        const [x, y, s] = this.P(u.x, u.y, u.side === 'def' && u.state === 'wall' ? WALL_H : 0);
-        this.floats.push({ x: x + (Math.random() - 0.5) * 30, y: y - this.H * s * 0.2, text: '−' + Math.round(n), t0: now, color: u.side === this.o.me ? '#ffb3a6' : '#fff1cf' });
-      }
-      this.hitAcc.clear();
-    }
+    this.harvestHits(now, sim.units, u => (this.where(u as SUnit)?.z ?? 0));
     // 开火示意：炮弹、箭雨、铳烟
     for (const u of sim.units) {
       if (u.state === 'bombard' && u.seg !== undefined && Math.random() < 0.05) {
-        const [x0, y0] = this.P(u.x, u.y, 4), [x1, y1] = this.P(segX(u.seg) + (Math.random() - 0.5) * 120, WALL_Y, WALL_H * 0.6);
+        const [x0, y0] = this.PU(u.x, u.y, 4), [x1, y1] = this.P(segX(u.seg) + (Math.random() - 0.5) * 120, WALL_Y, WALL_H * 0.6);
         this.shots.push({ x0, y0, x1, y1, t0: now, dur: 700, kind: 'ball' });
       }
-      if (u.state === 'shoot' && Math.random() < 0.08) { const [x, y, s] = this.P(u.x, u.y, 8); this.shots.push({ x0: x, y0: y, x1: x, y1: y - this.H * s * 0.2, t0: now, dur: 900, kind: 'smoke' }); }
+      if (u.state === 'shoot' && Math.random() < 0.08) { const [x, y, s] = this.PU(u.x, u.y, 8); this.shots.push({ x0: x, y0: y, x1: x, y1: y - this.H * s * 0.2, t0: now, dur: 900, kind: 'smoke' }); }
       if (u.side === 'def' && u.state === 'wall' && u.engaged && Math.random() < 0.08) {
         const tgt = sim.units.find(a => a.side === 'att' && a.state !== 'gone' && a.state !== 'inside' && Math.abs(a.x - u.x) < 260 && a.y < 520);
-        if (tgt) { const [x0, y0] = this.P(u.x, WALL_Y, WALL_H), [x1, y1] = this.P(tgt.x, tgt.y, 6); this.shots.push({ x0, y0, x1, y1, t0: now, dur: 600, kind: 'arrow' }); }
+        if (tgt) { const [x0, y0] = this.PU(u.x, WALL_Y, WALL_H), [x1, y1] = this.PU(tgt.x, tgt.y, 6); this.shots.push({ x0, y0, x1, y1, t0: now, dur: 600, kind: 'arrow' }); }
       }
+      if (u.state === 'inside' && u.side === 'att' && Math.random() < 0.06) { const w = this.where(u); if (w) { const [x, y] = this.PU(w.x, w.y); this.shots.push({ x0: x, y0: y, x1: x + 20, y1: y, t0: now, dur: 800, kind: 'dust' }); } }
     }
-  }
-  drawShots(g: CanvasRenderingContext2D, now: number) {
-    this.shots = this.shots.filter(s => now - s.t0 < s.dur);
-    for (const s of this.shots) {
-      const p = (now - s.t0) / s.dur;
-      if (s.kind === 'smoke') { g.fillStyle = `rgba(235,235,228,${0.6 * (1 - p)})`; g.beginPath(); g.arc(s.x0 + p * 10, s.y0 - p * (s.y0 - s.y1), 4 + p * 14, 0, Math.PI * 2); g.fill(); continue; }
-      const x = s.x0 + (s.x1 - s.x0) * p, y = s.y0 + (s.y1 - s.y0) * p - Math.sin(p * Math.PI) * (s.kind === 'ball' ? 60 : 30);
-      if (s.kind === 'ball') {
-        g.fillStyle = '#1a1a1a'; g.beginPath(); g.arc(x, y, 3, 0, Math.PI * 2); g.fill();
-        if (p > 0.92) { g.fillStyle = 'rgba(255,200,120,0.8)'; g.beginPath(); g.arc(s.x1, s.y1, 10, 0, Math.PI * 2); g.fill(); this.shake = Math.max(this.shake, 3); }
-        if (p < 0.12) { g.fillStyle = 'rgba(255,220,150,0.9)'; g.beginPath(); g.arc(s.x0, s.y0, 7, 0, Math.PI * 2); g.fill(); }
-      } else { g.strokeStyle = 'rgba(40,30,20,0.85)'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(x, y); g.lineTo(x - (s.x1 - s.x0) * 0.04, y - 6); g.stroke(); }
-    }
-  }
-  drawFloats(g: CanvasRenderingContext2D, now: number) {
-    this.floats = this.floats.filter(f => now - f.t0 < 1300);
-    g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = '900 15px "Noto Serif SC", serif';
-    for (const f of this.floats) {
-      const p = (now - f.t0) / 1300;
-      g.globalAlpha = p > 0.7 ? (1 - p) / 0.3 : 1;
-      g.lineWidth = 3.5; g.strokeStyle = 'rgba(20,8,4,0.85)'; g.strokeText(f.text, f.x, f.y - p * 30);
-      g.fillStyle = f.color; g.fillText(f.text, f.x, f.y - p * 30);
-    }
-    g.globalAlpha = 1;
   }
 
   /** 点选：一营或城墙一段 */
@@ -409,8 +273,8 @@ export class SiegeView {
     let best: string | undefined, bd = 1e9;
     for (const u of this.sim.units) {
       if (u.state === 'gone' || u.troops < 1) continue;
-      if (u.side === 'def' && u.state === 'inside' && this.o.me === 'att') continue;
-      const [x, y, s] = this.P(u.x, u.y, u.side === 'def' && u.state === 'wall' ? WALL_H : 0);
+      const w = this.where(u); if (!w) continue;
+      const [x, y, s] = this.PU(w.x, w.y, w.z);
       const r = Math.max(26, this.H * s * 0.35);
       const d = Math.hypot(sx - x, (sy - (y - this.H * s * 0.1)) * 1.3);
       if (d < r && d < bd) { bd = d; best = u.id; }
@@ -426,4 +290,4 @@ export class SiegeView {
     return {};
   }
 }
-const fmt = (n: number) => n >= 10000 ? (Math.round(n / 1000) / 10) + '万' : String(Math.round(n));
+
