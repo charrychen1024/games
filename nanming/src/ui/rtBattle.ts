@@ -67,7 +67,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   (window as unknown as { NM_siegeSkip?: () => void }).NM_siegeSkip = () => {
     if (phase === 'deploy') start();
     let next = 0;
-    while (!sim.over && sim.t < 3600) { if (sim.t >= next) { ai(foe); ai(side); next = sim.t + 2; } step(0.2); }
+    while (!sim.over && sim.t < 3600) { if (sim.t >= next) { ai(foe); ai(side); next = sim.t + 2; } step(0.1); }
     if (!sim.over && ssim) defDecision(ssim, 'abandon');
   };
   let phase: 'deploy' | 'fight' | 'end' = 'deploy';

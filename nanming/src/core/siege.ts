@@ -177,9 +177,16 @@ export function drum(sim: SiegeSim, side: 'att' | 'def'): boolean {
 }
 
 /* ---------------- 推进一步 ---------------- */
+/** 演算的一拍（秒）：与野战相同，按固定一拍逐拍推进，结果与显示速度无关 */
+export const TICK = 0.1;
 export function stepSiege(sim: SiegeSim, dt: number, cmds: SCommand[] = []) {
   if (sim.over) return sim;
   for (const c of cmds) command(sim, c);
+  const n = Math.max(1, Math.round(dt / TICK));
+  for (let i = 0; i < n && !sim.over; i++) tickSiege(sim, TICK);
+  return sim;
+}
+function tickSiege(sim: SiegeSim, dt: number) {
   const rng = makeRng(sim.seed * 31 + Math.round(sim.t * 10));
   sim.t = Math.round((sim.t + dt) * 1000) / 1000;
   for (const u of sim.units) { u.hit = 0; u.engaged = false; }
@@ -528,11 +535,13 @@ export function aiCommands(sim: SiegeSim, side: 'att' | 'def', opts: { eager?: b
 /* ---------------- 无画面快进 ---------------- */
 export function runSiege(b: BattleState, opts: { maxT?: number; dt?: number } = {}): SiegeSim {
   const sim = createSiege(b);
-  const dt = opts.dt ?? 0.2, maxT = opts.maxT ?? 3600;
+  // 与实时界面同一节奏：逐拍推进，每两秒双方各下一次令（opts.dt 只是旧接口，不影响结果）
+  const maxT = opts.maxT ?? 3600;
+  void opts.dt;
   let next = 0;
   while (!sim.over && sim.t < maxT) {
     if (sim.t >= next) { aiCommands(sim, 'att'); aiCommands(sim, 'def'); next = sim.t + 2; }
-    stepSiege(sim, dt);
+    stepSiege(sim, TICK);
   }
   // 安全阀（正常不会到）：攻方粮尽自退
   if (!sim.over) { for (const u of sim.units) if (u.side === 'att' && active(u)) u.state = 'gone'; end(sim, 'def', 'retreat', `${sim.att.name}粮尽，收兵回营，城未克。`); }

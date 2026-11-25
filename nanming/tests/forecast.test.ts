@@ -1,7 +1,7 @@
 /* 城池每月钱粮预估与募兵：预估逐项列出，与实际月结相符；可养人数；被围不能募兵。 */
 import { describe, it, expect } from 'vitest';
 import { createGame } from '../src/data/scenario1644';
-import { cityForecast, feedable, runEconomy, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER } from '../src/core/economy';
+import { cityForecast, feedable, runEconomy, yearOutlook, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER } from '../src/core/economy';
 import { validateOrder, applyOrder } from '../src/core/orders';
 import type { GameState } from '../src/core/types';
 
@@ -36,12 +36,13 @@ describe('城池每月钱粮预估', () => {
     const n = cityForecast(s, s.cities.nanjing);
     expect(n.silver.items.some(i => /起运|解饷/.test(i.label) && i.v > 0)).toBe(true);
   });
-  it('可养人数：按本城每月结余，粮银取其紧者', () => {
+  it('可养人数：按全年平均结余，粮银取其紧者，不动存量', () => {
     const s = createGame('hongguang', 1);
     const c = s.cities.nanjing;
-    const f = cityForecast(s, c);
-    const n = feedable(s, c);
-    expect(n).toBe(Math.max(0, Math.floor(Math.min(f.grain.net / GRAIN_PER_SOLDIER, f.silver.net / SILVER_PER_SOLDIER) / 100) * 100));
+    const o = yearOutlook(s, c);
+    expect(feedable(s, c)).toBe(o.sustain);
+    expect(o.sustain).toBe(Math.max(0, Math.floor(Math.min(o.netGrain / GRAIN_PER_SOLDIER, o.netSilver / SILVER_PER_SOLDIER) / 100) * 100));
+    expect(o.feed).toBeGreaterThanOrEqual(o.sustain);
   });
 });
 

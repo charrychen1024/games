@@ -187,6 +187,26 @@ export function envoyMonths(s: GameState, char: string, dest?: string): number {
   return Math.max(1, Math.ceil(pathDays(from, p) * 0.6 / 30));
 }
 
+/** 按已排命令试算：在本月局面的副本上，照月结第一阶段的顺序（先执行上月拖延的号令，宣战在先，政令次数之内）
+ *  依次执行已排的命令，得到命令执行后的局面。原局面不动。城池面板、预估、报价、下令校验都以此为准。 */
+export function projectOrders(s: GameState, orders: Order[]): GameState {
+  const t = structuredClone(s);
+  const delayed = t.delayed; t.delayed = [];
+  for (const o of delayed) applyOrder(t, t.player, o.kind === 'command' ? { ...o, silver: 0 } : o);
+  const budget = orderBudget(t, t.player).total;
+  let used = 0;
+  for (const o of [...orders].sort((a, b) => Number(b.kind === 'war') - Number(a.kind === 'war'))) {
+    if (used + orderCost(o) > budget) continue;
+    used += orderCost(o);
+    applyOrder(t, t.player, o);
+  }
+  return t;
+}
+/** 在已排命令之后再下这一道，是否行得通（按试算后的局面校验） */
+export function validateQueued(s: GameState, queued: Order[], o: Order): string | null {
+  return validateOrder(projectOrders(s, queued), s.player, o);
+}
+
 /** 本月还能募多少（按月初人口与民心定上限，同月多道命令累计） */
 export function recruitLeft(s: GameState, node: string): number {
   const c = s.cities[node];

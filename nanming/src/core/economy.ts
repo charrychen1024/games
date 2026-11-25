@@ -125,8 +125,8 @@ export function cityForecast(s: GameState, c: City): CityForecast {
     if (a.arrears) S.push({ label: `补发${a.name}旧欠（府库一半为限）`, v: -Math.min(a.arrears, Math.floor(Math.max(0, c.silver) * 0.5)), kind: 'army' });
   }
   const silverIncome = inc.silver + inc.trade;
-  const out = remitOut(s, c, silverIncome) ?? provRemit(s, c, silverIncome);
-  if (out) S.push({ label: out.label, v: -out.amt, kind: 'remit' });
+  // 起运本势力治所、各省官府另解饷宗主治所，两笔都要列
+  for (const out of [remitOut(s, c, silverIncome), provRemit(s, c, silverIncome)]) if (out) S.push({ label: out.label, v: -out.amt, kind: 'remit' });
   // 治所：各城起运、各省解饷进来
   let inRemit = 0;
   for (const o of Object.values(s.cities)) {
@@ -142,10 +142,33 @@ export function cityForecast(s: GameState, c: City): CityForecast {
   const sum = (l: ForecastItem[]) => l.reduce((n, i) => n + i.v, 0);
   return { grain: { items: G, net: sum(G) }, silver: { items: S, net: sum(S) } };
 }
-/** 本城每月结余还能再养多少驻军（粮、银取其紧者，按百人取整） */
+/** 一年展望：按当前城权、驻军、方针不变，逐月滚动（田粮随季节变），看一年内粮、银最低到多少、哪个月起见底，
+ *  以及再养多少驻军能保一年内粮银都不断（feed）。围城、战事、命令之外的变故都不计。 */
+/** feed：动用现存粮银、一年之内不断还能多养几人；sustain：按全年平均结余可长期多养几人（不动存量） */
+export interface Outlook { months: number; minGrain: number; minSilver: number; shortGrain: number | null; shortSilver: number | null; feed: number; sustain: number; netGrain: number; netSilver: number }
+export function yearOutlook(s: GameState, c: City, months = 12): Outlook {
+  let grain = c.grain, silver = c.silver;
+  let minGrain = grain, minSilver = silver, shortGrain: number | null = null, shortSilver: number | null = null;
+  let feedG = Infinity, feedS = Infinity, cumG = 0, cumS = 0;
+  for (let k = 1; k <= months; k++) {
+    const t: GameState = { ...s, turn: s.turn + k - 1, cities: { ...s.cities, [c.id]: { ...c, grain, silver } } };
+    const f = cityForecast(t, t.cities[c.id]);
+    cumG += f.grain.net; cumS += f.silver.net;
+    grain = Math.max(0, grain + f.grain.net); silver = Math.max(0, silver + f.silver.net);
+    minGrain = Math.min(minGrain, grain); minSilver = Math.min(minSilver, silver);
+    if (shortGrain === null && c.grain + cumG < 0) shortGrain = k;
+    if (shortSilver === null && c.silver + cumS < 0) shortSilver = k;
+    // 多养 n 人，第 k 月累计多耗 n×每人月费×k，存量不得为负
+    feedG = Math.min(feedG, (c.grain + cumG) / (GRAIN_PER_SOLDIER * k));
+    feedS = Math.min(feedS, (c.silver + cumS) / (SILVER_PER_SOLDIER * k));
+  }
+  const feed = Math.max(0, Math.floor(Math.min(feedG, feedS) / 100) * 100);
+  const sustain = Math.max(0, Math.floor(Math.min(cumG / months / GRAIN_PER_SOLDIER, cumS / months / SILVER_PER_SOLDIER) / 100) * 100);
+  return { months, minGrain, minSilver, shortGrain, shortSilver, feed, sustain, netGrain: Math.round(cumG / months), netSilver: Math.round(cumS / months) };
+}
+/** 本城能长期多养多少驻军：按全年平均结余，粮、银取其紧者（不动存量，按百人取整） */
 export function feedable(s: GameState, c: City): number {
-  const f = cityForecast(s, c);
-  return Math.max(0, Math.floor(Math.min(f.grain.net / GRAIN_PER_SOLDIER, f.silver.net / SILVER_PER_SOLDIER) / 100) * 100);
+  return yearOutlook(s, c).sustain;
 }
 
 /* ---------------- 粮价、粜籴、劝捐 ----------------

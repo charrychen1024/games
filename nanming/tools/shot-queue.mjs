@@ -1,0 +1,25 @@
+/* 排令后预估：南京排入赈济后看粮账、方针卡、募兵窗口。用法：node tools/shot-queue.mjs 输出前缀 */
+import { serve } from './serve.mjs';
+import pw from './pw.mjs';
+const out = process.argv[2] ?? 'test-results/queue';
+const PORT = Number(process.env.PORT ?? 8218);
+const server = await serve(PORT);
+const browser = await pw.chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const errors = []; page.on('pageerror', e => errors.push(e.message));
+await page.goto(`http://127.0.0.1:${PORT}/`);
+await page.waitForTimeout(800);
+await page.evaluate(() => { localStorage.setItem('nanming:hint', '9'); NM.start(NM_presets.createGame('hongguang', 1), false); NM.map.focus('nanjing', 2); NM.selectNode('nanjing'); });
+await page.waitForTimeout(700);
+await page.click('#act-policy'); await page.waitForTimeout(600);
+await page.screenshot({ path: `${out}-policy.png` });
+await page.evaluate(() => { NM.closeModal(); NM.addOrder({ id: NM.newOrderId(), kind: 'policy', node: 'nanjing', policy: 'relief' }); });
+await page.waitForTimeout(400);
+await page.click('#city-grain'); await page.waitForTimeout(400);
+await page.screenshot({ path: `${out}-grain.png` });
+const txt = await page.evaluate(() => document.querySelector('#city-forecast')?.textContent ?? '');
+await page.click('#act-recruit'); await page.waitForTimeout(400);
+await page.screenshot({ path: `${out}-recruit.png` });
+console.log(txt.slice(0, 200));
+console.log(errors.length ? 'ERR ' + errors.join(' | ') : 'ok');
+await browser.close(); server.close();

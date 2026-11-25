@@ -154,9 +154,16 @@ export function drumF(sim: FieldSim, side: 'att' | 'def'): boolean {
 }
 
 /* ---------------- 推进一步 ---------------- */
+/** 演算的一拍（秒）。不论界面倍速还是快进，都按这一拍逐拍推进，同样的命令得到同样的战果 */
+export const TICK = 0.1;
 export function stepField(sim: FieldSim, dt: number, cmds: FCommand[] = []) {
   if (sim.over) return sim;
   for (const c of cmds) commandF(sim, c);
+  const n = Math.max(1, Math.round(dt / TICK));
+  for (let i = 0; i < n && !sim.over; i++) tickField(sim, TICK);
+  return sim;
+}
+function tickField(sim: FieldSim, dt: number) {
   const rng = makeRng(sim.seed * 37 + Math.round(sim.t * 10));
   sim.t = Math.round((sim.t + dt) * 1000) / 1000;
   for (const u of sim.units) { u.hit = 0; u.engaged = false; }
@@ -492,11 +499,13 @@ export function aiField(sim: FieldSim, side: 'att' | 'def', opts: { eager?: bool
 /* ---------------- 无画面快进 ---------------- */
 export function runField(b: BattleState, opts: { maxT?: number; dt?: number } = {}): FieldSim {
   const sim = createField(b);
-  const dt = opts.dt ?? 0.2, maxT = opts.maxT ?? DUSK + 10;
+  // 与实时界面同一节奏：逐拍推进，每两秒双方各下一次令（opts.dt 只是旧接口，不影响结果）
+  const maxT = opts.maxT ?? DUSK + 10;
+  void opts.dt;
   let next = 0;
   while (!sim.over && sim.t < maxT) {
     if (sim.t >= next) { aiField(sim, 'att'); aiField(sim, 'def'); next = sim.t + 2; }
-    stepField(sim, dt);
+    stepField(sim, TICK);
   }
   return sim;
 }

@@ -18,8 +18,8 @@ import { isReduced, setReducedMotion, reducedSystem } from './motion';
 import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
-import { POLICY_NAME, POLICY_HINT, upkeepOf, cityForecast, feedable, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
-import { orderBudget, orderCost, ordersUsed, describeOrder, validateOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
+import { POLICY_NAME, POLICY_HINT, upkeepOf, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
+import { projectOrders, validateQueued, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { yangzhouSiegeState } from '../data/presets';
 import { createGame } from '../data/scenario1644';
@@ -508,22 +508,27 @@ export class App {
   /* ================= 工具 ================= */
   isMineOrVassal(f: string) { return f === this.s!.player || this.s!.factions[f]?.overlord === this.s!.player; }
   known(node: string) { const c = this.s!.cities[node]; return friendly(this.s!, this.s!.player, c.controller); }
+  /** 排令后的局面：按已排命令在本月局面副本上试算（与月结同一顺序），命令一有增减即重算 */
+  private projKey = ''; private projS: GameState | null = null;
+  proj(): GameState {
+    const s = this.s!;
+    const key = s.turn + '|' + s.nextId + '|' + this.orders.map(o => o.id).join(',');
+    if (this.projS && this.projKey === key && this.projBase === s) return this.projS;
+    this.projS = projectOrders(s, this.orders); this.projKey = key; this.projBase = s;
+    return this.projS;
+  }
+  private projBase: GameState | null = null;
+  /** 已排命令在此城动用（正）或调入（负）的钱粮 */
   pendingSpend(node: string, field: 'grain' | 'silver'): number {
-    let n = 0;
-    for (const o of this.orders) {
-      if (o.kind === 'recruit' && o.node === node && field === 'silver') n += o.troops * RECRUIT_SILVER;
-      if (o.kind === 'trade' && o.node === node) { const q = tradeQuote(this.s!, this.s!.cities[node], o.grain); if (field === 'silver') n += o.grain > 0 ? q.silver : -q.silver; else n += -o.grain; }
-      if (o.kind === 'loan' && o.node === node && field === 'silver') n -= loanAmount(this.s!, this.s!.cities[node]);
-      if (o.kind === 'transfer' && o.from === node) n += field === 'grain' ? o.grain : o.silver;
-      if ((o.kind === 'reward' || o.kind === 'command') && this.s!.factions[this.s!.player].capital === node && field === 'silver') n += o.silver;
-    }
-    return n;
+    const c = this.s!.cities[node], p = this.proj().cities[node];
+    return c && p ? c[field] - p[field] : 0;
   }
   newOrderId() { return `o${this.s!.turn}-${++this.seq}`; }
   addOrder(o: Order) {
     const s = this.s!;
     const rest = this.orders.filter(x => !(x.kind === o.kind && sameTarget(x, o)));
-    const err = validateOrder(s, s.player, o);
+    // 按已排命令执行之后的局面校验：同城两笔募兵共用名额，先劝捐后募兵按劝捐后的府库
+    const err = validateQueued(s, rest, o);
     if (err) { this.toast(err, 'close'); return false; }
     const bud = orderBudget(s, s.player);
     if (ordersUsed(rest) + orderCost(o) > bud.total) {
@@ -878,7 +883,10 @@ export class App {
     panel.append(sec);
     if (this.cityTab === 'main') {
       // 看板：三项家底（兵、粮、银，含每月进出）→ 三枚城况轮盘（城防、民心、吏治）→ 三条经营刻度（农、商、文）→ 方针与市价徽记
-      const fc = known ? cityForecast(s, c) : null;
+      // 按已排命令执行之后的局面预估；与不下令时不同则一并写出
+      const ps = this.proj(), pc = ps.cities[id];
+      const fc = known ? cityForecast(ps, pc) : null;
+      const fc0 = known && this.orders.length ? cityForecast(s, c) : null;
       const gNet = fc ? fc.grain.net : 0, sNet = fc ? fc.silver.net : 0;
       // 所奉朝廷或盟友之城：写明为什么不能下政令
       if (!mine && !vassal && friendly(s, s.player, c.controller)) {
@@ -892,14 +900,20 @@ export class App {
         this.resCounter('grain', '仓粮', known ? wan(c.grain - this.pendingSpend(id, 'grain')) : '不详', gNet, '每月', { id: 'city-grain', ...(known ? { raw: c.grain - this.pendingSpend(id, 'grain'), key: id + ':grain', open: () => { this.cityFc = this.cityFc === 'grain' ? null : 'grain'; this.renderCity(id); }, on: this.cityFc === 'grain' } : {}) }),
         this.resCounter('silver', '府库', known ? wan(c.silver - this.pendingSpend(id, 'silver')) : '不详', sNet, '每月', { id: 'city-silver', ...(known ? { raw: c.silver - this.pendingSpend(id, 'silver'), key: id + ':silver', open: () => { this.cityFc = this.cityFc === 'silver' ? null : 'silver'; this.renderCity(id); }, on: this.cityFc === 'silver' } : {}) })));
       if (fc && this.cityFc) {
-        const which = this.cityFc, f = fc[which], stock = which === 'grain' ? c.grain : c.silver, unit = which === 'grain' ? '石' : '两';
+        const which = this.cityFc, f = fc[which], stock = which === 'grain' ? pc.grain : pc.silver, unit = which === 'grain' ? '石' : '两';
         const months = f.net < 0 ? Math.floor(stock / -f.net) : null;
+        const base = fc0 ? fc0[which].net : f.net;
+        const ol = yearOutlook(ps, pc);
+        const short = which === 'grain' ? ol.shortGrain : ol.shortSilver, low = which === 'grain' ? ol.minGrain : ol.minSilver;
         const KIND_IC: Record<string, string> = { income: which === 'grain' ? 'agri' : 'commerce', garrison: 'troops', army: 'army', policy: 'policy', remit: 'transfer', siege: 'siege' };
         sec.append(h('div', { class: 'cfc', id: 'city-forecast' },
-          h('div', { class: 'cfc-h' }, ic(which), h('b', null, `本月预估 · ${which === 'grain' ? '仓粮' : '府库'}`), h('span', { class: f.net >= 0 ? 'up' : 'down' }, `${f.net >= 0 ? '+' : '−'}${wan(Math.abs(f.net))} ${unit}`)),
+          h('div', { class: 'cfc-h' }, ic(which), h('b', null, `本月预计 · ${which === 'grain' ? '仓粮' : '府库'}`), h('span', { class: f.net >= 0 ? 'up' : 'down' }, `${f.net >= 0 ? '+' : '−'}${fmt(Math.abs(f.net))} ${unit}`)),
+          base !== f.net ? h('div', { class: 'cfc-q' }, ic('appoint'), `按已排命令：本月由 ${base >= 0 ? '+' : '−'}${fmt(Math.abs(base))} 变为 ${f.net >= 0 ? '+' : '−'}${fmt(Math.abs(f.net))}，月末约余 ${fmt(Math.max(0, stock + f.net))} ${unit}`) : null,
           ...[...f.items].sort((a, b) => b.v - a.v).map(i => h('div', { class: 'cfc-r ' + (i.v >= 0 ? 'up' : 'down') }, ic(KIND_IC[i.kind] ?? 'info'), h('span', null, i.label), h('b', null, `${i.v >= 0 ? '+' : '−'}${wan(Math.abs(i.v))}`))),
-          h('div', { class: 'cfc-f' }, months !== null ? h('span', { class: months < 3 ? 'warn' : '' }, ic('hourglass'), `照此每月亏 ${wan(-f.net)}，现存 ${wan(stock)} 可撑约 ${months} 月`) : h('span', null, ic('ok'), '收大于支，逐月有余'),
-            h('small', null, '自动市籴、就地征粮等视情况才发生的不计'))));
+          h('div', { class: 'cfc-f' },
+            months !== null ? h('span', { class: months < 3 ? 'warn' : '' }, ic('hourglass'), `按本月收支不变：每月亏 ${fmt(-f.net)}，现存 ${fmt(stock)} 约撑 ${months} 月`) : h('span', null, ic('ok'), f.net === 0 ? '按本月收支不变：收支持平' : '按本月收支不变：每月有余'),
+            h('span', { class: short ? 'warn' : '' }, ic('calendar'), short ? `一年展望（随季节）：第 ${short} 个月起见底，须外援或减兵` : `一年展望（随季节）：最低约 ${fmt(low)} ${unit}，不致见底`),
+            h('small', null, '按当前城权、驻军、方针推算；围城、战事与自动市籴、就地征粮等视情况才发生的不计'))));
       }
       sec.append(h('div', { class: 'crings' },
         this.ring('wall', '城防', c.wall, String(Math.round(c.wall))),
@@ -1160,11 +1174,16 @@ export class App {
       agri: [{ icon: 'silver', text: `−${wan(p * 20)}/月`, tone: 'bad' }, { icon: 'agri', text: '农业 +1/月', tone: 'good' }],
       commerce: [{ icon: 'silver', text: `−${wan(p * 15)}/月`, tone: 'bad' }, { icon: 'commerce', text: '商业 +1/月', tone: 'good' }],
       fortify: [{ icon: 'silver', text: `−${wan(p * 40 + 2000)}/月`, tone: 'bad' }, { icon: 'wall', text: '城防 +3/月', tone: 'good' }],
-      relief: [{ icon: 'grain', text: `−${wan(p * 150)}/月`, tone: 'bad' }, { icon: 'minxin', text: '民心 +3/月', tone: 'good' }],
+      relief: [{ icon: 'grain', text: `−${wan(reliefGrain(p))}/月`, tone: 'bad' }, { icon: 'minxin', text: '民心 +3/月', tone: 'good' }],
       edu: [{ icon: 'silver', text: `−${wan(p * 25)}/月`, tone: 'bad' }, { icon: 'edu', text: '文教 +0.6/月', tone: 'good' }],
       levy: [{ icon: 'silver', text: '赋税 +50%', tone: 'good' }, { icon: 'minxin', text: '民心 −3/月', tone: 'bad' }, { icon: 'order', text: '吏治 −1/月', tone: 'bad' }],
     };
-    const cards: GameCard[] = (Object.keys(POLICY_NAME) as Policy[]).map((k, i) => ({ id: k, title: POLICY_NAME[k], art: cardArt(POLICY_ICON[k], COL[k], i), chips: CH[k], note: POLICY_HINT[k], on: k === cur, color: COL[k] }));
+    // 每张卡写明：按已排的其他命令，选它之后本城本月粮、银结余各变成多少
+    const others = this.orders.filter(o => !(o.kind === 'policy' && o.node === node));
+    const ps = projectOrders(s, others), pc = ps.cities[node];
+    const net = (k: Policy) => cityForecast({ ...ps, cities: { ...ps.cities, [node]: { ...pc, policy: k } } }, { ...pc, policy: k });
+    const sg = (v: number) => `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v))}`;
+    const cards: GameCard[] = (Object.keys(POLICY_NAME) as Policy[]).map((k, i) => { const f = net(k); return { id: k, title: POLICY_NAME[k], art: cardArt(POLICY_ICON[k], COL[k], i), chips: [...CH[k], { icon: 'grain', text: `本月结余 ${sg(f.grain.net)}`, tone: f.grain.net >= 0 ? 'good' : 'bad' }, { icon: 'silver', text: `本月结余 ${sg(f.silver.net)}`, tone: f.silver.net >= 0 ? 'good' : 'bad' }], note: POLICY_HINT[k], on: k === cur, color: COL[k] }; });
     this.modal('policy', '方针', `${nodeName(node)} · 选一张，此后每月持续执行`, [cardHand(cards, k => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'policy', node, policy: k as Policy }); }, { stampText: '令' })], [this.cancelBtn()], 'wide');
   }
 
@@ -1198,11 +1217,12 @@ export class App {
 
   /** 粜籴：在本城市面买粮或卖粮 */
   formTrade(node: string) {
-    const s = this.s!, c = s.cities[node];
+    // 报价按排令后的存粮存银（先调走粮再籴，价就按调走后的存量）
+    const s = this.proj(), c = s.cities[node];
     if (s.sieges[node]) { this.toast(`${nodeName(node)}被围，市面断绝`, 'close'); return; }
     const cap = marketCap(s, c), used = c.tradeTurn === s.turn ? c.tradeN ?? 0 : 0, room = Math.max(0, cap - used);
     if (room < 100) { this.toast(`${nodeName(node)}本月市面已尽`, 'close'); return; }
-    const silver = Math.max(0, c.silver - this.pendingSpend(node, 'silver')), grain = Math.max(0, c.grain - this.pendingSpend(node, 'grain'));
+    const silver = Math.max(0, c.silver), grain = Math.max(0, c.grain);
     const price = grainPrice(s, c);
     const maxBuy = Math.min(room, Math.floor(silver / (price * 1.25) / 100) * 100), maxSell = Math.min(room, Math.floor(grain / 100) * 100);
     let mode: 'buy' | 'sell' = maxBuy >= 100 ? 'buy' : 'sell';
@@ -1232,8 +1252,8 @@ export class App {
   }
   /** 劝捐助饷：立得一笔银，民心吏治受损，同城半年一次 */
   formLoan(node: string) {
-    const s = this.s!, c = s.cities[node];
-    const err = validateOrder(s, s.player, { id: 'x', kind: 'loan', node });
+    const s = this.proj(), c = s.cities[node];
+    const err = validateQueued(this.s!, this.orders.filter(o => !(o.kind === 'loan' && o.node === node)), { id: 'x', kind: 'loan', node });
     if (err) { this.toast(err, 'close'); return; }
     const amt = loanAmount(s, c);
     this.modal('loan', '劝捐助饷', `${nodeName(node)} · 向城中绅商劝捐军饷`, [
@@ -1244,45 +1264,48 @@ export class App {
   }
 
   formRecruit(node: string) {
-    const s = this.s!, c = s.cities[node];
-    const left = recruitLeft(s, node);
-    const max = Math.min(left, Math.floor((c.silver - this.pendingSpend(node, 'silver')) / RECRUIT_SILVER / 100) * 100);
+    const s = this.s!;
+    // 以排令后的局面为底：已排的募兵、劝捐、调拨、方针都算在内
+    const ps = this.proj(), pc = ps.cities[node];
+    const left = recruitLeft(ps, node);
+    const max = Math.min(left, Math.floor(pc.silver / RECRUIT_SILVER / 100) * 100);
     if (max < 100) { this.toast(left < 100 ? `${nodeName(node)}本月名额已满` : `${nodeName(node)}府库不足，募不到兵`, 'close'); return; }
-    // 募兵窗口：名额与府库是硬限；养不养得起由你权衡——标出本城每月结余还能养多少，拉过了变红，并算出募后每月收支与存粮能撑几月
-    const fc = cityForecast(s, c), feed = feedable(s, c);
-    const pend = this.orders.filter(o => o.kind === 'recruit' && o.node === node).reduce((n, o) => n + (o as { troops: number }).troops, 0);
-    const room = Math.max(0, feed - pend);
+    /** 再募 n 人之后的此城（与正式执行同一算法：募银、驻军、人口、民心） */
+    const after = (n: number) => ({ ...pc, silver: pc.silver - n * RECRUIT_SILVER, garrison: pc.garrison + n, pop: Math.round((pc.pop - n / 10000) * 100) / 100, minxin: Math.max(0, Math.round((pc.minxin - Math.round(n / 1500 * 10) / 10) * 10) / 10) });
+    const stateWith = (n: number) => { const c2 = after(n); return { st: { ...ps, cities: { ...ps.cities, [node]: c2 } } as GameState, c2 }; };
+    const fc = cityForecast(ps, pc);
+    const ol0 = yearOutlook(ps, pc);
+    const room = ol0.sustain;
     const input = h('input', { type: 'range', min: 100, max, step: 100, value: Math.min(max, Math.max(100, Math.min(1000, room || 1000))), id: 'recruit-n' }) as HTMLInputElement;
     const big = h('div', { class: 'big-num' });
     const costs = h('div', { class: 'costs' });
-    const mark = h('div', { class: 'rq-mark' }, h('i'), h('small', null, `可养 ${fmt(room)}`));
+    const mark = h('div', { class: 'rq-mark' }, h('i'), h('small', null, `长期可养 ${fmt(room)}`));
     const proj = h('div', { class: 'rq-proj', id: 'recruit-proj' });
-    const line = (icon: string, k: string, net0: number, net1: number, stock: number, unit: string) => {
-      const m = net1 < 0 ? Math.floor(stock / -net1) : null;
-      return h('div', { class: 'rq-row' + (net1 < 0 ? ' neg' : '') }, ic(icon), h('span', null, k),
-        h('b', null, `${net0 >= 0 ? '+' : '−'}${wan(Math.abs(net0))} → ${net1 >= 0 ? '+' : '−'}${wan(Math.abs(net1))}`), h('small', null, m === null ? '逐月有余' : `现存可撑 ${m} 月`), h('em', null, unit));
-    };
+    const sg = (v: number) => `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v))}`;
+    const line = (icon: string, k: string, net0: number, net1: number, short: number | null, low: number, unit: string) =>
+      h('div', { class: 'rq-row' + (net1 < 0 ? ' neg' : '') }, ic(icon), h('span', null, k),
+        h('b', null, `${sg(net0)} → ${sg(net1)}`), h('small', { class: short ? 'warn' : '' }, short ? `一年内第 ${short} 月起见底` : `一年内最低约 ${wan(low)}`), h('em', null, unit));
     const upd = () => {
       const n = +input.value;
       const over = n > room;
       big.textContent = `${fmt(n)} 人`; big.classList.toggle('over', over);
-      const all = n + pend;
-      const g1 = fc.grain.net - Math.round(all * GRAIN_PER_SOLDIER), s1 = fc.silver.net - Math.round(all * SILVER_PER_SOLDIER);
+      const { st, c2 } = stateWith(n);
+      const f1 = cityForecast(st, c2), ol = yearOutlook(st, c2);
       clear(costs).append(
         h('span', { class: 'cost bad' }, ic('silver'), `募银 −${fmt(n * RECRUIT_SILVER)}`),
         h('span', { class: 'cost bad' }, ic('pop'), `−${(n / 10000).toFixed(2)} 万口`),
         h('span', { class: 'cost bad' }, ic('minxin'), `民心 −${(n / 1500).toFixed(1)}`),
         h('span', { class: 'cost good' }, ic('troops'), `驻军 +${fmt(n)}`));
-      clear(proj).append(h('div', { class: 'rq-h' }, `募后本城每月（之后每人每月口粮 ${GRAIN_PER_SOLDIER} 石、饷银 ${SILVER_PER_SOLDIER} 两）`),
-        line('grain', '粮', fc.grain.net, g1, c.grain, '石'),
-        line('silver', '银', fc.silver.net, s1, c.silver - n * RECRUIT_SILVER - this.pendingSpend(node, 'silver'), '两'),
-        ...(over ? [h('div', { class: 'rq-warn' }, ic('urgent'), room > 0 ? `超出本城结余可养之数 ${fmt(n - room)} 人：须从别城调粮银，或编军出征、改由别城作粮台` : '本城已无结余：所募之兵要靠存粮、调拨或出征后由别城供养')] : []));
+      clear(proj).append(h('div', { class: 'rq-h' }, `募后本城本月结余（已含其他已排命令；之后每人每月口粮 ${GRAIN_PER_SOLDIER} 石、饷银 ${SILVER_PER_SOLDIER} 两）`),
+        line('grain', '粮', fc.grain.net, f1.grain.net, ol.shortGrain, ol.minGrain, '石'),
+        line('silver', '银', fc.silver.net, f1.silver.net, ol.shortSilver, ol.minSilver, '两'),
+        ...(over ? [h('div', { class: 'rq-warn' }, ic('urgent'), room > 0 ? `超出本城全年结余可长期供养之数 ${fmt(n - room)} 人：要靠存粮存银、别城调拨，或编军出征后改由别城作粮台` : '本城全年已无结余：所募之兵要靠存粮存银、别城调拨，或出征后由别城供养')] : []));
     };
     input.oninput = upd; upd();
     const pctMark = Math.max(0, Math.min(100, (room - 100) / Math.max(1, max - 100) * 100));
     mark.style.left = pctMark + '%';
     mark.classList.toggle('hidden', room < 100 || room >= max);
-    this.modal('recruit', '募兵', `${nodeName(node)} · 本月剩余 ${fmt(left)} / 上限 ${fmt(maxRecruit(c))} · 本城可养约 ${fmt(room)}`, [big, h('div', { class: 'field rq-field' }, input, mark), costs, proj],
+    this.modal('recruit', '募兵', `${nodeName(node)} · 本月还可募 ${fmt(left)}（上限 ${fmt(maxRecruit(s.cities[node]))}）· 长期可养约 ${fmt(room)}`, [big, h('div', { class: 'field rq-field' }, input, mark), costs, proj],
       [this.cancelBtn(), { label: '募兵', icon: 'ok', primary: true, id: 'recruit-ok', onclick: () => { this.addOrder({ id: this.newOrderId(), kind: 'recruit', node, troops: +input.value }); } }]);
   }
 

@@ -1153,3 +1153,6 @@ button.rc.on::after { content: '▴'; color: var(--gold-2); }
 
 .cnote { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(99, 160, 214, 0.12); border: 1px solid rgba(99, 160, 214, 0.35); font-size: 12.5px; line-height: 1.5; color: #dce9f5; }
 .cnote .ic { width: 18px; height: 18px; flex: none; color: #9cc6ec; margin-top: 1px; }
+.cfc-q { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; padding: 5px 8px; border-radius: 6px; background: rgba(217, 173, 91, 0.12); color: var(--gold-2); font-size: 12px; }
+.cfc-q .ic { width: 14px; height: 14px; }
+.rq-row small.warn, .cfc-f span.warn { color: #ffb3a6; }
