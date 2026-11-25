@@ -336,6 +336,19 @@ try {
   await wait(300);
   check('出兵加入本月命令', (await text('#orders')).includes('出兵'), await text('#orders'));
 
+  console.log('城下合兵：两军同在一座敌城下，政令台一键合兵攻城');
+  {
+    const saved = await page.evaluate(() => NM_presets && JSON.stringify(NM.s));
+    await page.evaluate(() => { NM.start(NM_presets.createGame('qing', 1), false); for (const id of ['a_duoduo', 'a_ajige']) { const a = NM.s.armies[id]; a.location = 'linqing'; a.path = []; a.progress = 0; } NM.map.focus('linqing', 2.2); NM.selectNode('linqing'); });
+    await wait(700);
+    check('敌城下有我军：政令台出现“合兵攻城”与“合兵围困”', await visible('#act-storm') && (await text('#act-storm')).includes('合兵') && await visible('#act-blockade'), await text('#cmddock'));
+    await page.click('#act-storm'); await wait(300);
+    const ords = await page.evaluate(() => NM.orders.filter(o => o.kind === 'army' && o.order.kind === 'siege' && o.order.target === 'linqing').map(o => o.army).sort());
+    check('一键给城下两军都下攻城令（同月同城合成一战）', JSON.stringify(ords) === JSON.stringify(['a_ajige', 'a_duoduo']), JSON.stringify(ords));
+    await page.evaluate(s => { NM.orders = []; NM.start(JSON.parse(s), false); }, saved);
+    await wait(500);
+  }
+
   console.log('战斗画面：一开场即交战，只在战场上下令');
   const unitXY = id => page.evaluate(id => { const v = NM_siege.view; const q = v.unitScreen(id); const r = v.cv.getBoundingClientRect(); return [r.left + q[0], r.top + q[1]]; }, id);
   for (const kind of ['field', 'naval']) {

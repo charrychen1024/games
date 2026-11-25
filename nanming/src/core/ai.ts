@@ -5,7 +5,7 @@ import { shortestPath, pathDays, neighbors, distancesFrom, NODE } from '../data/
 import { canSea } from './military';
 import { maxRecruit } from './orders';
 import { defectFaction, disband } from './military';
-import { RECRUIT_SILVER, supplyChoiceError, supplyBlock } from './economy';
+import { RECRUIT_SILVER, supplyChoiceError, supplyBlock, GRAIN_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER } from './economy';
 import { rngFor } from './rng';
 
 /** 各家各军的目标序列（开局几年的史实倾向；依次取第一个尚未到手的） */
@@ -202,7 +202,7 @@ export function aiOrders(s: GameState, f: string): Order[] {
     const thin = c.garrison < 2500 + c.pop * 120;
     if (!urgent.has(c.id) && !thin) continue;
     if (soldiers > capWant && !danger.some(d => d.node === c.id)) continue;
-    const grainOk = Math.floor((c.grain / 8) / 0.25 / 100) * 100;
+    const grainOk = Math.floor((c.grain / 8) / GRAIN_PER_SOLDIER / 100) * 100;
     const want = Math.min(maxRecruit(c), Math.floor(c.silver * 0.3 / RECRUIT_SILVER / 100) * 100, grainOk);
     if (want >= 500) orders.push({ id: id(), kind: 'recruit', node: c.id, troops: want });
   }
@@ -282,7 +282,7 @@ export function aiFixSupply(s: GameState) {
       .map(c => ({ c, p: shortestPath(a.location, c.id, true) })).filter(x => x.p)
       .sort((x, y) => (pathDays(a.location, x.p!) - x.c.grain / 20000 - x.c.silver / 10000) - (pathDays(a.location, y.p!) - y.c.grain / 20000 - y.c.silver / 10000))[0];
     if (best && !ownCities.length && lord === s.player && best.c.id !== a.supply) {
-      report(s, { cat: '急报', urgent: true, node: best.c.id, text: `${a.name}已无城可依，改向${nodeName(best.c.id)}支粮，每月约 ${Math.round(a.troops * 0.25)} 石。可另拨钱粮，或令其移驻。`, src: { kind: 'upkeep', ref: a.id } });
+      report(s, { cat: '急报', urgent: true, node: best.c.id, text: `${a.name}已无城可依，改向${nodeName(best.c.id)}支粮，每月约 ${Math.round(a.troops * GRAIN_PER_SOLDIER)} 石。可另拨钱粮，或令其移驻。`, src: { kind: 'upkeep', ref: a.id } });
     }
     if (best) a.supply = best.c.id;
   }
@@ -294,7 +294,7 @@ export function aiPayArmies(s: GameState) {
     if (a.faction === s.player || (a.unpaid ?? 0) < 1) continue;
     const sup = s.cities[a.supply];
     if (!sup || sup.controller !== a.faction) continue;
-    const need = Math.round(a.troops * 0.9 * 3) + (a.arrears ?? 0);
+    const need = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * 3) + (a.arrears ?? 0);
     if (sup.silver >= need) continue;
     const donor = Object.values(s.cities).filter(c => c.controller === a.faction && c.id !== sup.id && !s.sieges[c.id] && c.silver > need + c.garrison * 2 && !supplyBlock(s, a.faction, c.id, sup.id))
       .sort((x, y) => y.silver - x.silver)[0];

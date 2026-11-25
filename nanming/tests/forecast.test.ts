@@ -59,3 +59,39 @@ describe('募兵', () => {
     expect(r).toContain(`饷银 ${1000 * SILVER_PER_SOLDIER} 两`);
   });
 });
+
+describe('粮银平衡', () => {
+  const sold = (s: GameState, node: string) => 0 - s.ledger.filter(e => e.node === node && e.src.ref === 'market' && e.field === 'grain' && e.delta < 0).reduce((n, e) => n + e.delta, 0);
+  it('玩家的城银不够发饷而田粮自给有余：自动粜出余粮，留足六个月', () => {
+    const s = createGame('hongguang', 1);
+    const c = s.cities.suzhou;
+    c.silver = 0; c.grain = 400000; c.garrison = 60000;   // 兵多：月饷远超月入
+    runEconomy(s);
+    expect(sold(s, 'suzhou')).toBeGreaterThan(0);
+    expect(c.silver).toBeGreaterThan(0);
+  });
+  it('玩家田粮不够自给的城不自动粜，免得卖光口粮日后挨饿', () => {
+    const s = createGame('xi', 1);
+    const c = s.cities.kuizhou;
+    c.silver = 0;
+    runEconomy(s);
+    expect(sold(s, 'kuizhou') || 0).toBe(0);
+  });
+  it('陈粮霉变：只耗超出六个月用度的存粮，每月百分之一', () => {
+    const s = createGame('hongguang', 1);
+    const c = s.cities.suzhou; c.grain = 2e6; c.silver = 5e6;
+    runEconomy(s);
+    const spoil = -s.ledger.filter(e => e.node === 'suzhou' && e.src.ref === 'spoil').reduce((n, e) => n + e.delta, 0);
+    expect(spoil).toBeGreaterThan(15000);
+    expect(spoil).toBeLessThan(2e6 * 0.011);
+    const t = createGame('hongguang', 1); t.cities.anqing.grain = 1000; runEconomy(t);
+    expect(t.ledger.some(e => e.node === 'anqing' && e.src.ref === 'spoil')).toBe(false);
+  });
+  it('赈济每万口一百石，大城约当一月田粮的六七成', () => {
+    const s = createGame('hongguang', 1);
+    const c = s.cities.nanjing; c.policy = 'relief'; c.grain = 1e6;
+    const f = cityForecast(s, c);
+    const relief = -(f.grain.items.find(i => i.kind === 'policy' && i.label.includes('放粮'))?.v ?? 0);
+    expect(relief).toBe(12000);
+  });
+});

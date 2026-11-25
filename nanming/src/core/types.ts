@@ -139,7 +139,8 @@ export interface TroopMix { inf: number; cav: number; gun: number; navy: number 
 export type ArmyOrder =
   | { kind: 'hold' }
   | { kind: 'move'; target: NodeId; attack: boolean }
-  | { kind: 'siege'; target: NodeId; assault: boolean };
+  /** then：进攻途中被此城挡住，拿下后接着开往的原定目标 */
+  | { kind: 'siege'; target: NodeId; assault: boolean; then?: NodeId };
 export interface Army {
   id: ArmyId;
   name: string;

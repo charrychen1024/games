@@ -20,6 +20,9 @@ export const POLICY_HINT: Record<Policy, string> = {
   levy: '赋税加征五成，民心与吏治每月下降。',
 };
 
+/* 兵的月费按明季“本色（米）+ 折色（银）”：口粮连马料、家口每人每月四斗，饷银驻军四钱五分、出征七钱。
+ * 合银约八钱（驻军）至一两一钱（出征），与旧值相当；只是粮、银的比例与收入（田粮、赋税约各半）相称，
+ * 免得粮食年年堆积而银两入不敷出。 */
 export const GRAIN_PER_SOLDIER = 0.25; // 石/月
 export const SILVER_PER_SOLDIER = 0.6; // 两/月（驻军）
 export const SILVER_PER_FIELD_SOLDIER = 0.9; // 两/月（出征）
@@ -32,16 +35,27 @@ export function forageShare(s: GameState, faction: string): number {
   return 0.2;
 }
 export const RECRUIT_SILVER = 3; // 两/人
+/** 赈济：每万口每月放粮一百石（大城约当一月田粮的六七成），民心 +3 */
+export const reliefGrain = (pop: number) => Math.round(pop * 100);
+/** 仓储损耗：超出本城六个月用度的存粮，每月霉变鼠耗百分之一（陈粮不耐久存） */
+export const SPOIL_RATE = 0.01;
+export const spoilage = (s: GameState, c: City) => Math.round(Math.max(0, c.grain - upkeepOf(s, c).grain * 6 - c.pop * 300) * SPOIL_RATE);
 export const REMIT_RATE = 0.3; // 直辖城起运上缴比例
+/** 起运：本月赋税海贸的三成解往治所（出征各军多由治所支饷，钱要集中到治所才用得上） */
+export const remitAmount = (_c: { garrison: number }, income: number) => Math.round(income * REMIT_RATE);
 
 function governorZheng(s: GameState, c: City): number {
   const g = c.governor ? s.chars[c.governor] : undefined;
   return g && g.status === 'active' && g.faction === c.controller ? g.ab.zheng : 40;
 }
 
+/** 田粮的季节系数：秋收（七至九月）1.7，五六月 0.9，其余 0.75；全年平均约为 1 */
+export function harvestFactor(turn: number): number {
+  const lm = lunarOf(turn);
+  return lm.month >= 7 && lm.month <= 9 ? 1.7 : lm.month >= 5 && lm.month <= 6 ? 0.9 : 0.75;
+}
 export function monthlyIncome(s: GameState, c: City): { silver: number; grain: number; trade: number } {
-  const lm = lunarOf(s.turn);
-  const harvest = lm.month >= 7 && lm.month <= 9 ? 1.7 : lm.month >= 5 && lm.month <= 6 ? 0.9 : 0.75;
+  const harvest = harvestFactor(s.turn);
   const gov = 1 + (governorZheng(s, c) - 50) / 250;
   const sieged = !!s.sieges[c.id];
   let silver = c.pop * (c.commerce / 100) * (0.5 + c.order / 100) * 160 * gov;
@@ -66,14 +80,15 @@ export interface ForecastItem { label: string; v: number; kind: 'income' | 'garr
 export interface CityForecast { grain: { items: ForecastItem[]; net: number }; silver: { items: ForecastItem[]; net: number } }
 const POLICY_COST: Partial<Record<Policy, (p: number) => { silver?: number; grain?: number }>> = {
   agri: p => ({ silver: Math.round(p * 20) }), commerce: p => ({ silver: Math.round(p * 15) }), fortify: p => ({ silver: Math.round(p * 40 + 2000) }),
-  relief: p => ({ grain: Math.round(p * 150) }), edu: p => ({ silver: Math.round(p * 25) }),
+  relief: p => ({ grain: reliefGrain(p) }), edu: p => ({ silver: Math.round(p * 25) }),
 };
 /** 本城本月起运或解饷出去多少银（按本月赋税海贸收入） */
 function remitOut(s: GameState, c: City, silverIncome: number): { to: string; amt: number; label: string } | null {
   const f = s.factions[c.controller];
   if (!f || silverIncome <= 0) return null;
   const cap = s.cities[f.capital];
-  if (c.id !== f.capital && cap && cap.controller === f.id && !supplyBlock(s, f.id, c.id, f.capital)) return { to: f.capital, amt: Math.round(silverIncome * REMIT_RATE), label: `起运${nodeName(f.capital)}（收入三成）` };
+  const amt = remitAmount(c, silverIncome);
+  if (amt > 0 && c.id !== f.capital && cap && cap.controller === f.id && !supplyBlock(s, f.id, c.id, f.capital)) return { to: f.capital, amt, label: `起运${nodeName(f.capital)}（收入三成）` };
   return null;
 }
 function provRemit(s: GameState, c: City, silverIncome: number): { to: string; amt: number; label: string } | null {
@@ -121,6 +136,9 @@ export function cityForecast(s: GameState, c: City): CityForecast {
     const pr = provRemit(s, o, si); if (pr && pr.to === c.id) inRemit += pr.amt;
   }
   if (inRemit) S.push({ label: '各城起运、解饷', v: inRemit, kind: 'remit' });
+  // 霉变按本月收支之后的存粮算
+  const sp = spoilage(s, { ...c, grain: Math.max(0, c.grain + G.reduce((n, i) => n + i.v, 0)) });
+  if (sp) G.push({ label: '陈粮霉变鼠耗（超出六月用度之存粮百分之一）', v: -sp, kind: 'policy' });
   const sum = (l: ForecastItem[]) => l.reduce((n, i) => n + i.v, 0);
   return { grain: { items: G, net: sum(G) }, silver: { items: S, net: sum(S) } };
 }
@@ -168,7 +186,7 @@ export const LOAN_COOLDOWN = 6;
 
 /* ---------- 欠饷 ----------
  * 本月饷银发不足一成以上，记入积欠、连续欠饷月数加一。欠一两月只压低士气上限（每月 −3）；
- * 连欠满四月起就所驻本方城池索饷（民心 −3、吏治 −1）；索不到而本方府库其实有银（挪饷不发），每月逃散 1%，逐月加重，至多 4%，按所欠比例折算。粮台有余银即补发旧欠，补清则军心回升。 */
+ * 连欠满四月起就所驻本方城池索饷（民心 −3、吏治 −1）；索不到而本方本可发饷（有可设为粮台的城存银够三个月，却不改粮台、不调银），每月逃散 1%，逐月加重，至多 4%，按所欠比例折算。粮台有余银即补发旧欠，补清则军心回升。 */
 export const arrearsPenalty = (a: { unpaid?: number }) => Math.min(24, (a.unpaid ?? 0) * 3);
 function payArrears(s: GameState, a: import('./types').Army, owed: number, from?: string) {
   const need = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * (1 - forageShare(s, a.faction)));
@@ -190,7 +208,7 @@ function payArrears(s: GameState, a: import('./types').Army, owed: number, from?
       }
       // 索不到的部分：本方府库有银而不发（挪饷）则士卒逃散，欠得越久越多，按所欠比例折算；
       // 举镇皆穷者只压士气、扰地方，不另逃散
-      const neglect = storeOf(s, a.faction).silver >= need * 3;
+      const neglect = payableSilver(s, a) >= need * 3;
       const lost = !neglect ? 0 : Math.round(a.troops * Math.min(0.04, 0.01 * (a.unpaid - 3)) * Math.min(1, left / Math.max(1, need)));
       if (lost > 0) {
         a.troops -= lost;
@@ -285,17 +303,26 @@ export function runEconomy(s: GameState) {
       bump(s, c.id, 'grain', buy, '市籴', { kind: 'upkeep', ref: 'market' });
     }
   }
-  // 2c. 市粜（电脑一方）：银不够发饷而仓粮宽裕，卖出余粮换银
+  // 2c. 市粜：银不够两月饷而仓粮有余，卖出多余的粮换银（与 2b 市籴对称）。
+  // 玩家的城：只在田粮常年自给有余时卖，留足六个月口粮（缺粮之城卖了只会日后挨饿）；
+  // 电脑一方沿旧例留五个月；玩家的下属沿旧例不自动粜。
   for (const c of cities) {
-    if (s.sieges[c.id] || topOf(s, c.controller) === topOf(s, s.player)) continue;
+    if (s.sieges[c.id]) continue;
+    const mine = c.controller === s.player;
+    if (!mine && topOf(s, c.controller) === topOf(s, s.player)) continue;
     const up = upkeepOf(s, c);
-    if (c.silver >= up.silver * 2 || c.grain <= up.grain * 5) continue;
-    const sell = Math.min(Math.round((c.grain - up.grain * 5) / 100) * 100, marketCap(s, c));
+    const yearly = monthlyIncome(s, c).grain / harvestFactor(s.turn);   // 全年平均每月田粮
+    if (mine && yearly < up.grain) continue;
+    const keep = up.grain * (mine ? 6 : 5);
+    if (c.silver >= up.silver * 2 || c.grain <= keep) continue;
+    const sell = Math.min(Math.round((c.grain - keep) / 100) * 100, marketCap(s, c));
     if (sell < 500) continue;
     const unit = grainPrice(s, c) * 0.85;
     bump(s, c.id, 'grain', -sell, `市粜余粮 ${sell} 石（每石 ${unit.toFixed(2)} 两）`, { kind: 'upkeep', ref: 'market' });
     bump(s, c.id, 'silver', Math.round(sell * unit), '市粜', { kind: 'upkeep', ref: 'market' });
   }
+  // 2d. 仓储损耗：陈粮霉变
+  for (const c of cities) { const k = spoilage(s, c); if (k > 0) bump(s, c.id, 'grain', -k, '陈粮霉变鼠耗', { kind: 'upkeep', ref: 'spoil' }); }
   // 3. 起运上缴
   for (const c of cities) {
     const f = s.factions[c.controller];
@@ -303,7 +330,7 @@ export function runEconomy(s: GameState) {
     const cap = s.cities[f.capital];
     const income = s.ledger.filter(e => e.turn === s.turn && e.node === c.id && e.field === 'silver' && e.src.kind === 'income').reduce((n, e) => n + e.delta, 0);
     if (c.id !== f.capital && cap && cap.controller === f.id && income > 0 && !supplyBlock(s, f.id, c.id, f.capital)) {
-      const amt = Math.min(c.silver, Math.round(income * REMIT_RATE));
+      const amt = Math.min(c.silver, remitAmount(c, income));
       if (amt > 0) {
         bump(s, c.id, 'silver', -amt, `起运${nodeName(f.capital)}`, { kind: 'remit' });
         bump(s, f.capital, 'silver', amt, `${nodeName(c.id)}起运`, { kind: 'remit' });
@@ -344,7 +371,7 @@ function applyPolicy(s: GameState, c: City) {
     case 'agri': if (c.silver > p * 20) { bump(s, c.id, 'silver', -Math.round(p * 20), '劝农开销', src); bump(s, c.id, 'agri', 1, '劝农', src); } break;
     case 'commerce': if (c.silver > p * 15) { bump(s, c.id, 'silver', -Math.round(p * 15), '通商开销', src); bump(s, c.id, 'commerce', 1, '通商', src); } break;
     case 'fortify': if (c.silver > p * 40 + 2000) { bump(s, c.id, 'silver', -Math.round(p * 40 + 2000), '修城开销', src); bump(s, c.id, 'wall', 3, '整军修城', src); } break;
-    case 'relief': if (c.grain > p * 150) { bump(s, c.id, 'grain', -Math.round(p * 150), '开仓赈济', src); bump(s, c.id, 'minxin', 3, '赈济', src); } break;
+    case 'relief': if (c.grain > reliefGrain(p)) { bump(s, c.id, 'grain', -reliefGrain(p), '开仓赈济', src); bump(s, c.id, 'minxin', 3, '赈济', src); } break;
     case 'edu': if (c.silver > p * 25) { bump(s, c.id, 'silver', -Math.round(p * 25), '兴学开销', src); bump(s, c.id, 'edu', 0.6, '兴学', src); } break;
     case 'levy': bump(s, c.id, 'minxin', -3, '加派', src); bump(s, c.id, 'order', -1, '加派', src); break;
     default: break;
@@ -426,6 +453,14 @@ export function supplyChoiceError(s: GameState, a: { faction: string; location: 
   const sg = s.sieges[node];
   if (sg && !friendly(s, a.faction, sg.attacker)) return `${nodeName(node)}被围，支不出粮`;
   return node === a.location ? null : supplyBlock(s, a.faction, node, a.location);
+}
+
+/** 本可用来发这支军队饷的银：本方各城中可设为它粮台的城（未被围、粮道通到军中）的存银之和。
+ *  被围、路断之城的银救不了急，不算“有银不发”；有这样的城而不改粮台、不调银，才算挪饷 */
+export function payableSilver(s: GameState, a: { faction: string; location: string }): number {
+  let n = 0;
+  for (const c of Object.values(s.cities)) if (c.controller === a.faction && !supplyChoiceError(s, a, c.id)) n += c.silver;
+  return n;
 }
 
 /** 势力仓廪：所辖各城府库、仓粮之和（左上角显示用） */

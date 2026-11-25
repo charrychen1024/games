@@ -278,3 +278,21 @@ describe('七、欠饷的长期后果', () => {
     expect(s.cities[a.supply].minxin).toBeLessThanOrEqual(mx0);
   });
 });
+
+describe('七之二、欠饷逃散只罚“有银不发”', () => {
+  it('粮台被围、别城的银运不进来：不算挪饷，不另逃散', () => {
+    const s = createGame('zheng', 1);
+    const a = Object.values(s.armies).find(x => x.faction === 'zheng')!;
+    a.location = a.supply; a.path = []; a.progress = 0; a.troops = 200000;
+    s.sieges[a.supply] = { node: a.supply, attacker: 'qing', armies: [], startTurn: 0, months: 1 };
+    s.relations['qing|zheng'] = { stance: 'war' }; s.relations['hongguang|qing'] = { stance: 'war' };
+    const t0 = a.troops;
+    for (let i = 0; i < 6; i++) {
+      for (const c of citiesOf(s, 'zheng')) { c.silver = c.id === a.supply ? 0 : 5e6; c.grain = Math.max(c.grain, 1e7); }
+      s.cities[a.supply].silver = 0; s.cities[a.supply].grain = 1e7;
+      runEconomy(s); s.turn++;
+    }
+    expect(a.unpaid).toBeGreaterThanOrEqual(4);
+    expect(a.troops).toBe(t0);
+  });
+});

@@ -939,8 +939,21 @@ export class App {
     else if (vassal) cmds.push(
       { id: 'act-reward', icon: 'reward', label: '犒赏', tip: `犒赏${ctrl.short}部，提高服从`, fn: () => this.formReward(c.controller) },
       { id: 'act-supply', icon: 'transfer', label: '拨粮', tip: '从治所拨钱粮给此城', fn: () => this.formTransfer(s.factions[s.player].capital, id) });
-    else if (!friendly(s, s.player, c.controller)) cmds.push(
-      { id: 'act-persuade', icon: 'persuade', label: '劝降', tip: '遣使入城说降守将', fn: () => this.formPersuade(id), done: s.missions.some(m => (m.order as any).node === id) || this.orders.some(o => o.kind === 'persuade' && o.node === id), primary: true });
+    else if (!friendly(s, s.player, c.controller)) {
+      // 城下我军：一键合兵攻城或围困（各军各下一道攻城令，同月同城即合成一战）
+      const gate = Object.values(s.armies).filter(a => a.faction === s.player && a.location === id && a.progress === 0);
+      if (gate.length && hostile(s, s.player, c.controller)) {
+        const n = gate.reduce((m, a) => m + a.troops, 0);
+        const set = (assault: boolean) => { for (const a of gate) this.addOrder({ id: this.newOrderId(), kind: 'army', army: a.id, order: { kind: 'siege', target: id, assault } }); this.refreshPanel(); };
+        const sieging = (assault: boolean) => gate.every(a => this.orders.some(o => o.kind === 'army' && o.army === a.id && o.order.kind === 'siege' && o.order.assault === assault));
+        const vas = Object.values(s.armies).filter(a => a.location === id && a.progress === 0 && s.factions[a.faction]?.overlord === s.player).length;
+        const who = gate.length > 1 ? `${gate.length} 支合兵 ${wan(n)}` : `${gate[0].name} ${wan(n)}`;
+        cmds.push(
+          { id: 'act-storm', icon: 'storm', label: gate.length > 1 ? '合兵攻城' : '攻城', tip: `${who}，本月攻城（合成一战）${vas ? `；城下另有下属 ${vas} 支，须另行号令` : ''}`, fn: () => set(true), done: sieging(true), primary: true, free: true },
+          { id: 'act-blockade', icon: 'blockade', label: gate.length > 1 ? '合兵围困' : '围困', tip: `${who}，围而不攻，待城中粮尽`, fn: () => set(false), done: sieging(false), free: true });
+      }
+      cmds.push({ id: 'act-persuade', icon: 'persuade', label: '劝降', tip: '遣使入城说降守将', fn: () => this.formPersuade(id), done: s.missions.some(m => (m.order as any).node === id) || this.orders.some(o => o.kind === 'persuade' && o.node === id), primary: !cmds.length });
+    }
     if (!cmds.length) { dock.classList.add('hidden'); return; }
     const bud = orderBudget(s, s.player), used = ordersUsed(this.orders);
     dock.classList.remove('hidden');
@@ -1245,7 +1258,7 @@ export class App {
         h('span', { class: 'cost bad' }, ic('pop'), `−${(n / 10000).toFixed(2)} 万口`),
         h('span', { class: 'cost bad' }, ic('minxin'), `民心 −${(n / 1500).toFixed(1)}`),
         h('span', { class: 'cost good' }, ic('troops'), `驻军 +${fmt(n)}`));
-      clear(proj).append(h('div', { class: 'rq-h' }, '募后本城每月（之后每人每月口粮 0.25 石、饷银 0.6 两）'),
+      clear(proj).append(h('div', { class: 'rq-h' }, `募后本城每月（之后每人每月口粮 ${GRAIN_PER_SOLDIER} 石、饷银 ${SILVER_PER_SOLDIER} 两）`),
         line('grain', '粮', fc.grain.net, g1, c.grain, '石'),
         line('silver', '银', fc.silver.net, s1, c.silver - n * RECRUIT_SILVER - this.pendingSpend(node, 'silver'), '两'),
         ...(over ? [h('div', { class: 'rq-warn' }, ic('urgent'), room > 0 ? `超出本城结余可养之数 ${fmt(n - room)} 人：须从别城调粮银，或编军出征、改由别城作粮台` : '本城已无结余：所募之兵要靠存粮、调拨或出征后由别城供养')] : []));

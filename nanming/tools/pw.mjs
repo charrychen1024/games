@@ -14,4 +14,14 @@ if (!pw) {
   console.error('找不到 Playwright。请先安装：npm i -D playwright-core && npx playwright-core install chromium\n或设置 PLAYWRIGHT_CORE=<playwright-core 所在目录>。');
   process.exit(2);
 }
+// Playwright 自带的浏览器缺失（缓存被清理等）时，改用本机安装的 Google Chrome
+const launch0 = pw.chromium.launch.bind(pw.chromium);
+pw.chromium.launch = async (opts = {}) => {
+  try { return await launch0(opts); }
+  catch (e) {
+    if (!/Executable doesn't exist/.test(String(e?.message)) || opts.channel) throw e;
+    console.error('（Playwright 自带浏览器缺失，改用本机 Chrome）');
+    return launch0({ ...opts, channel: 'chrome' });
+  }
+};
 export default pw;

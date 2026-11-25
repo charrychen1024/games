@@ -78,7 +78,12 @@ export function moveArmies(s: GameState): Contact[] {
     if (!s.armies[a.id]) continue;
     if (a.order.kind === 'move' && a.path.length === 0 && a.progress === 0) {
       const city = s.cities[a.location];
-      if (a.order.attack && city && hostile(s, a.faction, city.controller)) a.order = { kind: 'siege', target: a.location, assault: true };
+      if (a.order.attack && city && hostile(s, a.faction, city.controller)) {
+        // 被途中敌城挡住：先攻此城，记住原定目标，拿下后接着去
+        const then = a.order.target !== a.location ? a.order.target : undefined;
+        a.order = then ? { kind: 'siege', target: a.location, assault: true, then } : { kind: 'siege', target: a.location, assault: true };
+        if (then && topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}开往${nodeName(then)}，为${nodeName(a.location)}所阻，先攻${nodeName(a.location)}；拿下后接着开往${nodeName(then)}。`, src: { kind: 'order', ref: a.id } });
+      }
       else if (a.location === a.order.target) a.order = { kind: 'hold' };
     }
   }
@@ -412,6 +417,8 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
   }
   // 原守城军队若仍在城中，按败军处理
   for (const a of armiesAt(s, node)) if (hostile(s, a.faction, newCtrl)) retreat(s, a, true);
+  // 围攻此城的各军：途中受阻的接着开往原定目标
+  for (const a of Object.values(s.armies)) if (a.order.kind === 'siege' && a.order.target === node && !hostile(s, a.faction, s.cities[node].controller)) siegeDone(s, a);
   s.flags['lost_' + node] = s.turn;
   s.flags['lost_how_' + node] = how;
   if (c.controller === old) {
@@ -453,6 +460,15 @@ export function followOdds(s: GameState, f: string, to: string): number {
   return yes + no === 0 ? 1 : yes / (yes + no);
 }
 
+/** 围攻之城已不再是敌城（攻下、献城、归附）：途中受阻的接着开往原定目标，否则驻扎 */
+export function siegeDone(s: GameState, a: Army) {
+  if (a.order.kind !== 'siege') return;
+  const then = a.order.then;
+  if (then && s.cities[then] && hostile(s, a.faction, s.cities[then].controller) && setArmyOrder(s, a, { kind: 'move', target: then, attack: true })) {
+    if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}已过${nodeName(a.location)}，接着开往${nodeName(then)}。`, src: { kind: 'order', ref: a.id } });
+  } else a.order = { kind: 'hold' };
+}
+
 /** 整个势力正式归附另一方：改奉其政权，实控不变 */
 export function defectFaction(s: GameState, f: string, to: string) {
   const fac = s.factions[f];
@@ -472,8 +488,8 @@ export function defectFaction(s: GameState, f: string, to: string) {
 /** 围城阶段的准备：建立/维持/解除围城，空城直接占领。返回需要打攻城战的城。 */
 export function updateSieges(s: GameState): string[] {
   const assaults: string[] = [];
-  // 所围之城已归友方或第三方停战：解围待命
-  for (const a of Object.values(s.armies)) if (a.order.kind === 'siege') { const c = s.cities[a.order.target]; if (!c || !hostile(s, a.faction, c.controller)) a.order = { kind: 'hold' }; }
+  // 所围之城已归友方或第三方停战：解围待命；若是途中受阻之城，接着开往原定目标
+  for (const a of Object.values(s.armies)) if (a.order.kind === 'siege') { const c = s.cities[a.order.target]; if (!c || !hostile(s, a.faction, c.controller)) siegeDone(s, a); }
   for (const node of Object.keys(s.cities).sort()) {
     const city = s.cities[node];
     const here = armiesAt(s, node).filter(a => hostile(s, a.faction, city.controller) && a.order.kind === 'siege' && a.order.target === node);
