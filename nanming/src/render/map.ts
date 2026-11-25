@@ -10,6 +10,7 @@ import reliefUrl from '../assets/relief.png?url';
 import { POLITIES } from '../data/factions';
 import { project, WORLD_W, WORLD_H, worldToScreen, screenToWorld, type Camera } from './projection';
 import { makeRng } from '../core/rng';
+import { friendly } from '../core/state';
 import { routeBetween, neighbors } from '../data/geography';
 import land from '../data/geo-land.json';
 import { ICONS } from '../ui/icons';
@@ -1151,7 +1152,8 @@ function topOfSafe(s: GameState, f: string): string {
   for (let i = 0; i < 5; i++) { const o = s.factions[cur]?.overlord; if (!o) return cur; cur = o; }
   return cur;
 }
-function visibleArmy(_s: GameState, _a: Army) { return true; }
+/** 预定路线只画己方与友方的：敌军去向不得而知 */
+function visibleArmy(s: GameState, a: Army) { return friendly(s, s.player, a.faction); }
 const fmtTroops = (n: number) => n >= 10000 ? (Math.round(n / 1000) / 10) + '万' : String(Math.round(n));
 const roughT = (n: number) => n < 1000 ? '数百' : n < 5000 ? '数千' : n < 10000 ? '近万' : '约' + Math.round(n / 10000) + '万';
 

@@ -9,6 +9,8 @@ import { createField, stepField, aiField, commandF, drumF, legalF, toFieldResult
 import { SiegeView } from './siegeView';
 import { FieldView } from './fieldView';
 import { lookOf } from './battle';
+import { retreatCity } from '../core/military';
+import { nodeName as nodeNameOf } from '../core/state';
 import { portrait } from './portrait';
 import { h, $, clear, wan } from './dom';
 import { iconSvg } from './icons';
@@ -178,11 +180,12 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     if (phase === 'deploy' && siege && side === 'def') {
       // 守城大计：坚守、开城投降、弃城突围
       const ratio = Math.round(ssim!.att.start / Math.max(1, ssim!.def.start) * 10) / 10;
+      const fallback = retreatCity(s, b0.node);
       const C = (id: string, icon: string, title: string, desc: string, fn: () => void, primary = false) => h('button', { class: 'dchoice' + (primary ? ' primary' : ''), id, onclick: () => { click(); fn(); } }, ic(icon), h('b', null, title), h('small', null, desc));
       ui.append(h('div', { class: 'dchoices' },
         h('div', { class: 'dc-head' }, h('b', null, '守城大计'), h('small', null, `敌众 ${wan(ssim!.att.start)}，我守 ${wan(ssim!.def.start)}（约 ${ratio} 比 1），城防 ${Math.round(ssim!.segs[0].hp)}`)),
         C('def-hold', 'wall', '坚守城池', '据城而战：分守各段，可修城、出击、调预备；战中仍可改弃城或投降', () => { start(); }, true),
-        C('def-abandon', 'withdraw', '弃城突围', '城归敌手但不遭屠戮；守军八成、府库半数退往最近的本方之城', () => { defDecision(ssim!, 'abandon'); manual = true; ending(); }),
+        C('def-abandon', 'withdraw', '弃城突围', fallback ? `城归敌手但不遭屠戮；守军约八成、府库半数退往${nodeNameOf(fallback)}` : '无城可退：城归敌手，守军就地溃散，府库尽失', () => { defDecision(ssim!, 'abandon'); manual = true; ending(); }),
         C('def-surrender', 'persuade', '开城投降', '免于兵燹；城与守军、主官一并归敌', () => { defDecision(ssim!, 'surrender'); manual = true; ending(); }),
         C('battle-auto', 'auto', '交部将坚守', '由部将按常法守城，你只看战况', () => { autoMe = true; start(); })));
       renderTray();
@@ -225,7 +228,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
           A('siege-drum', cd > 0 ? `擂鼓 ${Math.ceil(cd)}` : '擂鼓', 'battle', () => { if (ssim ? drum(ssim, side) : drumF(fsim!, side)) { battleSfx.ambush(); bark('me', 'lead'); } renderUi(); }, false, '全军士气上扬一阵；六十秒一次', cd > 0 ? 'cool' : ''),
           A('siege-auto', autoMe ? '收回指挥' : '部将代打', 'auto', () => { autoMe = !autoMe; if (autoMe) { speed = 4; paused = false; } renderUi(); }, autoMe, '由部将按常法指挥我军（四倍速推进，可随时收回）'),
           ...(siege && side === 'def' ? [
-            A('def-abandon2', '弃城', 'withdraw', () => { manual = true; defDecision(ssim!, 'abandon'); }, false, '弃城突围：守军退走（交战中的营伍折损一成五），城归敌手', 'warn'),
+            A('def-abandon2', '弃城', 'withdraw', () => { manual = true; defDecision(ssim!, 'abandon'); }, false, retreatCity(s, b0.node) ? `弃城突围：守军退往${nodeNameOf(retreatCity(s, b0.node)!)}（交战中的营伍折损一成五），城归敌手` : '无城可退：弃城则守军就地溃散，城归敌手', 'warn'),
             A('def-surrender2', '投降', 'persuade', () => { manual = true; defDecision(ssim!, 'surrender'); }, false, '开城投降：城与守军一并归敌', 'warn')] : [
             A('battle-retreat', '鸣金', 'withdraw', () => { manual = true; if (ssim) command(ssim, { unit: 'all', side, order: { t: 'retreat' } }); else commandF(fsim!, { unit: 'all', side, order: { t: 'retreat' } }); say('鸣金收兵，各营撤回。'); renderUi(); }, false, siege ? '全军撤出，结果为“未克”，围城照旧' : '全军撤出战场，保全兵力', 'warn')])));
     }
@@ -377,7 +380,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
       if (sim.over && phase === 'fight') ending();
     }
     view.render(now);
-    if (now - uiTick > 250) { uiTick = now; updateHud(); if (phase === 'fight') refreshCards(); }
+    if (now - uiTick > 250) { uiTick = now; updateHud(); if (phase === 'fight') { refreshCards(); refreshTiles(); } }
   }
   /** 战场的声音：有人厮杀就有兵刃声，有人放铳放炮就有铳炮声 */
   function ambientSfx() {
@@ -387,6 +390,13 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     const guns = units().some(u => (u.state === 'shoot') && u.kind === 'gun') || (ssim && units().some(u => u.side === 'def' && u.state === 'wall' && u.engaged));
     if (guns) (ssim && !ssim.def.mix.gun ? battleSfx.arrows : battleSfx.muskets)();
     if (units().some(u => u.kind === 'art' && (u.state === 'shoot' || u.state === 'bombard'))) (naval ? battleSfx.broadside : battleSfx.cannon)();
+  }
+  /** 随模拟时钟刷新要花机会的按钮：擂鼓冷却、劝降几率 */
+  function refreshTiles() {
+    const drumEl = ui.querySelector('#siege-drum') as HTMLElement | null;
+    if (drumEl) { const cd = sim.drum[side === 'att' ? 'cdAtt' : 'cdDef']; (drumEl.querySelector('b') as HTMLElement).textContent = cd > 0 ? `擂鼓 ${Math.ceil(cd)}` : '擂鼓'; drumEl.classList.toggle('cool', cd > 0); }
+    const pers = ui.querySelector('#siege-persuade') as HTMLElement | null;
+    if (pers && ssim && !ssim.flags.persuaded) { const tip = `遣使入城说降守将（约 ${Math.round(persuadeOdds(ssim) * 100)}% 能成；不成则守军益坚）。城门已破、守军动摇时更易成`; pers.title = tip; pers.dataset.tip = tip; }
   }
   function refreshCards() {
     for (const el of ui.querySelectorAll<HTMLElement>('.ucard')) {

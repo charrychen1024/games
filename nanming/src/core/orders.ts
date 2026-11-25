@@ -348,8 +348,10 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       const cap = s.factions[f].capital;
       bump(s, cap, 'silver', -o.silver, `犒赏${factionName(s, o.vassal)}`, src);
       const gain = Math.min(15, Math.round(o.silver / 2500));
+      const before = s.factions[o.vassal].loyalty ?? 0;
       adjustLoyalty(s, o.vassal, gain, `受${factionName(s, f)}犒赏银 ${o.silver} 两`);
-      if (isPlayer) report(s, { cat: '交涉', text: `${describeOrder(s, o)}，${charName(s, s.factions[o.vassal].leader)}感念，服从 +${gain}。`, src });
+      const after = s.factions[o.vassal].loyalty ?? 0;
+      if (isPlayer) report(s, { cat: '交涉', text: `${describeOrder(s, o)}，${charName(s, s.factions[o.vassal].leader)}感念，服从 ${before} → ${after}${after - before < gain ? `（已到顶，实增 ${after - before}）` : ''}。`, src });
       break;
     }
   }
@@ -538,7 +540,8 @@ export function persuadeChance(s: GameState, f: string, charId: string, node: st
   const factors: string[] = [];
   let p = 0.05; factors.push('底数 5%');
   const sur = gov && gov.status === 'active' ? gov.att.surrender : 40 + (100 - city.minxin) / 4;
-  p += sur / 250; factors.push(`${gov ? gov.name : '守将'}降意 ${Math.round(sur)}（+${Math.round(sur / 2.5)}%）`);
+  // 敌将心意不可精知：只说个大概
+  p += sur / 250; factors.push(`${gov ? gov.name : '守将'}降意${sur >= 60 ? '颇高' : sur >= 35 ? '平常' : '甚低'}`);
   p += (env.ab.wai - 50) / 300; factors.push(`${env.name}外交（${env.ab.wai >= 50 ? '+' : ''}${Math.round((env.ab.wai - 50) / 3)}%）`);
   const sg = s.sieges[node];
   if (sg && topOf(s, sg.attacker) === topOf(s, f)) { p += 0.25; factors.push('城已被我军围困 +25%'); }

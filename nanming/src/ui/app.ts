@@ -11,15 +11,15 @@ import { newsSfx, eventSfx, resultSfx, marchSfx, chime, alarm, click, isMuted, s
 import { dangerOf, eraOf } from './musicTheory';
 import { portrait } from './portrait';
 import { cardHand, cardArt, type GameCard, type Chip } from './cards';
-import { resolveMonth, unificationProgress, type Answer } from '../core/turn';
+import { resolveMonth, unificationProgress, unifierRole, type Answer } from '../core/turn';
 import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
 import { POLITIES } from '../data/factions';
 import { isReduced, setReducedMotion, reducedSystem } from './motion';
 import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
-import { POLICY_NAME, POLICY_HINT, upkeepOf, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
-import { projectOrders, validateQueued, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
+import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
+import { projectOrders, validateQueued, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { yangzhouSiegeState } from '../data/presets';
 import { createGame } from '../data/scenario1644';
@@ -431,9 +431,17 @@ export class App {
         clear(tip).append(h('div', { class: 'tt-h' }, h('span', { style: { width: '12px', height: '12px', borderRadius: '50%', background: f.color, display: 'inline-block', border: '1.5px solid #fff' } }), n.name, h('small', null, `${f.short}${mi.rel === 'war' ? ' · 敌' : mi.rel === 'friend' ? ' · 友' : ' · 未交战'}`)));
         if (!mi.path) tip.append(h('div', { class: 'mc-warn' }, ic('close'), '无路可达'));
         else {
-          tip.append(h('div', { class: 'mc-days' }, h('b', null, String(mi.days)), ' 日', h('span', null, mi.days > 30 ? `约 ${Math.ceil(mi.days / 30)} 个月` : '本月可到')));
-          if (mi.days > 30 && mi.reach) tip.append(h('div', { class: 'tt-r' }, ic('calendar'), h('b', null, `本月行至${nodeName(mi.reach)}`)));
-          if (mi.blocked.length) tip.append(h('div', { class: 'mc-warn' }, ic('siege'), `途经敌城：${mi.blocked.map(nodeName).join('、')}，须先攻下`));
+          if (mi.blocked.length) {
+            // 途中有敌城挡路：行军到第一座敌城即停，先写这一程
+            const a = s.armies[this.map.view.targeting.army];
+            const stop = mi.blocked[0];
+            const d = marchPlan(a.location, mi.path.slice(0, mi.path.indexOf(stop) + 1), a.progress).pop()?.day ?? 0;
+            tip.append(h('div', { class: 'mc-days' }, h('b', null, String(d)), ' 日', h('span', null, `至${nodeName(stop)}即停`)));
+            tip.append(h('div', { class: 'mc-warn' }, ic('siege'), `${nodeName(stop)}有敌把守，须先攻下${mi.blocked.length > 1 ? `（沿途另有${mi.blocked.slice(1).map(nodeName).join('、')}）` : ''}；道路畅通时全程 ${mi.days} 日${mi.days > 30 ? `（约 ${Math.ceil(mi.days / 30)} 个月）` : ''}`));
+          } else {
+            tip.append(h('div', { class: 'mc-days' }, h('b', null, String(mi.days)), ' 日', h('span', null, mi.days > 30 ? `约 ${Math.ceil(mi.days / 30)} 个月` : '本月可到')));
+            if (mi.days > 30 && mi.reach) tip.append(h('div', { class: 'tt-r' }, ic('calendar'), h('b', null, `本月行至${nodeName(mi.reach)}`)));
+          }
           if (mi.land) tip.append(h('div', { class: 'mc-warn' }, ic('navy'), `须在${nodeName(mi.land)}舍舟登岸，水师改为步卒`));
           if (mi.rel === 'neutral') tip.append(h('div', { class: 'mc-warn' }, ic('war'), `与${s.factions[c.controller].short}未交战，进攻须宣战`));
           tip.append(h('div', { class: 'mc-act' }, mi.rel === 'war' ? '左键：进攻' : mi.rel === 'friend' ? '左键：开赴' : '左键：宣战或开赴'));
@@ -442,7 +450,9 @@ export class App {
     } else {
       const a = s.armies[p.id];
       const mine = this.isMineOrVassal(a.faction);
-      tip.append(h('div', { class: 'tt-h' }, a.name), row('person', charName(s, a.commander)), row('troops', mine ? troopsText(a.troops) : roughTroops(a.troops)), row('move', armyOrderText(a.order)));
+      // 敌军的去向与日程不得而知，只见其所在
+      const seen = mine || friendly(s, s.player, a.faction);
+      tip.append(h('div', { class: 'tt-h' }, a.name), row('person', charName(s, a.commander)), row('troops', mine ? troopsText(a.troops) : roughTroops(a.troops)), row('move', seen ? armyOrderText(a.order) : a.progress > 0 ? '行军中，去向不明' : '驻扎'));
     }
     tip.classList.remove('hidden');
     tip.style.left = Math.min(window.innerWidth - 270, x + 16) + 'px';
@@ -627,7 +637,6 @@ export class App {
       if (raw !== undefined) this.lastPills[key] = raw;
       return el;
     };
-    const u = unificationProgress(s);
     const store = storeOf(s, s.player);
     const spendAll = (f: 'grain' | 'silver') => own.reduce((n, c) => n + this.pendingSpend(c.id, f), 0);
     top.append(
@@ -637,7 +646,7 @@ export class App {
       h('div', { class: 'res' },
         pill('silver', wan(store.silver - spendAll('silver')), '两', `${me.short}府库：所辖 ${store.cities} 城存银之和（各城钱粮分存，调拨须走粮道）· ${nodeName(me.capital)}存 ${wan(cap?.silver ?? 0)}`, store.silver - spendAll('silver')),
         pill('grain', wan(store.grain - spendAll('grain')), '石', `${me.short}仓粮：所辖 ${store.cities} 城存粮之和 · ${nodeName(me.capital)}存 ${wan(cap?.grain ?? 0)}`, store.grain - spendAll('grain')),
-        pill('city', String(own.length), '城', `直辖城池 · 统一进度 ${u.held}/${u.total}`, own.length),
+        pill('city', String(own.length), '城', `直辖城池 · ${this.unityLine()}`, own.length),
         (() => { const b = orderBudget(s, s.player), used = ordersUsed(this.orders); const el = h('div', { class: 'pill orders-pill' + (used >= b.total ? ' full' : ''), id: 'pill-orders', 'data-tip': `本月政令 ${used} / ${b.total} 道（${b.factors.join('，')}）。调动军队不占政令；方针定下后逐月照行，不必每月重下。` }, ic('policy'), h('b', null, `${b.total - used}`), h('small', null, `/${b.total} 令`)); return el; })(),
         pill('troops', wan(troops), '兵', '直辖兵力', troops),
       ),
@@ -1090,8 +1099,9 @@ export class App {
     if (visible) sec.append(h('div', { class: 'tiles', style: { marginTop: '6px', gridTemplateColumns: 'repeat(4,1fr)' } },
       this.tile('inf', '步', pct(a.mix.inf)), this.tile('cav', '骑', pct(a.mix.cav)), this.tile('gun', '火器', pct(a.mix.gun)), this.tile('navy', '水师', pct(a.mix.navy))));
     sec.append(h('div', { class: 'rows', style: { marginTop: '6px' } },
-      h('div', { class: 'row' }, ic('target'), h('span', { class: 't' }, a.progress > 0 && a.path.length ? `${nodeName(a.location)} → ${nodeName(a.path[0])}` : nodeName(a.location)), h('b', null, '所在')),
-      h('div', { class: 'row' }, ic('move'), h('span', { class: 't' }, armyOrderText(a.order)), h('b', null, a.path.length ? `${pathDays(a.location, a.path) - a.progress} 日` : '')),
+      h('div', { class: 'row' }, ic('target'), h('span', { class: 't' }, visible && a.progress > 0 && a.path.length ? `${nodeName(a.location)} → ${nodeName(a.path[0])}` : nodeName(a.location)), h('b', null, '所在')),
+      // 敌军的军令与日程不得而知
+      h('div', { class: 'row' }, ic('move'), h('span', { class: 't' }, visible ? armyOrderText(a.order) : a.progress > 0 ? '行军中，去向不明' : '驻扎'), h('b', null, visible && a.path.length ? `${pathDays(a.location, a.path) - a.progress} 日` : '')),
       a.hunger ? h('div', { class: 'row mine' }, ic('grain'), h('span', { class: 't' }, '断粮'), h('b', { class: 'down' }, `${a.hunger} 月`)) : null,
       visible && a.unpaid ? h('div', { class: 'row mine', id: 'army-arrears' }, ic('silver'), h('span', { class: 't' }, `欠饷 ${a.unpaid} 月 · 积欠 ${wan(a.arrears ?? 0)} 两${a.unpaid >= 4 ? ' · 士卒逃散' : ''}`), h('b', { class: 'down' }, `士气上限 −${Math.min(24, a.unpaid * 3)}`)) : null));
     for (const pend of this.orders.filter(o => (o.kind === 'army' || o.kind === 'command' || o.kind === 'supply') && o.army === id))
@@ -1362,10 +1372,16 @@ export class App {
     if (!list.length) { this.toast('无人可用', 'close'); return; }
     const postOf = (id: string) => Object.values(s.cities).find(c => c.governor === id)?.id;
     const fc = s.factions[s.player].color, pol = s.factions[s.player].polity;
-    const cards: GameCard[] = list.map(c => { const p = postOf(c.id); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true, badge: `政 ${c.ab.zheng}`,
-      chips: [{ icon: 'admin', text: `收入 ${c.ab.zheng >= 60 ? '+' : ''}${Math.round((c.ab.zheng - 50) / 2)}%`, tone: c.ab.zheng >= 50 ? 'good' : 'bad' }, { icon: 'morale', text: `忠 ${Math.round(c.att.loyalty)}`, tone: c.att.loyalty >= 60 ? 'good' : 'bad' }],
-      note: p ? `调离${nodeName(p)}` : `现在${nodeName(c.location)}` }; });
-    this.modal('appoint', '任命主官', `${nodeName(node)} · 政务越高收入越多`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'appoint', node, char: id }); }, { stampText: '任' })], [this.cancelBtn()], 'wide');
+    // 收入写成相对现任的实数差：赋税（两）与田粮（石）每月各增减多少；调离别城的，写那城少了多少
+    const incomeWith = (city: string, gov: string | undefined) => { const c0 = s.cities[city]; const t = { ...s, cities: { ...s.cities, [city]: { ...c0, governor: gov } } }; const i = monthlyIncome(t, t.cities[city]); return { sv: i.silver, gr: i.grain }; };
+    const now = incomeWith(node, s.cities[node].governor);
+    const sg = (v: number) => `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v))}`;
+    const cards: GameCard[] = list.map(c => { const p = postOf(c.id); const w = incomeWith(node, c.id); const dS = w.sv - now.sv, dG = w.gr - now.gr;
+      const lost = p ? (() => { const a0 = incomeWith(p, c.id), a1 = incomeWith(p, undefined); return { sv: a1.sv - a0.sv, gr: a1.gr - a0.gr }; })() : null;
+      return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true, badge: `政 ${c.ab.zheng}`,
+      chips: [{ icon: 'silver', text: `赋税 ${sg(dS)}/月`, tone: dS >= 0 ? 'good' : 'bad' }, { icon: 'grain', text: `田粮 ${sg(dG)}/月`, tone: dG >= 0 ? 'good' : 'bad' }, { icon: 'morale', text: `忠 ${Math.round(c.att.loyalty)}`, tone: c.att.loyalty >= 60 ? 'good' : 'bad' }],
+      note: p ? `调离${nodeName(p)}：那城每月赋税 ${sg(lost!.sv)}、田粮 ${sg(lost!.gr)}` : `现在${nodeName(c.location)}` }; });
+    this.modal('appoint', '任命主官', `${nodeName(node)} · 与现任${s.cities[node].governor ? charName(s, s.cities[node].governor) : '（佚名）'}相比，本城每月收入的增减`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'appoint', node, char: id }); }, { stampText: '任' })], [this.cancelBtn()], 'wide');
   }
 
 
@@ -1374,9 +1390,13 @@ export class App {
     const list = this.freeChars().sort((a, b) => b.ab.wai - a.ab.wai);
     if (!list.length) { this.toast('无人可出使', 'close'); return; }
     const fc = s.factions[s.player].color, pol = s.factions[s.player].polity;
-    const cards: GameCard[] = list.map(c => { const r = persuadeChance(s, s.player, c.id, node); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true, badge: `${Math.round(r.p * 100)}%`,
-      chips: [{ icon: 'envoy', text: `外交 ${c.ab.wai}`, tone: c.ab.wai >= 60 ? 'good' : 'plain' }, { icon: 'morale', text: `威望 ${c.ab.wang}` }], note: r.factors.slice(0, 2).join(' · ') }; });
-    this.modal('persuade', '遣使劝降', `${nodeName(node)} · 右上角是成功率，下月见分晓`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'persuade', char: id, node }); }, { stampText: '使' })], [this.cancelBtn()], 'wide');
+    // 成算只给大概（五分一档）；回报月份按使者所在地到此城的路程；不成时约两成被扣
+    const months = (id: string) => envoyMonths(s, id, node);
+    const c0 = s.cities[node], gov = c0.governor ? s.chars[c0.governor] : undefined, of = s.factions[c0.controller];
+    const head = gov && of && of.leader === gov.id && !of.admin && c0.controller !== 'local';
+    const cards: GameCard[] = list.map(c => { const r = persuadeChance(s, s.player, c.id, node); const m = months(c.id); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true, badge: `约${Math.round(r.p * 20) * 5}%`,
+      chips: [{ icon: 'envoy', text: `外交 ${c.ab.wai}`, tone: c.ab.wai >= 60 ? 'good' : 'plain' }, { icon: 'hourglass', text: m <= 1 ? '下月回报' : `约 ${m} 月后回报`, tone: m > 1 ? 'bad' : 'plain' }], note: r.factors.slice(0, 2).join(' · ') }; });
+    this.modal('persuade', '遣使劝降', `${nodeName(node)} · 右上角是大约的成算 · 使者在途不能另派，不成时约两成被扣${head ? ` · 守将是${of!.name}之主：劝成则诸将或随之整镇改奉，或只得此城` : ''}`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'persuade', char: id, node }); }, { stampText: '使' })], [this.cancelBtn()], 'wide');
   }
 
 
@@ -1394,9 +1414,9 @@ export class App {
       return;
     }
     const fc = s.factions[s.player].color, pol = s.factions[s.player].polity;
-    const cards: GameCard[] = list.map(c => { const r = envoyScore(s, s.player, { id: 'x', kind: 'envoy', char: c.id, target, aim: aim0 }); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true,
-      badge: `把握 ${Math.round(r.score)}`, chips: [{ icon: 'envoy', text: `外交 ${c.ab.wai}`, tone: c.ab.wai >= 60 ? 'good' : 'plain' }, { icon: r.score >= 55 ? 'ok' : 'close', text: r.score >= 55 ? '可望' : '难成', tone: r.score >= 55 ? 'good' : 'bad' }], note: r.factors.slice(0, 2).join(' · ') }; });
-    this.modal('envoy', `遣使 · ${tf.short} · ${{ alliance: '结盟', truce: '停战', peace: '议和' }[aim0]}`, '选使者 · 把握需 55 以上', [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'envoy', char: id, target, aim: aim0 }); }, { stampText: '使' })], [{ label: '换一种所求', icon: 'envoy', onclick: () => { setTimeout(() => this.formEnvoy(target), 0); } }, this.cancelBtn()], 'wide');
+    const cards: GameCard[] = list.map(c => { const r = envoyScore(s, s.player, { id: 'x', kind: 'envoy', char: c.id, target, aim: aim0 }); const m = envoyMonths(s, c.id, tf.capital); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true,
+      badge: `把握 ${Math.round(r.score)}`, chips: [{ icon: 'envoy', text: `外交 ${c.ab.wai}`, tone: c.ab.wai >= 60 ? 'good' : 'plain' }, { icon: r.score >= 55 ? 'ok' : r.score >= 45 ? 'silver' : 'close', text: r.score >= 55 ? '可望' : r.score >= 45 ? '或要开价' : '难成', tone: r.score >= 55 ? 'good' : r.score >= 45 ? 'plain' : 'bad' }, { icon: 'hourglass', text: m <= 1 ? '下月回报' : `约 ${m} 月后回报` }], note: r.factors.slice(0, 2).join(' · ') }; });
+    this.modal('envoy', `遣使 · ${tf.short} · ${{ alliance: '结盟', truce: '停战', peace: '议和' }[aim0]}`, `选使者 · 把握 55 以上可望议成（临事有上下十分的变数）；45—55 对方多半开价要银；交战中谈崩，使者约三成被扣`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'envoy', char: id, target, aim: aim0 }); }, { stampText: '使' })], [{ label: '换一种所求', icon: 'envoy', onclick: () => { setTimeout(() => this.formEnvoy(target), 0); } }, this.cancelBtn()], 'wide');
   }
 
 
@@ -1407,7 +1427,12 @@ export class App {
     const big = h('div', { class: 'big-num', style: { fontSize: '22px' } });
     const est = h('div', { id: 'cmd-est' });
     const upd = () => {
-      const r = obedience(s, s.player, { id: 'x', kind: 'command', vassal: a.faction, army, order, silver: +silver.value }, false);
+      // 与正式执行同序：先发犒银（服从随之上升），再看是否奉命
+      const v = +silver.value, loy = f.loyalty ?? 50, bonus = Math.min(5, Math.round(v / 4000));
+      const ld = s.chars[f.leader];
+      const t = { ...s, factions: { ...s.factions, [a.faction]: { ...f, loyalty: Math.min(100, loy + bonus) } },
+        chars: ld ? { ...s.chars, [ld.id]: { ...ld, att: { ...ld.att, loyalty: Math.max(0, Math.min(100, ld.att.loyalty + bonus)) } } } : s.chars };
+      const r = obedience(t, s.player, { id: 'x', kind: 'command', vassal: a.faction, army, order, silver: v }, false);
       big.textContent = `犒银 ${fmt(+silver.value)} 两`;
       clear(est).append(this.gauge(r.score, r.factors, '服从（临事 ±10）'));
     };
@@ -1421,7 +1446,9 @@ export class App {
     const cap = s.cities[s.factions[s.player].capital];
     const input = h('input', { type: 'range', min: 5000, max: Math.max(5000, Math.min(80000, cap.silver)), step: 5000, value: 20000 }) as HTMLInputElement;
     const big = h('div', { class: 'big-num' });
-    const upd = () => { clear(big).append(`${fmt(+input.value)} 两 `, h('span', { class: 'up', style: { fontSize: '18px' } }, `服从 +${Math.min(15, Math.round(+input.value / 2500))}`)); };
+    // 服从以 100 为顶：写明从多少到多少、实增多少
+    const loy = s.factions[vassal].loyalty ?? 50;
+    const upd = () => { const gain = Math.min(15, Math.round(+input.value / 2500)), to = Math.min(100, loy + gain); clear(big).append(`${fmt(+input.value)} 两 `, h('span', { class: 'up', style: { fontSize: '18px' } }, `服从 ${loy} → ${to}（实增 ${to - loy}）`)); };
     input.oninput = upd; upd();
     this.modal('reward', `犒赏${s.factions[vassal].short}部`, `当前服从 ${s.factions[vassal].loyalty}`, [big, h('div', { class: 'field' }, input)],
       [this.cancelBtn(), { label: '犒赏', icon: 'ok', primary: true, id: 'reward-ok', onclick: () => this.addOrder({ id: this.newOrderId(), kind: 'reward', vassal, silver: +input.value }) }]);
@@ -1439,6 +1466,12 @@ export class App {
   }
 
   /* ================= 势力 / 人物 ================= */
+  /** 统一进度的一句话：阵营进度、剩余对手、本方直辖贡献与是否主导 */
+  unityLine(): string {
+    const s = this.s!, u = unificationProgress(s), r = unifierRole(s);
+    const lead = r.role === 'lead' ? '本方为一方之主' : r.role === 'patron' ? `本方直辖计胜之地最多（${r.mine}，次者 ${r.best}），算主导` : `当前随同：本方直辖 ${r.mine}，阵营中${s.factions[r.leader]?.name ?? ''}最多（${r.best}），主导须超过 ${r.best}`;
+    return `阵营 ${u.held}/${u.total}${u.rivals.length ? ` · 尚有对手 ${u.rivals.length} 家` : ''} · ${lead}`;
+  }
   openFactions() {
     const s = this.s!;
     const list = h('div', { class: 'list', id: 'faction-table' });
@@ -1464,6 +1497,7 @@ export class App {
     const u = unificationProgress(s);
     this.modal('factions', '天下诸家', `统一进度 ${u.held} / ${u.total}`, [
       h('div', { class: 'progress' }, h('i', { style: { width: (u.held / u.total * 100) + '%' } })),
+      h('div', { class: 'note', id: 'unity-line' }, this.unityLine()),
       h('div', { class: 'note' }, `计入统一：${VICTORY_AREAS.join(' · ')}`),
       h('div', { class: 'note' }, `尚存对手：${u.rivals.join('、') || '无'}`),
       h('div', { class: 'sec-title' }, ic('factions'), '诸家'), list,

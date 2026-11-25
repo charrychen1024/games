@@ -331,6 +331,12 @@ export function disband(s: GameState, a: Army) {
   for (const sg of Object.values(s.sieges)) sg.armies = sg.armies.filter(id => id !== a.id);
 }
 
+/** 弃城时守军可退往的本方之城（陆路最近者），无则为 undefined */
+export function retreatCity(s: GameState, node: string): string | undefined {
+  const own = s.cities[node]?.controller;
+  return Object.values(s.cities).filter(x => x.id !== node && x.controller === own).map(x => ({ x, p: shortestPath(node, x.id, false) })).filter(o => o.p).sort((a, b) => a.p!.length - b.p!.length)[0]?.x.id;
+}
+
 /** 易主：陷城 / 献城 / 归附 */
 export function capture(s: GameState, node: string, newCtrl: string, how: '陷城' | '献城' | '归附' | '弃城', by?: string) {
   const c = s.cities[node];
@@ -349,6 +355,11 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
       bump(s, node, 'silver', -sv, '弃城时运走', src0);
       if (c.governor && s.chars[c.governor]?.faction === old) { s.chars[c.governor].location = dest.id; c.governor = undefined; }
       fled = `守军 ${troopsText(g)} 携银 ${troopsText(sv)} 两退往${nodeName(dest.id)}`;
+    } else {
+      // 无城可退：守军就地溃散，府库来不及运走
+      const src0 = { kind: 'battle' as const, ref: `弃城:${node}` };
+      fled = `无城可退，守军 ${troopsText(c.garrison)} 就地溃散，府库尽归敌手`;
+      bump(s, node, 'garrison', -c.garrison, '弃城而无处可退，守军溃散', src0);
     }
   }
   const src = { kind: 'battle' as const, ref: `${how}:${node}` };
@@ -427,6 +438,10 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
     return;
   }
   const byName = by ? charName(s, by) : factionName(s, newCtrl);
+  // 缴获细账只让当事双方（及其阵营、盟友）知道；旁人只知易帜
+  const me = topOf(s, s.player);
+  const party = topOf(s, old) === me || topOf(s, newCtrl) === me || friendly(s, s.player, old) || friendly(s, s.player, newCtrl);
+  if (!party) { spoils.silver = 0; spoils.grain = 0; spoils.troops = 0; }
   const verb = how === '陷城' ? `攻破${nodeName(node)}` : how === '献城' ? `受${nodeName(node)}献城` : how === '弃城' ? `入${nodeName(node)}` : `受${nodeName(node)}归附`;
   const got = [spoils.silver >= 1000 ? `存银 ${troopsText(spoils.silver)} 两` : '', spoils.grain >= 1000 ? `存粮 ${troopsText(spoils.grain)} 石` : '', spoils.troops >= 100 ? (how === '陷城' ? `收降卒 ${troopsText(spoils.troops)}` : `守军 ${troopsText(spoils.troops)} 随城归附`) : '', spoils.captives.length ? `俘${spoils.captives.join('、')}` : '', how === '陷城' ? '得胜之师士气 +8' : ''].filter(Boolean);
   report(s, { cat: '易主', act: how === '陷城' ? 'breach' : how === '献城' ? 'yield' : how === '弃城' ? 'abandon' : 'join', from: old, to: newCtrl, spoils, urgent: topOf(s, old) === s.player || topOf(s, newCtrl) === s.player, node,

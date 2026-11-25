@@ -42,3 +42,33 @@ describe('进攻途中被敌城挡住', () => {
     expect(['qing'].includes(s.cities.daming.controller) || s.armies.a_duoduo?.location === 'daming' || s.sieges.daming).toBeTruthy();
   });
 });
+
+describe('弃城无处可退', () => {
+  it('最后一城弃守：守军就地溃散，不留给敌方', async () => {
+    const { capture, retreatCity } = await import('../src/core/military');
+    const s = createGame('xi', 1);
+    expect(retreatCity(s, 'kuizhou')).toBeUndefined();
+    const g = s.cities.kuizhou.garrison;
+    expect(g).toBeGreaterThan(0);
+    capture(s, 'kuizhou', 'mingprov', '弃城');
+    expect(s.cities.kuizhou.controller).toBe('mingprov');
+    expect(s.cities.kuizhou.garrison).toBeLessThan(g);
+    expect(s.reports.some(r => /无城可退/.test(r.text))).toBe(true);
+  });
+});
+
+describe('军情按当事与否分级', () => {
+  it('与本方无关的易主：只报易帜，不报对方缴获细账', async () => {
+    const { capture } = await import('../src/core/military');
+    const s = createGame('xi', 1);
+    const node = Object.values(s.cities).find(c => c.controller === 'shun' && c.silver > 1000)!.id;
+    capture(s, node, 'qing', '陷城');
+    const r = s.reports.filter(x => x.cat === '易主' && x.node === node).pop()!;
+    expect(r.text).not.toMatch(/存银|存粮|降卒/);
+    expect(r.spoils?.silver ?? 0).toBe(0);
+    const t = createGame('qing', 1);
+    capture(t, node, 'qing', '陷城');
+    const r2 = t.reports.filter(x => x.cat === '易主' && x.node === node).pop()!;
+    expect(r2.text).toMatch(/存银|存粮/);
+  });
+});
