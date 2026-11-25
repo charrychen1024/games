@@ -1842,6 +1842,26 @@ export class App {
     }
   }
 
+  /** 本方的“家”：治所仍在手中就是治所，否则取兵最多的己方军队或城池所在 */
+  homeNode(s = this.s!): string | null {
+    const f = s.factions[s.player];
+    if (f && s.cities[f.capital]?.controller === s.player) return f.capital;
+    const a = Object.values(s.armies).filter(x => x.faction === s.player).sort((x, y) => y.troops - x.troops)[0];
+    if (a) return a.location;
+    const c = citiesOf(s, s.player).sort((x, y) => y.garrison - x.garrison)[0];
+    return c?.id ?? f?.capital ?? null;
+  }
+  /** 镜头不在本方一带时飞回去（已在画面中间一带就不动） */
+  flyHome(force = false) {
+    const id = this.homeNode(); if (!id) return false;
+    const [x, y] = nodePt(id);
+    const m = this.map, d = Math.hypot((x - m.cam.x) * m.cam.z, (y - m.cam.y) * m.cam.z);
+    if (!force && d < Math.min(m.w, m.h) * 0.3) return false;
+    const z = Math.max(1.8, Math.min(2.4, m.cam.z));
+    if (isReduced()) m.focus(id, z); else m.flyTo(id, z);
+    return true;
+  }
+
   async endTurn() {
     if (!this.s || this.resolving || this.s.ended) return;
     this.resolving = true;
@@ -1892,6 +1912,8 @@ export class App {
     this.renderAll();
     const urgent = this.s.reports.some(x => x.turn === this.reportTurn && x.urgent && (!x.faction || x.faction === this.s!.player));
     if (urgent) alarm(); else chime();
+    // 先回到本方一带：本方各军行进、治所钱粮增减都在眼前（之后战报若在别处，会飞过去再回来）
+    this.flyHome();
     this.monthFx(before, this.s);
     await this.monthFlip(before, this.s);
     await this.resultFx(before, this.s, issued);
@@ -1901,6 +1923,8 @@ export class App {
     if (!isReduced()) await new Promise(res => setTimeout(res, 900));
     await new Promise(res => setTimeout(res, isReduced() ? 150 : 500));
     const wantAll = await this.showSplash();
+    // 新的一月从本方一带开始
+    if (!this.s.ended) this.flyHome();
     this.resolving = false;
     this.renderTop();
     $('#report').classList.add('hidden');
