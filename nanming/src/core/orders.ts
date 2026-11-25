@@ -2,7 +2,7 @@
 import type { ArmyOrder, GameState, Order } from './types';
 import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance } from './state';
 import { setArmyOrder, capture } from './military';
-import { RECRUIT_SILVER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
+import { RECRUIT_SILVER, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
 import { rngFor } from './rng';
 import { shortestPath, neighbors, NODE, pathDays } from '../data/geography';
 
@@ -100,6 +100,7 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
     case 'recruit': {
       const c = s.cities[o.node];
       if (!own(o.node)) return '只能在自己的城募兵';
+      if (s.sieges[o.node]) return '城被围，募不到兵';
       const left = recruitLeft(s, o.node);
       if (o.troops <= 0 || o.troops > left) return `本城本月最多再募 ${left} 人`;
       if (c.silver < o.troops * RECRUIT_SILVER) return '府库不足';
@@ -262,7 +263,7 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       bump(s, o.node, 'garrison', o.troops, `募兵 ${o.troops} 人`, src);
       bump(s, o.node, 'pop', -o.troops / 10000, `募兵 ${o.troops} 人`, src);
       bump(s, o.node, 'minxin', -Math.round(o.troops / 1500 * 10) / 10, `募兵 ${o.troops} 人`, src);
-      if (isPlayer) report(s, { cat: '内政', node: o.node, text: `${describeOrder(s, o)}。每月多耗口粮 ${Math.round(o.troops * 0.3)} 石、饷银 ${Math.round(o.troops * 0.6)} 两。`, src });
+      if (isPlayer) report(s, { cat: '内政', node: o.node, text: `${describeOrder(s, o)}。每月多耗口粮 ${Math.round(o.troops * GRAIN_PER_SOLDIER)} 石、饷银 ${Math.round(o.troops * SILVER_PER_SOLDIER)} 两。`, src });
       break;
     }
     case 'army': {

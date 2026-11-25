@@ -1110,3 +1110,34 @@ html.reduced .bh-pips i.now { animation: none; }
 .dk-ok { position: absolute; right: -6px; bottom: -6px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--green); transform: rotate(-45deg); box-shadow: 0 2px 4px #000; }
 .dk-ok .ic { width: 13px !important; height: 13px !important; color: #10200c !important; transform: none !important; }
 @media (prefers-reduced-motion: reduce) { .dk-btn.primary .dk-medal { animation: none; } }
+
+/* ---------- 城池：逐项预估 ---------- */
+button.rc { font: inherit; color: inherit; cursor: pointer; transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s; }
+button.rc:hover { transform: translateY(-2px); border-color: var(--gold); }
+button.rc.on { border-color: var(--gold-2); box-shadow: 0 0 0 1px var(--gold-2), 0 0 14px rgba(240, 207, 134, 0.35); }
+button.rc::after { content: '▾'; position: absolute; right: 6px; top: 4px; font-size: 10px; color: var(--gold-dim); }
+button.rc.on::after { content: '▴'; color: var(--gold-2); }
+.cfc { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: rgba(0, 0, 0, 0.38); border: 1px solid rgba(240, 207, 134, 0.35); }
+.cfc-h { display: flex; align-items: center; gap: 6px; padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid rgba(217, 173, 91, 0.2); }
+.cfc-h .ic { width: 18px; height: 18px; color: var(--gold); } .cfc-h b { flex: 1; color: var(--gold-2); }
+.cfc-h span { font-weight: 900; font-size: 15px; } .cfc-h .up { color: #9fe08f; } .cfc-h .down { color: #ff9a8a; }
+.cfc-r { display: grid; grid-template-columns: 16px 1fr auto; gap: 6px; align-items: center; padding: 2px 0; font-size: 12.5px; }
+.cfc-r .ic { width: 15px; height: 15px; color: var(--dim); } .cfc-r span { color: #e8d7b4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfc-r b { font-variant-numeric: tabular-nums; } .cfc-r.up b { color: #9fe08f; } .cfc-r.down b { color: #ff9a8a; }
+.cfc-f { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(217, 173, 91, 0.2); display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.cfc-f span { display: flex; align-items: center; gap: 5px; color: #cfe8c8; } .cfc-f span.warn { color: #ffb3a6; } .cfc-f .ic { width: 15px; height: 15px; }
+.cfc-f small { color: var(--faint); font-size: 11px; }
+/* ---------- 募兵：可养标线与募后收支 ---------- */
+.rq-field { position: relative; padding-bottom: 18px; }
+.rq-mark { position: absolute; top: 2px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+.rq-mark i { width: 2px; height: 22px; background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.rq-mark small { color: var(--amber); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.rq-mark.hidden { display: none; }
+.big-num.over { color: #ff9a8a; }
+.rq-proj { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(217, 173, 91, 0.2); }
+.rq-h { font-size: 12px; color: var(--dim); margin-bottom: 4px; }
+.rq-row { display: grid; grid-template-columns: 18px 22px 1fr auto 16px; gap: 6px; align-items: center; font-size: 13.5px; padding: 2px 0; }
+.rq-row .ic { width: 17px; height: 17px; color: var(--gold); } .rq-row b { font-variant-numeric: tabular-nums; color: #cfe8c8; } .rq-row.neg b { color: #ff9a8a; }
+.rq-row small { color: var(--dim); } .rq-row em { font-style: normal; color: var(--faint); font-size: 11px; }
+.rq-warn { display: flex; gap: 6px; align-items: flex-start; margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: rgba(160, 40, 25, 0.25); color: #ffc4b8; font-size: 12.5px; line-height: 1.4; }
+.rq-warn .ic { width: 16px; height: 16px; flex: none; margin-top: 1px; }

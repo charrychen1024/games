@@ -18,5 +18,18 @@ for (const [id, tag] of [['nanjing', 'own'], ['xian', 'foe'], ['luzhou', 'vassal
   await page.evaluate(id => { NM.map.focus(id, 2); NM.selectNode(id); }, id); await page.waitForTimeout(900);
   await page.screenshot({ path: `${out}-${tag}.png` });
 }
+// 逐项预估与募兵窗口
+await page.evaluate(() => { NM.map.focus('nanjing', 2); NM.selectNode('nanjing'); }); await page.waitForTimeout(700);
+await page.click('#city-silver'); await page.waitForTimeout(500);
+await page.screenshot({ path: `${out}-forecast.png` });
+await page.click('#act-recruit'); await page.waitForTimeout(500);
+await page.screenshot({ path: `${out}-recruit.png` });
+await page.$eval('#recruit-n', el => { el.value = el.max; el.dispatchEvent(new Event('input')); }); await page.waitForTimeout(200);
+await page.screenshot({ path: `${out}-recruit-max.png` });
+await page.evaluate(() => NM.closeModal());
+await page.evaluate(() => { NM.map.focus('anqing', 2); NM.selectNode('anqing'); }); await page.waitForTimeout(700);
+await page.click('#city-grain'); await page.waitForTimeout(300);
+await page.click('#act-recruit'); await page.waitForTimeout(500);
+await page.screenshot({ path: `${out}-recruit-poor.png` });
 console.log(errors.length ? 'ERR ' + errors.join(' | ') : 'ok');
 await browser.close(); server.close();

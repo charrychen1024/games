@@ -18,7 +18,7 @@ import { isReduced, setReducedMotion, reducedSystem } from './motion';
 import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
-import { POLICY_NAME, POLICY_HINT, monthlyIncome, upkeepOf, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
+import { POLICY_NAME, POLICY_HINT, upkeepOf, cityForecast, feedable, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
 import { orderBudget, orderCost, ordersUsed, describeOrder, validateOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { yangzhouSiegeState } from '../data/presets';
@@ -101,6 +101,8 @@ export class App {
   reportTurn = -1;
   reportTab = '全部';
   cityTab: 'main' | 'ledger' | 'army' = 'main';
+  /** 城池面板里展开的逐项预估（仓粮或府库） */
+  cityFc: 'grain' | 'silver' | null = null;
   autoBattle = false;
   lastPills: Record<string, number> = {};
   hintStep = 0;
@@ -868,12 +870,22 @@ export class App {
     panel.append(sec);
     if (this.cityTab === 'main') {
       // 看板：三项家底（兵、粮、银，含每月进出）→ 三枚城况轮盘（城防、民心、吏治）→ 三条经营刻度（农、商、文）→ 方针与市价徽记
-      const inc = known ? monthlyIncome(s, c) : null, up = known ? upkeepOf(s, c) : null;
-      const gNet = inc && up ? inc.grain - up.grain : 0, sNet = inc && up ? inc.silver + inc.trade - up.silver : 0;
+      const fc = known ? cityForecast(s, c) : null;
+      const gNet = fc ? fc.grain.net : 0, sNet = fc ? fc.silver.net : 0;
       sec.append(h('div', { class: 'cres' },
         this.resCounter('troops', '驻军', known ? wan(c.garrison) : roughTroops(c.garrison), known ? delta('garrison') : 0, '上月', { id: 'city-garrison', ...(known ? { raw: c.garrison, key: id + ':garrison' } : {}) }),
-        this.resCounter('grain', '仓粮', known ? wan(c.grain - this.pendingSpend(id, 'grain')) : '不详', gNet, '每月', { id: 'city-grain', ...(known ? { raw: c.grain - this.pendingSpend(id, 'grain'), key: id + ':grain' } : {}) }),
-        this.resCounter('silver', '府库', known ? wan(c.silver - this.pendingSpend(id, 'silver')) : '不详', sNet, '每月', { id: 'city-silver', ...(known ? { raw: c.silver - this.pendingSpend(id, 'silver'), key: id + ':silver' } : {}) })));
+        this.resCounter('grain', '仓粮', known ? wan(c.grain - this.pendingSpend(id, 'grain')) : '不详', gNet, '每月', { id: 'city-grain', ...(known ? { raw: c.grain - this.pendingSpend(id, 'grain'), key: id + ':grain', open: () => { this.cityFc = this.cityFc === 'grain' ? null : 'grain'; this.renderCity(id); }, on: this.cityFc === 'grain' } : {}) }),
+        this.resCounter('silver', '府库', known ? wan(c.silver - this.pendingSpend(id, 'silver')) : '不详', sNet, '每月', { id: 'city-silver', ...(known ? { raw: c.silver - this.pendingSpend(id, 'silver'), key: id + ':silver', open: () => { this.cityFc = this.cityFc === 'silver' ? null : 'silver'; this.renderCity(id); }, on: this.cityFc === 'silver' } : {}) })));
+      if (fc && this.cityFc) {
+        const which = this.cityFc, f = fc[which], stock = which === 'grain' ? c.grain : c.silver, unit = which === 'grain' ? '石' : '两';
+        const months = f.net < 0 ? Math.floor(stock / -f.net) : null;
+        const KIND_IC: Record<string, string> = { income: which === 'grain' ? 'agri' : 'commerce', garrison: 'troops', army: 'army', policy: 'policy', remit: 'transfer', siege: 'siege' };
+        sec.append(h('div', { class: 'cfc', id: 'city-forecast' },
+          h('div', { class: 'cfc-h' }, ic(which), h('b', null, `本月预估 · ${which === 'grain' ? '仓粮' : '府库'}`), h('span', { class: f.net >= 0 ? 'up' : 'down' }, `${f.net >= 0 ? '+' : '−'}${wan(Math.abs(f.net))} ${unit}`)),
+          ...[...f.items].sort((a, b) => b.v - a.v).map(i => h('div', { class: 'cfc-r ' + (i.v >= 0 ? 'up' : 'down') }, ic(KIND_IC[i.kind] ?? 'info'), h('span', null, i.label), h('b', null, `${i.v >= 0 ? '+' : '−'}${wan(Math.abs(i.v))}`))),
+          h('div', { class: 'cfc-f' }, months !== null ? h('span', { class: months < 3 ? 'warn' : '' }, ic('hourglass'), `照此每月亏 ${wan(-f.net)}，现存 ${wan(stock)} 可撑约 ${months} 月`) : h('span', null, ic('ok'), '收大于支，逐月有余'),
+            h('small', null, '自动市籴、就地征粮等视情况才发生的不计'))));
+      }
       sec.append(h('div', { class: 'crings' },
         this.ring('wall', '城防', c.wall, String(Math.round(c.wall))),
         this.ring('minxin', '民心', known ? c.minxin : -1, known ? String(Math.round(c.minxin)) : c.minxin > 60 ? '稳' : c.minxin > 40 ? '浮' : '散'),
@@ -944,10 +956,10 @@ export class App {
   }
 
   /** 家底计数：大徽章、大数字、每月进出 */
-  resCounter(icon: string, k: string, v: string, d: number, dl: string, opts: { id?: string; raw?: number; key?: string }): HTMLElement {
-    const el = this.tile(icon, k, v, { ...opts });
+  resCounter(icon: string, k: string, v: string, d: number, dl: string, opts: { id?: string; raw?: number; key?: string; open?: () => void; on?: boolean }): HTMLElement {
+    const el = this.tile(icon, k, v, { id: opts.id, raw: opts.raw, key: opts.key });
     const num = el.querySelector('.num')!;
-    return h('div', { class: 'rc' },
+    return h(opts.open ? 'button' : 'div', { class: 'rc' + (opts.open ? ' open' : '') + (opts.on ? ' on' : ''), onclick: opts.open ? () => { click(); opts.open!(); } : undefined, 'data-tip': opts.open ? '点开看本月逐项预估' : undefined },
       h('span', { class: 'rc-medal' }, ic(icon)),
       h('div', { class: 'rc-v', id: opts.id }, num),
       h('small', { class: 'rc-k' }, k),
@@ -1208,21 +1220,41 @@ export class App {
     const left = recruitLeft(s, node);
     const max = Math.min(left, Math.floor((c.silver - this.pendingSpend(node, 'silver')) / RECRUIT_SILVER / 100) * 100);
     if (max < 100) { this.toast(left < 100 ? `${nodeName(node)}本月名额已满` : `${nodeName(node)}府库不足，募不到兵`, 'close'); return; }
-    const input = h('input', { type: 'range', min: 100, max, step: 100, value: Math.min(max, 1000), id: 'recruit-n' }) as HTMLInputElement;
+    // 募兵窗口：名额与府库是硬限；养不养得起由你权衡——标出本城每月结余还能养多少，拉过了变红，并算出募后每月收支与存粮能撑几月
+    const fc = cityForecast(s, c), feed = feedable(s, c);
+    const pend = this.orders.filter(o => o.kind === 'recruit' && o.node === node).reduce((n, o) => n + (o as { troops: number }).troops, 0);
+    const room = Math.max(0, feed - pend);
+    const input = h('input', { type: 'range', min: 100, max, step: 100, value: Math.min(max, Math.max(100, Math.min(1000, room || 1000))), id: 'recruit-n' }) as HTMLInputElement;
     const big = h('div', { class: 'big-num' });
     const costs = h('div', { class: 'costs' });
+    const mark = h('div', { class: 'rq-mark' }, h('i'), h('small', null, `可养 ${fmt(room)}`));
+    const proj = h('div', { class: 'rq-proj', id: 'recruit-proj' });
+    const line = (icon: string, k: string, net0: number, net1: number, stock: number, unit: string) => {
+      const m = net1 < 0 ? Math.floor(stock / -net1) : null;
+      return h('div', { class: 'rq-row' + (net1 < 0 ? ' neg' : '') }, ic(icon), h('span', null, k),
+        h('b', null, `${net0 >= 0 ? '+' : '−'}${wan(Math.abs(net0))} → ${net1 >= 0 ? '+' : '−'}${wan(Math.abs(net1))}`), h('small', null, m === null ? '逐月有余' : `现存可撑 ${m} 月`), h('em', null, unit));
+    };
     const upd = () => {
       const n = +input.value;
-      big.textContent = `${fmt(n)} 人`;
+      const over = n > room;
+      big.textContent = `${fmt(n)} 人`; big.classList.toggle('over', over);
+      const all = n + pend;
+      const g1 = fc.grain.net - Math.round(all * GRAIN_PER_SOLDIER), s1 = fc.silver.net - Math.round(all * SILVER_PER_SOLDIER);
       clear(costs).append(
-        h('span', { class: 'cost bad' }, ic('silver'), `−${fmt(n * RECRUIT_SILVER)}`),
-        h('span', { class: 'cost bad' }, ic('pop'), `−${(n / 10000).toFixed(2)} 万`),
-        h('span', { class: 'cost bad' }, ic('minxin'), `−${(n / 1500).toFixed(1)}`),
-        h('span', { class: 'cost bad' }, ic('grain'), `每月 −${fmt(n * 0.25)}`),
+        h('span', { class: 'cost bad' }, ic('silver'), `募银 −${fmt(n * RECRUIT_SILVER)}`),
+        h('span', { class: 'cost bad' }, ic('pop'), `−${(n / 10000).toFixed(2)} 万口`),
+        h('span', { class: 'cost bad' }, ic('minxin'), `民心 −${(n / 1500).toFixed(1)}`),
         h('span', { class: 'cost good' }, ic('troops'), `驻军 +${fmt(n)}`));
+      clear(proj).append(h('div', { class: 'rq-h' }, '募后本城每月（之后每人每月口粮 0.25 石、饷银 0.6 两）'),
+        line('grain', '粮', fc.grain.net, g1, c.grain, '石'),
+        line('silver', '银', fc.silver.net, s1, c.silver - n * RECRUIT_SILVER - this.pendingSpend(node, 'silver'), '两'),
+        ...(over ? [h('div', { class: 'rq-warn' }, ic('urgent'), room > 0 ? `超出本城结余可养之数 ${fmt(n - room)} 人：须从别城调粮银，或编军出征、改由别城作粮台` : '本城已无结余：所募之兵要靠存粮、调拨或出征后由别城供养')] : []));
     };
     input.oninput = upd; upd();
-    this.modal('recruit', '募兵', `${nodeName(node)} · 本月剩余 ${fmt(left)} / 上限 ${fmt(maxRecruit(c))}`, [big, h('div', { class: 'field' }, input), costs],
+    const pctMark = Math.max(0, Math.min(100, (room - 100) / Math.max(1, max - 100) * 100));
+    mark.style.left = pctMark + '%';
+    mark.classList.toggle('hidden', room < 100 || room >= max);
+    this.modal('recruit', '募兵', `${nodeName(node)} · 本月剩余 ${fmt(left)} / 上限 ${fmt(maxRecruit(c))} · 本城可养约 ${fmt(room)}`, [big, h('div', { class: 'field rq-field' }, input, mark), costs, proj],
       [this.cancelBtn(), { label: '募兵', icon: 'ok', primary: true, id: 'recruit-ok', onclick: () => { this.addOrder({ id: this.newOrderId(), kind: 'recruit', node, troops: +input.value }); } }]);
   }
 
