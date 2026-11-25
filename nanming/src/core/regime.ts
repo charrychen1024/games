@@ -38,7 +38,7 @@ export function royalCandidates(s: GameState, f: string) {
     .sort((a, b) => b.royal!.claim - a.royal!.claim || b.ab.wang - a.ab.wang);
 }
 
-export interface SuccessionOpt { kind: 'enthrone' | 'regent' | 'ransom' | 'minister'; char: string; label: string; desc: string; disabled?: string }
+export interface SuccessionOpt { kind: 'enthrone' | 'regent' | 'ransom' | 'minister' | 'appointed' | 'summon' | 'join'; char: string; label: string; desc: string; disabled?: string; target?: string }
 export const RANSOM_SILVER = 150000;
 
 /** 继统方案：说明支持者与代价 */
@@ -59,8 +59,27 @@ export function successionOptions(s: GameState, f: string): SuccessionOpt[] {
     out.push({ kind: 'ransom', char: old.id, label: `遣使议赎，迎回${old.name}`, desc: `需银 15 万两（府库现有 ${Math.round(have / 10000)} 万）。对方未必肯放，成败当月即见分晓；不成则由重臣主事。`,
       disabled: have < RANSOM_SILVER ? `府库不足：尚缺 ${Math.ceil((RANSOM_SILVER - have) / 10000)} 万两` : undefined });
   }
-  const minister = Object.values(s.chars).filter(c => c.faction === f && c.status === 'active' && !c.royal).sort((a, b) => b.ab.wang - a.ab.wang)[0];
-  if (minister) out.push({ kind: 'minister', char: minister.id, label: `由${minister.name}主事`, desc: `不立新君。号令出自权臣，下属服从 −12，${minister.name}威望日重。` });
+  const court = f === courtOf(s);
+  const ministers = Object.values(s.chars).filter(c => c.faction === f && c.status === 'active' && !c.royal).sort((a, b) => b.ab.wang - a.ab.wang).slice(0, court ? 1 : 2);
+  for (const m of ministers) out.push(court
+    ? { kind: 'minister', char: m.id, label: `由${m.name}主事`, desc: `不立新君。号令出自权臣，下属服从 −12，${m.name}威望日重。` }
+    : { kind: 'minister', char: m.id, label: `推${m.name}主事`, desc: `统军 ${m.ab.tong}、政务 ${m.ab.zheng}、威望 ${m.ab.wang}。新主初立，下属服从 −6。` });
+  // 本部无人可推：请上级委派、征辟未出之士、或部众投靠
+  if (!ministers.length && !royals.length) {
+    const lord = fac.overlord && !s.factions[fac.overlord]?.defunct ? s.factions[fac.overlord] : undefined;
+    if (lord) {
+      const busy = new Set(Object.values(s.armies).map(a => a.commander));
+      const sent = Object.values(s.chars).filter(c => c.faction === lord.id && c.status === 'active' && !c.royal && c.id !== lord.leader && !busy.has(c.id) && !s.missions.some(m => (m.order as { char?: string }).char === c.id))
+        .sort((a, b) => (b.ab.wang + b.ab.tong) - (a.ab.wang + a.ab.tong))[0];
+      if (sent) out.push({ kind: 'appointed', char: sent.id, target: lord.id, label: `请${lord.name}委派${sent.name}主事`, desc: `${sent.name}（统 ${sent.ab.tong}、政 ${sent.ab.zheng}）来主本部。从此更依附上级：服从 +10，日后难以自立。` });
+    }
+    const mine = new Set(citiesOf(s, f).map(c => c.id));
+    const hermit = Object.values(s.chars).filter(c => c.status === 'offstage' && (c.faction === f || (!c.faction && mine.has(c.location))) && s.cities[c.location] && mine.has(c.location))
+      .sort((a, b) => (b.ab.wang + b.ab.zheng) - (a.ab.wang + a.ab.zheng))[0];
+    if (hermit) out.push({ kind: 'summon', char: hermit.id, label: `征辟${hermit.name}出而主事`, desc: `${hermit.name}尚未出仕，提早延请。资望尚浅：本部各城民心 −3。` });
+    const host = lord ?? Object.values(s.factions).find(x => !x.defunct && x.id !== f && s.relations[[f, x.id].sort().join('|')]?.stance === 'alliance');
+    if (host && (mine.size || Object.values(s.armies).some(a => a.faction === f))) out.push({ kind: 'join', char: '', target: host.id, label: `部众投靠${host.name}`, desc: `各城各营并入${host.name}。${f === s.player ? '本方从此不复独立，本局到此为止。' : ''}` });
+  }
   return out;
 }
 
@@ -111,10 +130,37 @@ export function applySuccession(s: GameState, f: string, opt: SuccessionOpt): st
     }
     case 'minister': {
       fac.leader = c.id;
-      for (const v of vassals) adjustLoyalty(s, v.id, -12, `${c.name}以权臣主事`);
+      const court = f === courtOf(s);
+      for (const v of vassals) adjustLoyalty(s, v.id, court ? -12 : -6, `${c.name}${court ? '以权臣' : ''}主事`);
       adjustAtt(s, c.id, 'loyalty', 5, '主持国事');
-      report(s, { cat: '人事', urgent: f === s.player, text: `${factionName(s, f)}不立新君，由${c.name}主事。` });
+      report(s, { cat: '人事', urgent: f === s.player, text: court ? `${factionName(s, f)}不立新君，由${c.name}主事。` : `${factionName(s, f)}众将推${c.name}主事。` });
       return `${c.name}主事。`;
+    }
+    case 'appointed': {
+      c.faction = f; fac.leader = c.id;
+      if (s.cities[fac.capital]?.controller === f) c.location = fac.capital;
+      if (fac.overlord) adjustLoyalty(s, f, 10, `${factionName(s, fac.overlord)}委派${c.name}主事`);
+      report(s, { cat: '人事', urgent: f === s.player, node: fac.capital, text: `${factionName(s, opt.target ?? '')}委派${c.name}赴${nodeName(fac.capital)}，主持${fac.name}。` });
+      return `${c.name}受委主事。`;
+    }
+    case 'summon': {
+      c.status = 'active'; c.faction = f; fac.leader = c.id;
+      for (const x of citiesOf(s, f)) x.minxin = Math.max(0, x.minxin - 3);
+      report(s, { cat: '人事', urgent: f === s.player, node: c.location, text: `${fac.name}征辟${c.name}出而主事。${c.bio}` });
+      return `${c.name}出而主事。`;
+    }
+    case 'join': {
+      const host = s.factions[opt.target ?? ''];
+      if (!host) return '无处可投。';
+      const n = citiesOf(s, f).length;
+      for (const x of Object.values(s.cities)) if (x.controller === f) x.controller = host.id;
+      for (const a of Object.values(s.armies)) if (a.faction === f) a.faction = host.id;
+      for (const ch of Object.values(s.chars)) if (ch.faction === f && ch.status !== 'dead') ch.faction = host.id;
+      fac.defunct = true;
+      s.flags['joined_' + f] = host.id;
+      for (const v of vassals) { delete v.overlord; delete v.loyalty; }
+      report(s, { cat: '易主', act: 'join', from: f, to: host.id, urgent: true, node: fac.capital, text: `${fac.name}群龙无首，所部 ${n} 城与诸营投靠${host.name}。` });
+      return '部众投靠。';
     }
   }
 }
@@ -122,7 +168,7 @@ export function applySuccession(s: GameState, f: string, opt: SuccessionOpt): st
 /** 电脑一方的继统：有宗室则拥立，否则权臣主事 */
 export function autoSuccession(s: GameState, f: string) {
   const opts = successionOptions(s, f);
-  const pick = opts.find(o => o.kind === 'enthrone') ?? opts.find(o => o.kind === 'minister');
+  const pick = opts.find(o => o.kind === 'enthrone') ?? opts.find(o => o.kind === 'minister') ?? opts.find(o => o.kind === 'appointed') ?? opts.find(o => o.kind === 'summon') ?? opts.find(o => o.kind === 'join');
   if (pick) applySuccession(s, f, pick);
   else delete s.flags['need_succession_' + f];
 }

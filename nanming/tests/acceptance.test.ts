@@ -140,6 +140,8 @@ describe('验收五：结盟后双方仍保有控制权', () => {
     const sc = envoyScore(s, 'hongguang', { id: 'e', kind: 'envoy', char: 'zuomaodi', target: 'shun', aim: 'alliance' });
     expect(sc.score).toBeGreaterThanOrEqual(65);
     s = runMonthAuto(s, [{ id: 'e1', kind: 'envoy', char: 'zuomaodi', target: 'shun', aim: 'alliance' }]);
+    // 使者按路途远近抵达（南京到西安约两月）
+    for (let k = 0; k < 4 && s.missions.some(m => m.id === 'e1'); k++) s = runMonthAuto(s, []);
     s = runMonthAuto(s, []);
     expect(stance(s, 'hongguang', 'shun')).toBe('alliance');
     const shunCities = Object.values(s.cities).filter(c => c.controller === 'shun').map(c => c.id);

@@ -51,7 +51,7 @@ const FIELD_NAME: Record<string, string> = { grain: '仓粮', silver: '府库', 
 const FIELD_ICON: Record<string, string> = { grain: 'grain', silver: 'silver', pop: 'pop', minxin: 'minxin', garrison: 'troops', wall: 'wall', order: 'order', agri: 'agri', commerce: 'commerce', edu: 'edu' };
 const CAT_ICON: Record<ReportCat, string> = { 急报: 'urgent', 军报: 'war', 易主: 'capture', 交涉: 'envoy', 内政: 'admin', 人事: 'person', 史事: 'event', 线索: 'clue' };
 const POLICY_ICON: Record<Policy, string> = { balanced: 'order', agri: 'agri', commerce: 'commerce', fortify: 'wall', relief: 'minxin', edu: 'edu', levy: 'reward' };
-const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army' };
+const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', supply: 'grain', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army' };
 const HINT_KEY = 'nanming:hint';
 
 /** 选势力卡片：难度、一句处境、目标 */
@@ -998,9 +998,10 @@ export class App {
     sec.append(h('div', { class: 'rows', style: { marginTop: '6px' } },
       h('div', { class: 'row' }, ic('target'), h('span', { class: 't' }, a.progress > 0 && a.path.length ? `${nodeName(a.location)} → ${nodeName(a.path[0])}` : nodeName(a.location)), h('b', null, '所在')),
       h('div', { class: 'row' }, ic('move'), h('span', { class: 't' }, armyOrderText(a.order)), h('b', null, a.path.length ? `${pathDays(a.location, a.path) - a.progress} 日` : '')),
-      a.hunger ? h('div', { class: 'row mine' }, ic('grain'), h('span', { class: 't' }, '断粮'), h('b', { class: 'down' }, `${a.hunger} 月`)) : null));
-    const pend = this.orders.find(o => (o.kind === 'army' || o.kind === 'command') && o.army === id);
-    if (pend) sec.append(h('div', { class: 'row mine', style: { marginTop: '6px' } }, ic('appoint'), h('span', { class: 't' }, describeOrder(s, pend)), h('b', null, '已下令')));
+      a.hunger ? h('div', { class: 'row mine' }, ic('grain'), h('span', { class: 't' }, '断粮'), h('b', { class: 'down' }, `${a.hunger} 月`)) : null,
+      visible && a.unpaid ? h('div', { class: 'row mine', id: 'army-arrears' }, ic('silver'), h('span', { class: 't' }, `欠饷 ${a.unpaid} 月 · 积欠 ${wan(a.arrears ?? 0)} 两${a.unpaid >= 4 ? ' · 士卒逃散' : ''}`), h('b', { class: 'down' }, `士气上限 −${Math.min(24, a.unpaid * 3)}`)) : null));
+    for (const pend of this.orders.filter(o => (o.kind === 'army' || o.kind === 'command' || o.kind === 'supply') && o.army === id))
+      sec.append(h('div', { class: 'row mine', style: { marginTop: '6px' } }, ic(pend.kind === 'supply' ? 'grain' : 'appoint'), h('span', { class: 't' }, describeOrder(s, pend)), h('b', null, '已下令')));
     const A = (aid: string, icon: string, label: string, onclick: () => void, primary = false) => h('button', { class: 'act' + (primary ? ' primary' : ''), id: aid, onclick }, ic(icon), label);
     if (mine) {
       sec.append(h('div', { class: 'sec-title' }, ic('war'), '军令'));
@@ -1014,6 +1015,7 @@ export class App {
         acts.append(A('act-assault', 'storm', '攻城', () => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'siege', target: a.location, assault: true } }), true),
           A('act-blockade', 'blockade', '围困', () => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'siege', target: a.location, assault: false } })));
       } else if (a.progress === 0 && here && here.controller === s.player) acts.append(A('act-reinforce', 'reinforce', '拨兵', () => this.formReinforce(id)));
+      acts.append(A('act-supply', 'grain', '粮台', () => this.beginTarget(id, `点选${a.name}改由哪座城支粮（须己方或同阵营、粮道可通）`, n => { this.addOrder({ id: this.newOrderId(), kind: 'supply', army: id, node: n }); })));
       sec.append(acts);
     } else if (vassal) {
       sec.append(h('div', { class: 'sec-title' }, ic('urgent'), `号令 · 服从 ${f.loyalty}`));
@@ -1897,7 +1899,7 @@ export class App {
     const own = citiesOf(s, s.player).length;
     const troops = citiesOf(s, s.player).reduce((n, c) => n + c.garrison, 0) + Object.values(s.armies).filter(a => a.faction === s.player).reduce((n, a) => n + a.troops, 0);
     const years = Math.floor((Math.min(s.turn, TOTAL_TURNS - 1)) / 12 * 10) / 10;
-    const dlg = this.modal(kind === 'unified' ? 'emperor' : kind === 'fallen' ? 'ruins' : 'hourglass', kind === 'trial_end' ? '试玩结束' : kind === 'unified' ? '天下一统' : kind === 'fallen' ? '覆亡' : '天下未定', s.ended!.text, [
+    const dlg = this.modal(kind === 'unified' ? 'emperor' : kind === 'fallen' ? 'ruins' : 'hourglass', kind === 'trial_end' ? '试玩结束' : kind === 'unified' ? (s.ended!.role === 'patron' ? '扶明定鼎' : s.ended!.role === 'follow' ? '随主一统' : '天下一统') : kind === 'fallen' ? (s.flags['joined_' + s.player] ? '部众投靠' : '覆亡') : '天下未定', s.ended!.text, [
       h('div', { class: 'end-seal', style: { background: me.color } }, polityOf(s, me.polity).mark || me.short),
       h('div', { class: 'tiles' },
         this.tile('city', '城池', `${own}`, { unit: `/ ${Object.keys(s.cities).length}` }),
@@ -2061,6 +2063,7 @@ function sameTarget(a: Order, b: Order): boolean {
   switch (a.kind) {
     case 'policy': return (b as any).node === a.node;
     case 'army': return (b as any).army === a.army;
+    case 'supply': return (b as any).army === a.army;
     case 'command': return (b as any).army === a.army;
     case 'appoint': return (b as any).node === a.node;
     case 'persuade': return (b as any).node === a.node;   // 同城只派一路使者，后派者替换前派

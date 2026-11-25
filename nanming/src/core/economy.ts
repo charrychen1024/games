@@ -95,6 +95,55 @@ export function loanAmount(s: GameState, c: City): number {
 }
 export const LOAN_COOLDOWN = 6;
 
+/* ---------- 欠饷 ----------
+ * 本月饷银发不足一成以上，记入积欠、连续欠饷月数加一。欠一两月只压低士气上限（每月 −3）；
+ * 连欠满四月起就所驻本方城池索饷（民心 −3、吏治 −1）；索不到而本方府库其实有银（挪饷不发），每月逃散 1%，逐月加重，至多 4%，按所欠比例折算。粮台有余银即补发旧欠，补清则军心回升。 */
+export const arrearsPenalty = (a: { unpaid?: number }) => Math.min(24, (a.unpaid ?? 0) * 3);
+function payArrears(s: GameState, a: import('./types').Army, owed: number, from?: string) {
+  const need = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * (1 - forageShare(s, a.faction)));
+  const ours = a.faction === s.player || topOf(s, a.faction) === s.player;
+  if (owed > need * 0.1) {
+    a.arrears = Math.round((a.arrears ?? 0) + owed);
+    a.unpaid = (a.unpaid ?? 0) + 1;
+    if (a.unpaid >= 4) {
+      // 久欠之兵就所驻本方城池索饷：取城中银两，民心、吏治受损
+      const here = s.cities[a.location];
+      let left = owed;
+      if (here && (here.controller === a.faction || topOf(s, here.controller) === topOf(s, a.faction)) && here.silver > 0) {
+        const take = Math.round(Math.min(here.silver, owed));
+        left -= take;
+        bump(s, here.id, 'silver', -take, `${a.name}久欠饷，纵兵索饷`, { kind: 'upkeep', ref: a.id });
+        bump(s, here.id, 'minxin', -3, `${a.name}纵兵索饷`, { kind: 'upkeep', ref: a.id });
+        bump(s, here.id, 'order', -1, `${a.name}纵兵索饷`, { kind: 'upkeep', ref: a.id });
+        if (ours && a.unpaid === 4) report(s, { cat: '急报', urgent: a.faction === s.player, node: here.id, text: `${a.name}连欠饷 ${a.unpaid} 月，就${nodeName(here.id)}索饷 ${take} 两，地方骚然（民心 −3、吏治 −1）。`, src: { kind: 'upkeep', ref: a.id } });
+      }
+      // 索不到的部分：本方府库有银而不发（挪饷）则士卒逃散，欠得越久越多，按所欠比例折算；
+      // 举镇皆穷者只压士气、扰地方，不另逃散
+      const neglect = storeOf(s, a.faction).silver >= need * 3;
+      const lost = !neglect ? 0 : Math.round(a.troops * Math.min(0.04, 0.01 * (a.unpaid - 3)) * Math.min(1, left / Math.max(1, need)));
+      if (lost > 0) {
+        a.troops -= lost;
+        a.morale = Math.max(0, a.morale - 2);
+        if (ours) report(s, { cat: '急报', urgent: a.faction === s.player, node: a.location, text: `${a.name}连欠饷 ${a.unpaid} 月、积欠 ${troopsText(a.arrears)} 两，士卒怨望，逃散 ${lost} 人。`, src: { kind: 'upkeep', ref: a.id } });
+      }
+    }
+    return;
+  }
+  if (!a.arrears || !from) return;
+  const sup = s.cities[from];
+  const back = Math.min(a.arrears, Math.floor(Math.max(0, sup.silver) * 0.5));
+  if (back <= 0) return;
+  bump(s, from, 'silver', -back, `补发${a.name}旧欠饷银`, { kind: 'upkeep', ref: a.id });
+  a.arrears -= back;
+  if (a.arrears <= 0) {
+    const months = a.unpaid ?? 0;
+    a.arrears = 0; a.unpaid = 0;
+    const lift = Math.min(10, 3 + months);
+    a.morale = Math.min(100, a.morale + lift);
+    if (ours) report(s, { cat: '内政', node: a.location, text: `${a.name}旧欠饷银补发清楚（${back} 两），军心回升（士气 +${lift}）。`, src: { kind: 'upkeep', ref: a.id } });
+  }
+}
+
 /** 一个月的内政与钱粮结算 */
 export function runEconomy(s: GameState) {
   const cities = Object.values(s.cities).sort((a, b) => a.id.localeCompare(b.id));
@@ -119,15 +168,16 @@ export function runEconomy(s: GameState) {
     const where = s.cities[a.location];
     if (fs > 0 && where) bump(s, where.id, 'minxin', -Math.min(3, Math.round(a.troops * fs / 15000 * 10) / 10), `${a.name}就粮于地方`, { kind: 'upkeep', ref: a.id });
     const needG = Math.round(a.troops * GRAIN_PER_SOLDIER * (1 - fs)), needS = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * (1 - fs));
-    let got = 0;
+    let got = 0, paid = 0;
     const sup = s.cities[a.supply];
     const cut = sup && a.location !== a.supply ? supplyBlock(s, a.faction, a.supply, a.location) : null;
     if (sup && mine(a.supply) && !cut) {
       got = Math.min(sup.grain, needG);
       bump(s, sup.id, 'grain', -got, `${a.name} ${troopsText(a.troops)} 人支粮${got < needG ? '（不足）' : ''}`, { kind: 'upkeep', ref: a.id });
-      bump(s, sup.id, 'silver', -Math.min(sup.silver, needS), `${a.name}关饷`, { kind: 'upkeep', ref: a.id });
-      if (sup.silver <= 0) a.morale = Math.max(0, a.morale - 1);
+      paid = Math.max(0, Math.min(sup.silver, needS));
+      if (paid) bump(s, sup.id, 'silver', -paid, `${a.name}关饷${paid < needS ? '（不足）' : ''}`, { kind: 'upkeep', ref: a.id });
     }
+    payArrears(s, a, needS - paid, sup && mine(a.supply) && !cut ? sup.id : undefined);
     // 粮台不足：就地征粮（所在城为己方或同阵营时），扰民
     const here = s.cities[a.location];
     if (got < needG && here && here.id !== a.supply && mine(here.id) && here.grain > 0) {
@@ -146,8 +196,9 @@ export function runEconomy(s: GameState) {
       continue;
     }
     a.hunger = 0;
-    const cap = 60 + Math.round((s.chars[a.commander]?.ab.wang ?? 40) / 5);
+    const cap = 60 + Math.round((s.chars[a.commander]?.ab.wang ?? 40) / 5) - arrearsPenalty(a);
     if (a.morale < cap) a.morale = Math.min(cap, a.morale + 6);
+    else if (a.morale > cap) a.morale = Math.max(cap, a.morale - 4);
   }
   // 2b. 市籴：仓粮不足两月用度而府库有余银的城，按每石一两二钱买粮
   for (const c of cities) {
@@ -294,6 +345,16 @@ export function supplyBlock(s: GameState, f: string, from: string, to: string): 
     }
   }
   return `去${nodeName(to)}的路被敌方隔断`;
+}
+
+/** 粮台可否改设于某城：己方或同阵营之城、未被敌围、粮道可通到军队所在。玩家与电脑同一条件 */
+export function supplyChoiceError(s: GameState, a: { faction: string; location: string }, node: string): string | null {
+  const c = s.cities[node];
+  if (!c) return '不是城池';
+  if (c.controller !== a.faction && topOf(s, c.controller) !== topOf(s, a.faction)) return '只能以己方或同阵营友方之城为粮台';
+  const sg = s.sieges[node];
+  if (sg && !friendly(s, a.faction, sg.attacker)) return `${nodeName(node)}被围，支不出粮`;
+  return node === a.location ? null : supplyBlock(s, a.faction, node, a.location);
 }
 
 /** 势力仓廪：所辖各城府库、仓粮之和（左上角显示用） */

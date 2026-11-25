@@ -158,6 +158,9 @@ export interface Army {
   supply: NodeId;
   /** 缺粮月数 */
   hunger: number;
+  /** 积欠饷银（两）与连续欠饷月数：短期挪用无大碍，久欠则军心低落、士卒逃散，补发可挽回 */
+  arrears?: number;
+  unpaid?: number;
 }
 export interface Siege {
   node: NodeId;
@@ -181,6 +184,8 @@ export type Order =
   /** 劝捐助饷 */
   | { id: string; kind: 'loan'; node: NodeId }
   | { id: string; kind: 'army'; army: ArmyId; order: ArmyOrder }
+  /** 改换粮台 */
+  | { id: string; kind: 'supply'; army: ArmyId; node: NodeId }
   | { id: string; kind: 'reinforce'; node: NodeId; army: ArmyId; troops: number }
   | { id: string; kind: 'envoy'; char: CharId; target: FactionId; aim: 'alliance' | 'truce' | 'peace' }
   | { id: string; kind: 'persuade'; char: CharId; node: NodeId }
@@ -284,7 +289,9 @@ export interface GameState {
   flags: Record<string, number | string | boolean>;
   nextId: number;
   /** 结局 */
-  ended?: { kind: 'unified' | 'undecided' | 'fallen' | 'trial_end'; text: string };
+  ended?: { kind: 'unified' | 'undecided' | 'fallen' | 'trial_end'; text: string;
+    /** 统一时玩家的身份：lead 本方为天下之主；patron 奉明而主导统一（扶立之功）；follow 随所奉朝廷统一 */
+    role?: 'lead' | 'patron' | 'follow' };
   /** 试玩模式：限定月数 */
   turnLimit?: number;
   /** 本局的年号更替（覆盖政权的预设年号） */

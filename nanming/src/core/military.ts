@@ -35,6 +35,13 @@ export function moveArmies(s: GameState): Contact[] {
       const next = a.path[0];
       const r = routeBetween(a.location, next);
       if (!r) { a.path = []; a.progress = 0; continue; }
+      // 已无船可乘：不能沿先前算好的海路走，就地改走陆路（与在此重新下令同一路线）
+      if (a.progress === 0 && r.kind === 'sea' && !canSea(a)) {
+        const tgt = a.order.kind !== 'hold' ? a.order.target : a.path[a.path.length - 1];
+        const p = shortestPath(a.location, tgt, false);
+        a.path = p ?? [];
+        continue;
+      }
       a.progress++;
       // 船走不了陆路：水师踏上陆路即舍舟登岸，船只留在岸边，水手改作步卒
       if (a.progress === 1 && r.kind === 'land' && a.mix.navy > 0) {
@@ -43,6 +50,8 @@ export function moveArmies(s: GameState): Contact[] {
         if (a.name.endsWith('水师')) a.name = a.name.slice(0, -2) + '部';
         a.morale = Math.max(10, a.morale - 4);
         if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}行至${nodeName(a.location)}舍舟登岸，船只留泊，水师改为步卒。`, src: { kind: 'order', ref: a.id } });
+        // 余程按步卒重算：此后不再走海路
+        if (a.order.kind !== 'hold') { const rest = shortestPath(next, a.order.target, false); a.path = rest ? [next, ...rest] : [next]; }
       }
       if (a.progress < r.days) continue;
       a.location = next; a.path.shift(); a.progress = 0;
@@ -294,13 +303,21 @@ export function succession(s: GameState, faction: string, why: string) {
   const old = f.leader;
   const cands = Object.values(s.chars).filter(c => c.faction === faction && c.status === 'active' && !c.royal).sort((x, y) => y.ab.wang - x.ab.wang);
   const royals = Object.values(s.chars).some(c => c.faction === faction && c.status === 'active' && c.royal);
-  if (!cands.length && !royals) { f.defunct = true; return; }
-  // 君主出事：先由重臣暂摄，月末议定继统（监国、另立、迎回或权臣主事）
-  if (isRuler(s, faction)) { s.flags['need_succession_' + faction] = why; s.flags['old_ruler_' + faction] = old; }
+  const holdings = Object.values(s.cities).some(c => c.controller === faction) || Object.values(s.armies).some(a => a.faction === faction);
+  if (!cands.length && !royals) {
+    // 本部已无人：无城无军即退场；有城有兵则留待月末议定（请上级委派、征辟、议赎、投靠）
+    if (!holdings) { f.defunct = true; return; }
+    s.flags['need_succession_' + faction] = why; s.flags['old_ruler_' + faction] = old;
+    report(s, { cat: '人事', urgent: faction === s.player, text: `${why}，${f.name}本部无人主事，诸城诸营暂各自守，待议续局。` });
+    return;
+  }
+  // 君主出事，或玩家一方失其主事人：先由重臣暂摄，月末议定（监国、另立、迎回、择人主事）
+  const ask = isRuler(s, faction) || faction === s.player;
+  if (ask) { s.flags['need_succession_' + faction] = why; s.flags['old_ruler_' + faction] = old; }
   const next = cands[0] ?? Object.values(s.chars).find(c => c.faction === faction && c.status === 'active');
   if (!next) { f.defunct = true; return; }
   f.leader = next.id;
-  report(s, { cat: '人事', urgent: faction === s.player, text: `${why}，${f.name}${isRuler(s, faction) ? '暂由' + next.name + '摄事，待议继统' : '由' + next.name + '主事'}。` });
+  report(s, { cat: '人事', urgent: faction === s.player, text: `${why}，${f.name}${ask ? '暂由' + next.name + '摄事，待议' + (isRuler(s, faction) ? '继统' : '主事之人') : '由' + next.name + '主事'}。` });
 }
 export function disband(s: GameState, a: Army) {
   const near = [a.location, ...neighbors(a.location).map(n => n.to)].find(id => s.cities[id] && friendly(s, a.faction, s.cities[id].controller));
@@ -364,7 +381,12 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
     bump(s, node, 'minxin', -5, how === '献城' ? '易帜' : how === '弃城' ? '守军弃城' : '归附', src);
     if (gov && gov.faction === old && how === '献城') {
       const of0 = s.factions[old];
-      if (of0 && of0.leader === gov.id && old !== 'local' && !of0.admin) {
+      const head = !!of0 && of0.leader === gov.id && old !== 'local' && !of0.admin;
+      // 一镇之主献城，全镇随否要看诸将：不从者另推主事，镇主只带走本城与亲领之兵
+      const odds = head ? followOdds(s, old, newCtrl) : 0;
+      const follow = head && rngFor(s.seed, 'follow', s.turn, old).next() < odds;
+      if (head && !follow) report(s, { cat: '人事', urgent: topOf(s, old) === s.player || topOf(s, newCtrl) === s.player, node, text: `${gov.name}欲率${of0!.name}归附${factionName(s, newCtrl)}，诸将不从（随者约 ${Math.round(odds * 100)}%）。${gov.name}只以${nodeName(node)}及亲兵改投。` });
+      if (head && follow) {
         // 一镇之主献城：全镇正式归附，城仍由本镇实控，改奉新主
         c.controller = old;
         defectFaction(s, old, newCtrl);
@@ -412,6 +434,23 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
       if (old !== 'local') report(s, { cat: '急报', urgent: old === s.player, text: `${of.name}失其治所${nodeName(node)}，移驻${nodeName(rest[0].id)}。` });
     }
   }
+}
+
+/** 一镇之主改投时诸将随从的比重：忠于本镇而无降意者、志在抗清者不从。按统军、领兵、守城加权。 */
+export function followOdds(s: GameState, f: string, to: string): number {
+  const fac = s.factions[f];
+  if (!fac) return 0;
+  const toQing = s.factions[topOf(s, to)]?.polity === 'qing' && fac.polity !== 'qing';
+  const leading = new Set(Object.values(s.armies).filter(a => a.faction === f).map(a => a.commander));
+  const govs = new Set(Object.values(s.cities).filter(c => c.controller === f).map(c => c.governor));
+  let yes = 0, no = 0;
+  for (const c of Object.values(s.chars)) {
+    if (c.faction !== f || c.status !== 'active' || c.id === fac.leader) continue;
+    const w = c.ab.tong + (leading.has(c.id) ? 30 : 0) + (govs.has(c.id) ? 20 : 0);
+    const dissent = (c.att.loyalty >= 70 && c.att.surrender < 40) || (toQing && c.att.hawk > 50);
+    if (dissent) no += w; else yes += w;
+  }
+  return yes + no === 0 ? 1 : yes / (yes + no);
 }
 
 /** 整个势力正式归附另一方：改奉其政权，实控不变 */

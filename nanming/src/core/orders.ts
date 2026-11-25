@@ -2,12 +2,12 @@
 import type { ArmyOrder, GameState, Order } from './types';
 import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance } from './state';
 import { setArmyOrder, capture } from './military';
-import { RECRUIT_SILVER, POLICY_NAME, supplyBlock, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
+import { RECRUIT_SILVER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
 import { rngFor } from './rng';
-import { shortestPath, neighbors, NODE } from '../data/geography';
+import { shortestPath, neighbors, NODE, pathDays } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
-  trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', reinforce: '增兵',
+  trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', supply: '粮台', reinforce: '增兵',
   envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立', war: '宣战', raise: '出兵',
 };
 
@@ -21,6 +21,7 @@ export function describeOrder(s: GameState, o: Order): string {
     case 'trade': return o.grain >= 0 ? `${nodeName(o.node)}籴粮 ${o.grain} 石` : `${nodeName(o.node)}粜粮 ${-o.grain} 石`;
     case 'loan': return `${nodeName(o.node)}劝捐助饷`;
     case 'army': return `${s.armies[o.army]?.name ?? o.army}${armyOrderText(o.order)}`;
+    case 'supply': return `${s.armies[o.army]?.name ?? o.army}改以${nodeName(o.node)}为粮台`;
     case 'reinforce': return o.troops >= 0 ? `${s.armies[o.army]?.name}拨 ${o.troops} 人入${nodeName(o.node)}驻守` : `${nodeName(o.node)}抽驻军 ${-o.troops} 人补入${s.armies[o.army]?.name}`;
     case 'envoy': return `遣${charName(s, o.char)}赴${factionName(s, o.target)}${o.aim === 'alliance' ? '议结盟' : o.aim === 'truce' ? '议停战' : '议和'}`;
     case 'persuade': return `遣${charName(s, o.char)}赴${nodeName(o.node)}劝降`;
@@ -40,10 +41,10 @@ export function armyOrderText(o: ArmyOrder): string {
 
 /** 校验：返回错误说明，合法返回 null */
 /* ---------- 每月政令次数 ----------
- * 军令（调动已有军队）不占次数；定方针、任命、募兵、调拨、出兵、遣使、劝降、号令藩镇、赏赐、宣战等每道占一次。
+ * 军令（调动已有军队、改换粮台）不占次数；定方针、任命、募兵、调拨、出兵、遣使、劝降、号令藩镇、赏赐、宣战等每道占一次。
  * 次数随两样东西变：中枢的理政之才（君主与治所宰辅中政务、威望最高者），以及所辖城池多寡（城多则设官分治、可多发政令）。
  * 方针一经定下逐月照行，不必每月重下；主官在任的城自会按方针治理。 */
-export const orderCost = (o: Order): number => (o.kind === 'army' ? 0 : 1);
+export const orderCost = (o: Order): number => (o.kind === 'army' || o.kind === 'supply' ? 0 : 1);
 export function orderBudget(s: GameState, f: string): { total: number; factors: string[] } {
   const fac = s.factions[f];
   const capital = fac?.capital;
@@ -110,6 +111,11 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       if (o.order.kind !== 'hold' && shortestPath(a.location, o.order.target, a.mix.navy >= 0.3) === null) return '无路可达';
       return null;
     }
+    case 'supply': {
+      const a = s.armies[o.army];
+      if (!a || a.faction !== f) return '不是你的军队';
+      return supplyChoiceError(s, a, o.node);
+    }
     case 'reinforce': {
       const a = s.armies[o.army];
       if (!a || a.faction !== f) return '不是你的军队';
@@ -169,6 +175,15 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       return null;
     }
   }
+}
+
+/** 使者路程：走驿路兼程（无陆路可通才搭海船），按军行日程的六成计，每三十日一个月，最少一个月 */
+export function envoyMonths(s: GameState, char: string, dest?: string): number {
+  const from = s.chars[char]?.location;
+  if (!from || !dest || from === dest) return 1;
+  const p = shortestPath(from, dest, false) ?? shortestPath(from, dest, true);
+  if (!p) return 1;
+  return Math.max(1, Math.ceil(pathDays(from, p) * 0.6 / 30));
 }
 
 /** 本月还能募多少（按月初人口与民心定上限，同月多道命令累计） */
@@ -256,6 +271,12 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       if (isPlayer) report(s, { cat: '军报', node: a.location, text: `${describeOrder(s, o)}。`, src });
       break;
     }
+    case 'supply': {
+      const a = s.armies[o.army];
+      a.supply = o.node;
+      if (isPlayer) report(s, { cat: '军报', node: o.node, text: `${describeOrder(s, o)}。`, src });
+      break;
+    }
     case 'reinforce': {
       const a = s.armies[o.army];
       a.troops -= o.troops;
@@ -263,10 +284,12 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       if (isPlayer) report(s, { cat: '军报', node: o.node, text: `${describeOrder(s, o)}。`, src });
       break;
     }
-    case 'envoy': case 'persuade':
-      s.missions.push({ id: o.id, order: o, faction: f, issuedTurn: s.turn, arriveTurn: s.turn + 1 });
-      if (isPlayer) report(s, { cat: '交涉', node: o.kind === 'persuade' ? o.node : s.factions[o.target]?.capital, text: `${describeOrder(s, o)}，下月可有回音。`, src });
+    case 'envoy': case 'persuade': {
+      const months = envoyMonths(s, o.char, o.kind === 'persuade' ? o.node : s.factions[o.target]?.capital);
+      s.missions.push({ id: o.id, order: o, faction: f, issuedTurn: s.turn, arriveTurn: s.turn + months });
+      if (isPlayer) report(s, { cat: '交涉', node: o.kind === 'persuade' ? o.node : s.factions[o.target]?.capital, text: `${describeOrder(s, o)}，${months <= 1 ? '下月' : `路远，约 ${months} 个月后`}可有回音。`, src });
       break;
+    }
     case 'command':
       commandVassal(s, f, o, src);
       break;

@@ -313,7 +313,7 @@ export function neighbors(id: string): { to: string; route: Route }[] { return A
 
 export function routeBetween(a: string, b: string): Route | undefined { return ROUTE_BY.get(a + '|' + b); }
 
-/** 自某地出发到各处的最短天数与前驱（路网固定，结果缓存） */
+/** 自某地出发到各处的最短天数与前驱（路网固定，结果缓存）。能走海路的船队把陆路计重，免得无谓舍舟 */
 const DIJ = new Map<string, { dist: Record<string, number>; prev: Record<string, string> }>();
 export function distancesFrom(from: string, canSea: boolean): { dist: Record<string, number>; prev: Record<string, string> } {
   const key = from + (canSea ? '+s' : '');
@@ -331,7 +331,8 @@ export function distancesFrom(from: string, canSea: boolean): { dist: Record<str
     for (const { to: v, route } of neighbors(u)) {
       if (route.kind === 'sea' && !canSea) continue;
       if (NODE[v]?.kind === 'outland') continue;
-      const nd = best + route.days;
+      // 船队尽量走水路：陆路须舍舟登岸，按两倍半计
+      const nd = best + (canSea && route.kind === 'land' ? route.days * 2.5 : route.days);
       if (dist[v] === undefined || nd < dist[v]) { dist[v] = nd; prev[v] = u; }
     }
   }

@@ -5,7 +5,7 @@ import { shortestPath, pathDays, neighbors, distancesFrom, NODE } from '../data/
 import { canSea } from './military';
 import { maxRecruit } from './orders';
 import { defectFaction, disband } from './military';
-import { RECRUIT_SILVER } from './economy';
+import { RECRUIT_SILVER, supplyChoiceError, supplyBlock } from './economy';
 import { rngFor } from './rng';
 
 /** 各家各军的目标序列（开局几年的史实倾向；依次取第一个尚未到手的） */
@@ -267,19 +267,42 @@ export function aiFixSupply(s: GameState) {
   for (const a of Object.values(s.armies)) {
     if (a.faction === s.player) continue;
     const sup = s.cities[a.supply];
-    const ok = sup && sameTop(s, sup.controller, a.faction) && sup.grain > a.troops * 0.6;
+    // 粮够、且不久欠饷（或粮台银两尚足）则不动；久欠饷而粮台无银，也照玩家同一规矩另择粮台
+    const broke = (a.unpaid ?? 0) >= 2 && (sup?.silver ?? 0) < a.troops;
+    const ok = sup && sameTop(s, sup.controller, a.faction) && sup.grain > a.troops * 0.6 && !broke;
     if (ok) continue;
     const lord = s.factions[a.faction]?.overlord;
     const ownCities = Object.values(s.cities).filter(c => c.controller === a.faction && c.grain > a.troops * 0.6);
     // 无城可依的下属军镇，就近向上级的城池索粮
     const pool = ownCities.length || !lord ? ownCities : Object.values(s.cities).filter(c => c.controller === lord && c.grain > a.troops * 1.2);
-    const best = pool
+    // 与玩家同一换台条件：未被敌围、粮道可通；久欠饷者先找有银的城
+    const usable = pool.filter(c => !supplyChoiceError(s, a, c.id));
+    const rich = broke ? usable.filter(c => c.silver >= a.troops * 2) : [];
+    const best = (rich.length ? rich : usable)
       .map(c => ({ c, p: shortestPath(a.location, c.id, true) })).filter(x => x.p)
-      .sort((x, y) => (pathDays(a.location, x.p!) - x.c.grain / 20000) - (pathDays(a.location, y.p!) - y.c.grain / 20000))[0];
+      .sort((x, y) => (pathDays(a.location, x.p!) - x.c.grain / 20000 - x.c.silver / 10000) - (pathDays(a.location, y.p!) - y.c.grain / 20000 - y.c.silver / 10000))[0];
     if (best && !ownCities.length && lord === s.player && best.c.id !== a.supply) {
       report(s, { cat: '急报', urgent: true, node: best.c.id, text: `${a.name}已无城可依，改向${nodeName(best.c.id)}支粮，每月约 ${Math.round(a.troops * 0.25)} 石。可另拨钱粮，或令其移驻。`, src: { kind: 'upkeep', ref: a.id } });
     }
     if (best) a.supply = best.c.id;
+  }
+}
+
+/** 电脑补饷：军队久欠饷而本方别城有余银，照调拨的规矩（粮道可通、不出被围之城）运银到粮台 */
+export function aiPayArmies(s: GameState) {
+  for (const a of Object.values(s.armies).sort((x, y) => x.id.localeCompare(y.id))) {
+    if (a.faction === s.player || (a.unpaid ?? 0) < 1) continue;
+    const sup = s.cities[a.supply];
+    if (!sup || sup.controller !== a.faction) continue;
+    const need = Math.round(a.troops * 0.9 * 3) + (a.arrears ?? 0);
+    if (sup.silver >= need) continue;
+    const donor = Object.values(s.cities).filter(c => c.controller === a.faction && c.id !== sup.id && !s.sieges[c.id] && c.silver > need + c.garrison * 2 && !supplyBlock(s, a.faction, c.id, sup.id))
+      .sort((x, y) => y.silver - x.silver)[0];
+    if (!donor) continue;
+    const amt = Math.round(need - Math.max(0, sup.silver));
+    donor.silver -= amt; sup.silver += amt;
+    s.ledger.push({ turn: s.turn, node: donor.id, field: 'silver', delta: -amt, text: `调银往${nodeName(sup.id)}发${a.name}饷`, src: { kind: 'order', ref: 'aipay:' + a.id } });
+    s.ledger.push({ turn: s.turn, node: sup.id, field: 'silver', delta: amt, text: `自${nodeName(donor.id)}调来饷银`, src: { kind: 'order', ref: 'aipay:' + a.id } });
   }
 }
 

@@ -197,8 +197,9 @@ describe('海陆与会战', () => {
     const s = createGame('hongguang', 0);
     const a = Object.values(s.armies).find(x => x.faction === 'hongguang')!;
     a.location = 'zhenjiang'; a.mix = { inf: 0.4, cav: 0, gun: 0.2, navy: 0.4 }; a.path = []; a.progress = 0;
-    expect(setArmyOrder(s, a, { kind: 'move', target: 'xian' } as any)).toBe(true);
-    for (let k = 0; k < 4 && a.location !== 'xian'; k++) { moveArmies(s); }
+    // 镇江经南京走陆路去滁州：江上一段乘船，上岸即舍舟
+    expect(setArmyOrder(s, a, { kind: 'move', target: 'chuzhou' } as any)).toBe(true);
+    for (let k = 0; k < 4 && a.location !== 'chuzhou'; k++) { moveArmies(s); }
     expect(a.mix.navy).toBe(0);
   });
   it('扬州顺明交战，第三支中立军同驻不取消野战', () => {

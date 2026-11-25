@@ -7,7 +7,7 @@ import { autoResolve } from './battle';
 import { applyOrder, resolveMissions, orderBudget, orderCost } from './orders';
 import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects } from './military';
 import { runEconomy } from './economy';
-import { aiOrders, aiFixSupply, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy } from './ai';
+import { aiOrders, aiFixSupply, aiPayArmies, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy } from './ai';
 import { dueEvents, fireEvent, choiceFor, applyChoice, type EventDef, type PendingChoice } from './events';
 import { EVENTS } from '../data/events';
 import { pruneLedger, topOf, report, citiesOf, armiesOf } from './state';
@@ -65,6 +65,7 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   aiRaiseArmies(s);
   aiAttrition(s);
   aiFixSupply(s);
+  aiPayArmies(s);
   for (const f of Object.keys(s.factions).sort()) if (f !== s.player) for (const o of aiOrders(s, f)) applyOrder(s, f, o);
 
   // 二、交涉
@@ -127,10 +128,21 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   // 继统：君主被俘或身故的势力议定监国、另立、迎回或权臣主事
   for (const f of pendingSuccessions(s)) {
     const opts = successionOptions(s, f);
-    if (!opts.length) { delete s.flags['need_succession_' + f]; continue; }
+    if (!opts.length) {
+      delete s.flags['need_succession_' + f];
+      // 无人可推、无处可投：各城自守，本方星散
+      if (s.chars[s.factions[f].leader]?.status !== 'active') {
+        for (const c of Object.values(s.cities)) if (c.controller === f) c.controller = 'local';
+        for (const a of Object.values(s.armies)) if (a.faction === f) delete s.armies[a.id];
+        report(s, { cat: '急报', urgent: true, text: `${s.factions[f].name}无人主事，诸城各自守土，部众星散。` });
+      }
+      continue;
+    }
     if (f === s.player) {
       const why = String(s.flags['need_succession_' + f]);
-      const ans = yield { type: 'choice', choice: { eventId: 'succession', tone: 'court', title: '议立新君', text: `${why}。国不可一日无主，群臣议定继统之事。`, options: opts.map(o => ({ label: o.label, desc: o.desc, disabled: o.disabled })) } };
+      const throne = f === courtOf(s) && opts.some(o => o.kind === 'enthrone' || o.kind === 'regent' || o.kind === 'ransom');
+      const ans = yield { type: 'choice', choice: { eventId: 'succession', tone: 'court', title: throne ? '议立新君' : '议定主事',
+        text: throne ? `${why}。国不可一日无主，群臣议定继统之事。` : `${why}。${s.factions[f].name}不可一日无主，众议由谁主事。`, options: opts.map(o => ({ label: o.label, desc: o.desc, disabled: o.disabled })) } };
       let idx = ans?.type === 'choice' ? Math.max(0, Math.min(opts.length - 1, ans.index)) : 0;
       if (opts[idx].disabled) idx = Math.max(0, opts.findIndex(o => !o.disabled));
       applySuccession(s, f, opts[idx]);
@@ -164,11 +176,35 @@ export function unificationProgress(s: GameState, f = s.player): { held: number;
   return { held, total: nodes.length, rivals };
 }
 
+/** 统一时谁是主导者：本方即天下之主（lead）；奉他人号令而直辖计胜之地最多（patron）；否则随同（follow） */
+export function unifierRole(s: GameState, f = s.player): { role: 'lead' | 'patron' | 'follow'; mine: number; best: number; leader: string } {
+  const top = topOf(s, f);
+  const bloc = Object.values(s.factions).filter(x => !x.defunct && topOf(s, x.id) === top).map(x => x.id);
+  const count = (id: string) => Object.values(s.cities).filter(c => c.controller === id && VICTORY_AREAS.includes(NODE[c.id].area)).length;
+  const mine = count(f);
+  let best = 0, leader = top;
+  for (const id of bloc) if (id !== f) { const n = count(id); if (n > best) { best = n; leader = id; } }
+  if (top === f) return { role: 'lead', mine, best, leader: f };
+  return { role: mine > best ? 'patron' : 'follow', mine, best, leader: mine > best ? f : leader };
+}
+
 function checkEnd(s: GameState) {
   const p = s.factions[s.player];
-  if (p.defunct) { s.ended = { kind: 'fallen', text: `${p.name}覆亡。` }; return; }
+  if (p.defunct) {
+    const host = s.flags['joined_' + p.id];
+    s.ended = { kind: 'fallen', text: host ? `${p.name}群龙无首，部众投靠${s.factions[String(host)]?.name ?? ''}，本局到此为止。` : `${p.name}覆亡。` };
+    return;
+  }
   const u = unificationProgress(s);
-  if (u.held === u.total && u.rivals.length === 0) { s.ended = { kind: 'unified', text: `${p.name}统一天下。` }; return; }
+  if (u.held === u.total && u.rivals.length === 0) {
+    const r = unifierRole(s);
+    const top = s.factions[topOf(s, s.player)];
+    const text = r.role === 'lead' ? `${p.name}统一天下。`
+      : r.role === 'patron' ? `${p.name}奉${top.name}，扶明室而定天下：直辖 ${r.mine} 处计胜之地，诸家之冠，号令实出${p.short}。`
+      : `天下归于${top.name}，${p.name}随同，直辖 ${r.mine} 处计胜之地（主导者${s.factions[r.leader]?.name ?? top.name}，${r.best} 处）。`;
+    s.ended = { kind: 'unified', role: r.role, text };
+    return;
+  }
   if (s.turnLimit !== undefined && s.turn + 1 >= s.turnLimit) {
     s.ended = { kind: 'trial_end', text: `试玩结束：${dateLabel(polityOf(s, p.polity), s.turn)}。` };
     return;

@@ -147,6 +147,17 @@ try {
     await page.mouse.click(t[0], t[1]);
     await wait(250);
     check('点选目标后加入行军令', (await text('#orders')).includes('开赴太平'), await text('#orders'));
+    // 改换粮台：点“粮台”再点镇江
+    await page.evaluate(() => NM.selectArmy('a_shi'));
+    await wait(200);
+    check('己方军队有“粮台”按钮', await visible('#act-supply'));
+    await page.click('#act-supply');
+    const zj = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('zhenjiang'); return [r.left + (p[0] - m.cam.x) * m.cam.z + m.w / 2, r.top + (p[1] - m.cam.y) * m.cam.z + m.h / 2]; });
+    await page.mouse.move(zj[0], zj[1]);
+    await wait(100);
+    await page.mouse.click(zj[0], zj[1]);
+    await wait(250);
+    check('改换粮台加入本月命令（不占政令）', (await text('#orders')).includes('镇江为粮台'), await text('#orders'));
   }
   // 号令黄得功
   await page.evaluate(() => NM.selectArmy('a_huang'));
