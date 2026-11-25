@@ -16,6 +16,21 @@ const qingHolds = (s: GameState, node: string) => !!s.cities[node] && topOf(s, s
 const courtLeader = (s: GameState) => { const c = courtOf(s); return c ? s.factions[c].leader : ''; };
 const SRC = '顾诚《南明史》';
 const ev = (e: EventDef) => e;
+/** 抗清的郑氏一支：郑成功已另立则是郑成功部，否则是尚未降清的郑氏 */
+const antiQingZheng = (s: GameState): string | undefined => {
+  if (s.factions.zhengcg && !s.factions.zhengcg.defunct) return 'zhengcg';
+  if (s.factions.zheng && !s.factions.zheng.defunct && topOf(s, 'zheng') !== 'qing') return 'zheng';
+  return undefined;
+};
+/** 海澄议和（史实一路）：与清停战一年，借机征饷 */
+function haichengStall(s: GameState): string {
+  const z = antiQingZheng(s);
+  if (!z) return '';
+  setStance(s, z, 'qing', 'truce', s.turn + 12);
+  const cap = s.factions[z].capital;
+  if (s.cities[cap]) { bump(s, cap, 'silver', 80000, '借和议之机征饷', { kind: 'event', ref: 'ss_haicheng' }); bump(s, cap, 'minxin', -3, '借和议征饷', { kind: 'event', ref: 'ss_haicheng' }); }
+  return '借和议休兵一年，征得饷银八万两。';
+}
 
 /** 某人举城反正：城归明室（或指定势力），本人领兵守城 */
 function revolt(s: GameState, node: string, to: string, chief: string, troops: number) {
@@ -284,6 +299,31 @@ export const LATE_EVENTS: EventDef[] = [
       s.chars.fulin.ab = { tong: 40, zheng: 60, mou: 55, wai: 50, wang: 80 };
       for (const a of armiesOf(s, 'qing')) a.morale = Math.max(20, a.morale - 5);
     },
+  }),
+  ev({
+    id: 'ss_haicheng', kind: 'shishi', title: '海澄议和', tone: 'court', from: T(1653, 8), to: T(1654, 12), node: 'xiamen',
+    cond: s => !!antiQingZheng(s) && hostile(s, antiQingZheng(s)!, 'qing') && !s.factions.qing?.defunct,
+    text: () => '清廷遣使入闽，许郑成功海澄公之爵与漳、泉、潮、惠四府安插兵马，条件是剃发归顺。来使往返，议了一年。',
+    history: '顺治十年（1653）清廷封郑成功为海澄公，次年再许四府；郑成功以议和为名在闽南征饷练兵，坚拒剃发，和议破裂。',
+    source: SRC + '；江日昇《台湾外记》',
+    involves: s => [antiQingZheng(s) ?? 'zhengcg'],
+    chooser: ['zheng', 'zhengcg'],
+    choices: s => antiQingZheng(s) !== s.player ? [] : [
+      { label: '借和议休兵筹饷（史实）', desc: '与清停战一年；趁机在辖下征饷，治所得银八万两，治所民心 −3。', apply: st => haichengStall(st) },
+      { label: '受封归顺，剃发易服', desc: '改奉清朝，受海澄公之爵；志在抗清的诸将忠诚大降。', apply: st => {
+        const z = antiQingZheng(st)!;
+        defectFaction(st, z, 'qing');
+        for (const c of Object.values(st.chars)) if (c.faction === z && c.status === 'active' && c.att.hawk > 50) adjustAtt(st, c.id, 'loyalty', -20, '受清封、剃发');
+        return '郑氏受封海澄公，改奉清朝。';
+      } },
+      { label: '严拒来使', desc: '不与清议和，诸将主战 +5；清军来攻更急。', apply: st => {
+        const z = antiQingZheng(st)!;
+        for (const c of Object.values(st.chars)) if (c.faction === z && c.status === 'active') adjustAtt(st, c.id, 'hawk', 5, '拒清和议');
+        return '拒清和议。';
+      } },
+    ],
+    // 郑氏为电脑一方时按史：借和议休兵筹饷
+    effect: s => { if (antiQingZheng(s) && antiQingZheng(s) !== s.player) haichengStall(s); },
   }),
   ev({
     id: 'ss_kewang_ming', kind: 'shishi', title: '孙可望联明', from: T(1651, 1), to: T(1652, 3), node: 'guiyang',

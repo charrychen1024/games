@@ -4,7 +4,8 @@
 import type { GameState, Order } from './types';
 import type { BattleState } from './battle';
 import { autoResolve } from './battle';
-import { applyOrder, resolveMissions, orderBudget, orderCost } from './orders';
+import { applyOrder, resolveMissions, orderBudget, orderCost, answerCounter } from './orders';
+import { proposalsFor, applyOffer, aiDiplomacyTalks } from './diplomacy';
 import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects } from './military';
 import { runEconomy } from './economy';
 import { aiOrders, aiFixSupply, aiPayArmies, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy } from './ai';
@@ -47,7 +48,14 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   if (s.ended) return { state: s };
 
   // 停战到期
-  for (const [k, r] of Object.entries(s.relations)) if (r.stance === 'truce' && r.until !== undefined && r.until <= s.turn) { s.relations[k] = { stance: 'war' }; }
+  for (const [k, r] of Object.entries(s.relations)) if (r.stance === 'truce' && r.until !== undefined && r.until <= s.turn) {
+    s.relations[k] = { stance: 'war' };
+    const [a, b] = k.split('|');
+    if (s.factions[a] && s.factions[b] && !s.factions[a].defunct && !s.factions[b].defunct) {
+      const mine = a === s.player || b === s.player;
+      report(s, { cat: '交涉', urgent: mine, node: s.factions[mine ? (a === s.player ? b : a) : b]?.capital, text: `${mine ? '' : '【动向】'}${s.factions[a].name}与${s.factions[b].name}停战期满，复为交战。` });
+    }
+  }
 
   // 一、命令生效（拖延的下属号令先执行）
   const delayed = s.delayed; s.delayed = [];
@@ -68,8 +76,23 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   aiPayArmies(s);
   for (const f of Object.keys(s.factions).sort()) if (f !== s.player) for (const o of aiOrders(s, f)) applyOrder(s, f, o);
 
-  // 二、交涉
-  resolveMissions(s);
+  // 二、交涉：使者回报（对方开条件由玩家定夺）→ 各家来使（求和、议盟、招抚）→ 各家之间的外交动向
+  for (const c of resolveMissions(s)) {
+    const cap = s.cities[s.factions[c.faction]?.capital];
+    const short = !cap || cap.silver < c.silver;
+    const ans = yield { type: 'choice', choice: { eventId: 'counter', tone: 'court', title: `${s.factions[c.target]?.name ?? ''}开出条件`, text: c.text,
+      options: [{ label: `付银 ${c.silver} 两，议成`, desc: '从治所府库支付。', disabled: short ? `府库不足（现有 ${Math.round(cap?.silver ?? 0)} 两）` : undefined }, { label: '不允，作罢', desc: '和议不成，使者回来。' }] } };
+    const idx = ans?.type === 'choice' ? ans.index : 1;
+    answerCounter(s, c, idx === 0 && !short);
+  }
+  for (const o of proposalsFor(s)) {
+    s.flags['dip_' + o.from] = s.turn;
+    const ans = yield { type: 'choice', choice: { eventId: 'diplomacy', tone: o.kind === 'summon' ? 'edict' : 'court', title: o.title, text: o.text, options: o.options } };
+    let idx = ans?.type === 'choice' ? Math.max(0, Math.min(o.options.length - 1, ans.index)) : o.options.length - 1;
+    if (o.options[idx].disabled) idx = o.options.length - 1 - (o.options[o.options.length - 1].disabled ? 1 : 0);
+    applyOffer(s, o, idx);
+  }
+  aiDiplomacyTalks(s);
   aiDefections(s);
 
   // 三、行军

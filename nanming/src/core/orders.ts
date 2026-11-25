@@ -420,14 +420,34 @@ function commandVassal(s: GameState, f: string, o: Extract<Order, { kind: 'comma
 }
 
 /* ---------- 跨月交涉 ---------- */
-export function resolveMissions(s: GameState) {
+/** 对方开出的条件：差一点议成时，对方要一笔银子 */
+export interface Counter { faction: string; target: string; aim: 'alliance' | 'truce' | 'peace'; silver: number; char: string; text: string }
+export function resolveMissions(s: GameState): Counter[] {
   const due = s.missions.filter(m => m.arriveTurn <= s.turn);
   s.missions = s.missions.filter(m => m.arriveTurn > s.turn);
+  const counters: Counter[] = [];
   for (const m of due) {
     const o = m.order;
-    if (o.kind === 'envoy') resolveEnvoy(s, m.faction, o);
+    if (o.kind === 'envoy') { const c = resolveEnvoy(s, m.faction, o); if (c) counters.push(c); }
     else if (o.kind === 'persuade') resolvePersuade(s, m.faction, o);
   }
+  return counters;
+}
+/** 玩家答复对方的条件：付银则议成 */
+export function answerCounter(s: GameState, c: Counter, pay: boolean): string {
+  const cap = s.cities[s.factions[c.faction]?.capital];
+  const aimText = c.aim === 'alliance' ? '结盟' : c.aim === 'truce' ? '停战' : '议和';
+  let text: string, ok = false;
+  if (pay && cap && cap.silver >= c.silver) {
+    bump(s, cap.id, 'silver', -c.silver, `${aimText}${factionName(s, c.target)}所索之银`, { kind: 'diplomacy', ref: 'counter:' + c.target });
+    bump(s, s.factions[c.target].capital, 'silver', c.silver, `${factionName(s, c.faction)}${aimText}所付之银`, { kind: 'diplomacy', ref: 'counter:' + c.target });
+    if (c.aim === 'alliance') setStanceExplicit(s, c.faction, c.target, 'alliance');
+    else setStanceExplicit(s, c.faction, c.target, c.aim === 'truce' ? 'truce' : 'neutral', c.aim === 'truce' ? s.turn + 6 : undefined);
+    adjustAtt(s, c.char, 'loyalty', 2, `出使${factionName(s, c.target)}，${aimText}成功`);
+    ok = true; text = `付银 ${c.silver} 两，与${factionName(s, c.target)}${aimText}议成。`;
+  } else text = pay ? '府库不足，付不出所索之银，和议作罢。' : `不允${factionName(s, c.target)}所索，${aimText}之议作罢。`;
+  report(s, { cat: '交涉', ok, node: s.factions[c.target]?.capital, origin: s.factions[c.faction]?.capital, text, src: { kind: 'diplomacy', ref: 'counter:' + c.target } });
+  return text;
 }
 
 export function envoyScore(s: GameState, f: string, o: Extract<Order, { kind: 'envoy' }>): { score: number; factors: string[] } {
@@ -453,13 +473,28 @@ export function envoyScore(s: GameState, f: string, o: Extract<Order, { kind: 'e
   return { score, factors };
 }
 
-function resolveEnvoy(s: GameState, f: string, o: Extract<Order, { kind: 'envoy' }>) {
+function resolveEnvoy(s: GameState, f: string, o: Extract<Order, { kind: 'envoy' }>): Counter | null {
   const t = s.factions[o.target];
-  if (!t || t.defunct) return;
+  if (!t || t.defunct) return null;
   const { score, factors } = envoyScore(s, f, o);
-  const r = rngFor(s.seed, 'envoy', s.turn, o.id).int(-10, 10);
+  const rng = rngFor(s.seed, 'envoy', s.turn, o.id);
+  const r = rng.int(-10, 10);
   const total = score + r;
   const ok = total >= 55;
+  const aimText0 = o.aim === 'alliance' ? '结盟' : o.aim === 'truce' ? '停战' : '议和';
+  // 差一点议成：对方开条件，要一笔银子（玩家一方由玩家定夺，电脑一方作罢）
+  if (!ok && (total >= 45 || s.flags.counter_force) && f === s.player) {
+    const silver = Math.round(Math.max(10000, (55 - total) * 4000 + 10000) / 1000) * 1000;
+    const text = `${charName(s, o.char)}至${t.name}议${aimText0}，${charName(s, t.leader)}未置可否，开出条件：须银 ${silver} 两。（${factors.join('，')}，临事 ${r >= 0 ? '+' : ''}${r}；合计 ${total}，需 55）`;
+    return { faction: f, target: o.target, aim: o.aim, silver, char: o.char, text };
+  }
+  // 交战之中谈崩：使者可能被扣
+  if (!ok && total < 35 && hostile(s, f, o.target) && rng.chance(0.3)) {
+    const env = s.chars[o.char];
+    if (env && env.status === 'active') { env.status = 'captured'; env.location = t.capital; }
+    if (f === s.player || o.target === s.player) report(s, { cat: '交涉', ok: false, urgent: f === s.player, node: t.capital, origin: s.factions[f]?.capital, text: `${charName(s, o.char)}出使${t.name}议${aimText0}，${charName(s, t.leader)}怒而扣留来使。（合计 ${total}，需 55）`, src: { kind: 'diplomacy', ref: o.id, turn: s.turn } });
+    return null;
+  }
   const aimText = o.aim === 'alliance' ? '结盟' : o.aim === 'truce' ? '停战' : '议和';
   const src = { kind: 'diplomacy' as const, ref: o.id, turn: s.turn };
   if (ok) {
@@ -469,6 +504,7 @@ function resolveEnvoy(s: GameState, f: string, o: Extract<Order, { kind: 'envoy'
   }
   const text = `${charName(s, o.char)}出使${t.name}，${aimText}${ok ? '议成' : '未成'}。${ok && o.aim === 'alliance' ? '两家结为盟好，各守其城，互不相犯。' : ''}（${factors.join('，')}，临事 ${r >= 0 ? '+' : ''}${r}；合计 ${total}，需 55）`;
   if (f === s.player || o.target === s.player) report(s, { cat: '交涉', node: t.capital, ok, origin: s.factions[f]?.capital, text, src });
+  return null;
 }
 
 function setStanceExplicit(s: GameState, a: string, b: string, st: 'alliance' | 'truce' | 'neutral', until?: number) {

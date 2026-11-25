@@ -277,7 +277,10 @@ export class App {
     if (fresh) {
       this.hintStep = this.hintStep >= 9 ? 9 : 0;
       void this.playIntro().then(() => { if (this.s === state) this.showHint(); });
-    } else if (state.reports.some(r => r.turn === state.turn - (state.ended ? 0 : 1))) { this.reportTurn = state.turn - (state.ended ? 0 : 1); this.openReport(); }
+    } else {
+      this.showHint();   // 读档换局：按当前势力重画开局提示（或收起）
+      if (state.reports.some(r => r.turn === state.turn - (state.ended ? 0 : 1))) { this.reportTurn = state.turn - (state.ended ? 0 : 1); this.openReport(); }
+    }
     if (fresh) this.autoSave();
     // 读到已结束的局势：重新打开结局面板，按结局允许的操作继续
     if (state.ended) this.showEnd();
@@ -783,7 +786,7 @@ export class App {
     });
     panel.className = 'hud';
     panel.append(h('div', { class: 'banner', style: { background: `linear-gradient(135deg, ${color}, ${shade(color, -0.5)})` } },
-      ic(bigIcon, 'ic bigicon'),
+      bigIcon ? ic(bigIcon, 'ic bigicon') : null,
       h('button', { class: 'close', title: '关闭（Esc）', onclick: () => this.closePanel() }, ic('close')),
       h('h2', { id: titleId }, title), h('div', { class: 'sub' }, sub)));
     return panel;
@@ -820,13 +823,17 @@ export class App {
     const known = this.known(id);
     const mine = c.controller === s.player;
     const vassal = !mine && ctrl.overlord === s.player;
-    const panel = this.panelShell(ctrl.color, n.name, n.title ?? '', n.kind === 'port' ? 'port' : n.kind === 'pass' ? 'pass' : n.kind === 'ferry' ? 'ferry' : 'city', 'city-name');
+    const panel = this.panelShell(ctrl.color, n.name, n.title ?? '', '', 'city-name');
     const banner = panel.querySelector('.banner')!;
+    banner.classList.add('city-banner');
+    // 城名旁一枚朱印标出据点类别（原先右上角的淡色大图标），点开有说明
+    const KIND: Record<string, [string, string]> = { city: ['城', '府州县城：赋税田粮为主'], port: ['港', '港口：有海贸，可编练水师、走海路'], pass: ['关', '关隘：易守难攻，扼守要道'], ferry: ['渡', '渡口：扼守江河渡口'], region: ['区', '粗略的大区'], outland: ['外', '域外'] };
+    const [kch, ktip] = KIND[n.kind] ?? KIND.city;
+    banner.querySelector('h2')!.append(h('span', { class: 'kind-seal', id: 'city-kind', 'data-tip': ktip }, kch));
     const gov = c.governor ? s.chars[c.governor] : undefined;
     banner.append(h('div', { class: 'tags' },
       h('span', { class: 'tag', id: 'city-controller', title: '实际控制者' }, ic('city'), ctrl.name),
       h('span', { class: 'tag', id: 'city-polity', title: '所奉政权' }, ic('factions'), pol.mark ? `奉${pol.name}` : '无所奉'),
-      gov && gov.status === 'active' && gov.faction === c.controller ? h('span', { class: 'tag', style: { cursor: 'pointer' }, title: '主官', onclick: () => this.openChar(gov.id) }, ic('person'), gov.name) : null,
       vassal ? h('span', { class: 'tag', title: '下属对朝廷的服从' }, ic('morale'), `服从 ${ctrl.loyalty}`) : null));
     // 主官／守将：有主官画主官；无主官画驻军主将；都没有则是不具名的地方官或守将（不编造人名）
     {
@@ -838,9 +845,10 @@ export class App {
       const anonTitle = ctrl.id === 'local' ? (mil ? '土豪守将' : '地方士绅') : mil ? '守将' : n.kind === 'port' ? '守备' : NODE[id]?.major ? '知府' : '知县';
       const who = person ?? ({ id: 'anon:' + id, name: '佚名', faction: c.controller, title: anonTitle, ab: { tong: mil ? 60 : 35, zheng: mil ? 30 : 55, mou: 40, wai: 40, wang: 40 }, att: { loyalty: 50, surrender: 50, hawk: 0 }, attLog: [], location: id, status: 'active', bio: '' } as Character);
       const role = govOk ? '主官' : person ? '驻军主将' : '地方' + (mil ? '守将' : '主官');
-      banner.append(h('div', { class: 'gov-card' + (person ? ' named' : ''), id: 'city-gov', onclick: person ? () => this.openChar(person.id) : undefined, 'data-tip': person ? '点看人物档案' : '此城未委任主官；可在“任命”里派人' },
+      // 主官放在右上角：头像、职分、姓名
+      banner.append(h('div', { class: 'gov-top' + (person ? ' named' : ''), id: 'city-gov', onclick: person ? () => this.openChar(person.id) : undefined, 'data-tip': person ? `${who.name} · ${who.title} · 点看人物档案` : '此城未委任主官；可在“任命”里派人' },
         h('img', { src: portrait(who, ctrl.color, ctrl.polity), alt: who.name }),
-        h('div', null, h('small', null, role), h('b', null, person ? who.name : `${anonTitle}（佚名）`), h('span', null, person ? who.title : '未委任'))));
+        h('small', null, role), h('b', null, person ? who.name : '佚名')));
     }
     panel.classList.remove('hidden');
     // 围城
@@ -872,6 +880,13 @@ export class App {
       // 看板：三项家底（兵、粮、银，含每月进出）→ 三枚城况轮盘（城防、民心、吏治）→ 三条经营刻度（农、商、文）→ 方针与市价徽记
       const fc = known ? cityForecast(s, c) : null;
       const gNet = fc ? fc.grain.net : 0, sNet = fc ? fc.silver.net : 0;
+      // 所奉朝廷或盟友之城：写明为什么不能下政令
+      if (!mine && !vassal && friendly(s, s.player, c.controller)) {
+        const lord = s.factions[s.player].overlord === c.controller || topOf(s, s.player) === topOf(s, c.controller);
+        const myHere = here.filter(a => a.faction === s.player).length;
+        sec.append(h('div', { class: 'cnote', id: 'city-note' }, ic(lord ? 'crown' : 'envoy'),
+          h('span', null, `此城属${ctrl.name}${lord ? '（你所奉的朝廷一方）' : '（友方）'}，方针、募兵等政令由其自定，你不能代下。${myHere ? `你有 ${myHere} 支军队驻在这里，可照常调动，也可以此城为粮台。` : ''}`)));
+      }
       sec.append(h('div', { class: 'cres' },
         this.resCounter('troops', '驻军', known ? wan(c.garrison) : roughTroops(c.garrison), known ? delta('garrison') : 0, '上月', { id: 'city-garrison', ...(known ? { raw: c.garrison, key: id + ':garrison' } : {}) }),
         this.resCounter('grain', '仓粮', known ? wan(c.grain - this.pendingSpend(id, 'grain')) : '不详', gNet, '每月', { id: 'city-grain', ...(known ? { raw: c.grain - this.pendingSpend(id, 'grain'), key: id + ':grain', open: () => { this.cityFc = this.cityFc === 'grain' ? null : 'grain'; this.renderCity(id); }, on: this.cityFc === 'grain' } : {}) }),

@@ -31,5 +31,9 @@ await page.evaluate(() => { NM.map.focus('anqing', 2); NM.selectNode('anqing'); 
 await page.click('#city-grain'); await page.waitForTimeout(300);
 await page.click('#act-recruit'); await page.waitForTimeout(500);
 await page.screenshot({ path: `${out}-recruit-poor.png` });
+// 郑氏看镇江（属弘光朝廷）
+await page.evaluate(() => NM.closeModal());
+await page.evaluate(() => { NM.start(NM_presets.createGame('zheng', 1), false); NM.map.focus('zhenjiang', 2.2); NM.selectNode('zhenjiang'); }); await page.waitForTimeout(900);
+await page.screenshot({ path: `${out}-zheng-zhenjiang.png` });
 console.log(errors.length ? 'ERR ' + errors.join(' | ') : 'ok');
 await browser.close(); server.close();

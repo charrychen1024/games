@@ -1141,3 +1141,15 @@ button.rc.on::after { content: '▴'; color: var(--gold-2); }
 .rq-row small { color: var(--dim); } .rq-row em { font-style: normal; color: var(--faint); font-size: 11px; }
 .rq-warn { display: flex; gap: 6px; align-items: flex-start; margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: rgba(160, 40, 25, 0.25); color: #ffc4b8; font-size: 12.5px; line-height: 1.4; }
 .rq-warn .ic { width: 16px; height: 16px; flex: none; margin-top: 1px; }
+
+/* ---------- 城池面板顶部：城名朱印、主官在右上角 ---------- */
+.city-banner { padding-right: 112px; min-height: 104px; }
+.kind-seal { display: inline-grid; place-items: center; vertical-align: 8px; margin-left: 8px; width: 24px; height: 24px; border-radius: 4px; font-family: var(--brush); font-size: 17px; line-height: 1; color: #fff3d9; background: #b8261b; border: 1.5px solid rgba(255, 230, 200, 0.75); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); transform: rotate(-6deg); cursor: help; }
+.gov-top { position: absolute; top: 12px; right: 44px; z-index: 2; width: 66px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.gov-top img { width: 58px; height: 58px; border-radius: 50%; object-fit: cover; object-position: 50% 25%; border: 2px solid var(--gold); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.55); background: rgba(0, 0, 0, 0.3); }
+.gov-top small { margin-top: -8px; padding: 0 6px; border-radius: 8px; font-size: 10px; letter-spacing: 0.1em; color: #2a1a0d; background: var(--gold-2); position: relative; }
+.gov-top b { font-size: 13px; line-height: 1.2; margin-top: 2px; white-space: nowrap; text-shadow: 0 1px 3px #000; }
+.gov-top.named { cursor: pointer; } .gov-top.named:hover img { border-color: #fff3d9; box-shadow: 0 0 12px rgba(240, 207, 134, 0.6); }
+
+.cnote { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(99, 160, 214, 0.12); border: 1px solid rgba(99, 160, 214, 0.35); font-size: 12.5px; line-height: 1.5; color: #dce9f5; }
+.cnote .ic { width: 18px; height: 18px; flex: none; color: #9cc6ec; margin-top: 1px; }
