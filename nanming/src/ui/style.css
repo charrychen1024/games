@@ -1294,3 +1294,27 @@ button.rc.on::after { content: '▴'; color: var(--gold-2); }
 html.reduced .cic-anim .ic, html.reduced .pdlg .pface, html.reduced .pdlg .p-left::after { animation: none !important; }
 .dialog.pdlg { max-height: 94vh; overflow-y: auto; }
 .dialog.pdlg > .scene { height: 96px; }
+
+/* 战斗抬头：主帅铭牌——大头像嵌在框内，右侧名号、兵数、满宽军心条；敌方镜像 */
+.shud .sh-side > div.sh-card { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 12px; width: min(340px, 30vw); min-width: 250px; padding: 8px 14px 8px 8px; border-left: 4px solid var(--fc); }
+.shud .sh-side.foe > div.sh-card { grid-template-columns: 1fr 92px; padding: 8px 8px 8px 14px; border-left: 1px solid rgba(217, 173, 91, 0.35); border-right: 4px solid var(--fc); }
+.sh-side.foe .sh-face { order: 2; }
+.sh-face { position: relative; width: 92px; height: 92px; }
+.sh-face .bface { width: 92px !important; height: 92px !important; border-radius: 10px; object-position: 50% 22%; border: 2.5px solid var(--fc); }
+.sh-side.mine .sh-face .bface { border-color: var(--gold-2); }
+.sh-mark { position: absolute; right: -6px; bottom: -6px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: var(--fc); color: #fff6e2; font: 400 18px/1 var(--brush); font-style: normal; border: 1.5px solid rgba(255, 240, 210, 0.75); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6); transform: rotate(-6deg); }
+.sh-side.foe .sh-mark { right: auto; left: -6px; transform: rotate(6deg); }
+.sh-info2 { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sh-side.foe .sh-info2 { align-items: flex-end; }
+.sh-l1 { display: flex; align-items: center; gap: 8px; }
+.sh-side.foe .sh-l1 { flex-direction: row-reverse; }
+.sh-l1 b { font-family: var(--brush); font-weight: 400; font-size: 26px; line-height: 1; color: #fff3d9; white-space: nowrap; }
+.sh-side .sh-l1 .bm-tag { align-self: center; }
+.sh-info2 small { font-size: 12px; color: #cdb894; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.sh-l3 { display: flex; align-items: center; gap: 6px; }
+.sh-side.foe .sh-l3 { flex-direction: row-reverse; }
+.sh-tic .ic, .sh-tic svg { width: 22px; height: 22px; color: var(--gold); display: block; }
+.sh-l3 .sh-troops { font-size: 26px; line-height: 1; }
+.sh-info2 .sres { width: 100%; height: 15px; }
+@media (max-width: 1100px) { .shud .sh-side > div.sh-card { grid-template-columns: 68px 1fr; min-width: 210px; } .shud .sh-side.foe > div.sh-card { grid-template-columns: 1fr 68px; } .sh-face, .sh-face .bface { width: 68px !important; height: 68px !important; } .sh-l1 b { font-size: 20px; } .sh-l3 .sh-troops { font-size: 20px; } }
+.shud { align-items: start; } .shud .sh-mid { align-self: start; }

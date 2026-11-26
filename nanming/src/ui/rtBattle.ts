@@ -89,15 +89,27 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   stage.append(hud, toast, banner, tray, hint);
   const face = (id: string, sz: number) => { const c = s.chars[id]; const f = c ? s.factions[c.faction] : undefined; return c ? h('img', { class: 'bface', src: portrait(c, f?.color ?? '#6a5a48', f?.polity ?? 'none'), style: { width: sz + 'px', height: sz + 'px' } }) : h('div', { class: 'bface coin', style: { width: sz + 'px', height: sz + 'px', background: '#555' } }, '守'); };
   const resolveBar = (sd: 'att' | 'def') => h('div', { class: 'sres' + (sd === side ? ' mine' : '') }, h('i', { 'data-res': sd }), h('span', { 'data-resv': sd }));
+  /** 主帅铭牌：大头像嵌在框内（角上压本方字号印），右侧名号、所属、兵数大字与满宽军心条；敌方左右镜像 */
+  const plaque = (sd: 'att' | 'def', cls: 'mine' | 'foe', tag: string) => {
+    const mark = lookOf(s, b0[sd].faction).mark;
+    return h('div', { class: 'sh-side ' + cls, style: { '--fc': colorOf(b0[sd].faction) } as any },
+      h('div', { class: 'sh-card' },
+        h('div', { class: 'sh-face' }, face(b0[sd].commander, 88), mark ? h('i', { class: 'sh-mark' }, mark.slice(0, 1)) : null),
+        h('div', { class: 'sh-info2' },
+          h('div', { class: 'sh-l1' }, h('span', { class: 'bm-tag' }, tag), h('b', null, b0[sd].commanderName)),
+          h('small', null, b0[sd].name),
+          h('div', { class: 'sh-l3' }, h('span', { class: 'sh-tic', html: iconSvg('troops') }), h('div', { class: 'sh-troops', 'data-troops': sd })),
+          resolveBar(sd))));
+  };
   const kindName = siege ? (side === 'att' ? '攻城' : '守城') : naval ? '水战' : '野战';
   const terrainTag = siege ? '' : naval ? '' : b0.terrain === 'hills' ? '丘陵 · 守方据高地' : b0.terrain === 'river' ? '隔河 · 中有浅滩' : '平原';
   hud.append(
-    h('div', { class: 'sh-side mine', style: { '--fc': colorOf(b0[side].faction) } as any }, face(b0[side].commander, 58), h('div', null, h('span', { class: 'bm-tag' }, '我军'), h('b', null, b0[side].commanderName), h('small', null, b0[side].name), h('div', { class: 'sh-troops', 'data-troops': side }), resolveBar(side))),
+    plaque(side, 'mine', '我军'),
     h('div', { class: 'sh-mid' }, h('div', { class: 'bh-kind', id: 'battle-where' }, `${b0.nodeName} · ${kindName}`),
       h('div', { class: 'bh-who' }, `${b0.att.name}${siege ? '攻' : '击'}${b0.def.name} · `, h('em', null, b0[side].faction === s.player ? '你亲自指挥' : `${b0[side].name}奉你号令出战`)),
       h('div', { class: 'sh-info' }, h('span', { 'data-clock': '1' }), h('span', { 'data-i1': '1' }), h('span', { 'data-i2': '1' })),
       h('div', { class: 'scap hidden' }, h('b', null, '夺城'), h('div', null, h('i', { 'data-cap': '1' })))),
-    h('div', { class: 'sh-side foe', style: { '--fc': colorOf(b0[foe].faction) } as any }, h('div', null, h('span', { class: 'bm-tag' }, '敌军'), h('b', null, b0[foe].commanderName), h('small', null, b0[foe].name), h('div', { class: 'sh-troops', 'data-troops': foe }), resolveBar(foe)), face(b0[foe].commander, 46)));
+    plaque(foe, 'foe', '敌军'));
 
   function say(text: string, kind: 'info' | 'good' | 'bad' = 'info') {
     const el = h('div', { class: 'st-line ' + kind }, text);
