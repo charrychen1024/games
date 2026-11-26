@@ -71,7 +71,7 @@ export function cardHand(cards: GameCard[], onPick: (id: string) => void, opts: 
   let picked = false;
   cards.forEach((c, i) => {
     const mid = (cards.length - 1) / 2, k = i - mid;
-    const el = h('button', { class: 'gcard' + (c.portrait ? ' pc' : '') + (c.on ? ' on' : '') + (c.disabled ? ' off' : ''), 'data-card': c.id, style: { '--rot': fan ? `${k * 3.2}deg` : '0deg', '--dy': fan ? `${Math.abs(k) ** 1.6 * 5}px` : '0px', '--cc': c.color ?? '#8c6a35' } as any,
+    const el = h('button', { class: 'gcard' + (c.portrait ? ' pc' : '') + (c.on ? ' on' : '') + (c.disabled ? ' off' : ''), 'data-card': c.id, style: { '--rot': fan ? `${k * 1.6}deg` : '0deg', '--dy': fan ? `${Math.abs(k) ** 1.6 * 2.5}px` : '0px', '--cc': c.color ?? '#8c6a35' } as any,
       'data-tip': c.disabled ?? undefined,
       onmouseenter: () => { if (!c.disabled) hoverPluck(i); },
       onclick: () => {

@@ -611,7 +611,9 @@ button:disabled { cursor: default; }
 .dialog.wide .db { overflow: visible; }
 .hand { position: relative; margin: 8px -8px 0; }
 .hand-row { display: flex; justify-content: center; align-items: flex-end; padding: 34px 20px 18px; min-height: 330px; }
-.hand.fan .gcard { margin: 0 -10px; transform: translateY(var(--dy)) rotate(var(--rot)); transform-origin: 50% 120%; }
+.hand.fan .gcard { margin: 0 -3px; transform: translateY(var(--dy)) rotate(var(--rot)); transform-origin: 50% 120%; }
+/* 卡多（六张以上）时每张收窄，扇面不互相压住说明文字 */
+.hand.fan:has(.gcard:nth-child(6)) .gcard { width: 142px; }
 .hand.rail .hand-row { justify-content: flex-start; overflow-x: auto; overflow-y: visible; gap: 12px; scroll-snap-type: x mandatory; padding: 34px 44px 18px; }
 .hand.rail .gcard { scroll-snap-align: center; flex: none; }
 .hand-nav { position: absolute; top: 50%; width: 38px; height: 64px; margin-top: -32px; border-radius: 10px; border: 1.5px solid var(--gold); background: rgba(28, 21, 16, 0.92); color: var(--gold-2); font-size: 30px; line-height: 1; z-index: 3; }

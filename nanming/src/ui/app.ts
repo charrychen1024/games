@@ -1581,7 +1581,7 @@ export class App {
     }
     const fc = s.factions[s.player].color, pol = s.factions[s.player].polity;
     const cards: GameCard[] = list.map(c => { const r = envoyScore(s, s.player, { id: 'x', kind: 'envoy', char: c.id, target, aim: aim0 }); const m = envoyMonths(s, c.id, tf.capital); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true,
-      badge: `把握 ${Math.round(r.score)}`, chips: [{ icon: 'envoy', text: `外交 ${c.ab.wai}`, tone: c.ab.wai >= 60 ? 'good' : 'plain' }, { icon: r.score >= 55 ? 'ok' : r.score >= 45 ? 'silver' : 'close', text: r.score >= 55 ? '可望' : r.score >= 45 ? '或要开价' : '难成', tone: r.score >= 55 ? 'good' : r.score >= 45 ? 'plain' : 'bad' }, { icon: 'hourglass', text: m <= 1 ? '下月回报' : `约 ${m} 月后回报` }], note: r.factors.slice(0, 2).join(' · ') }; });
+      badge: `把握 ${Math.round(r.score)}`, chips: [{ icon: 'envoy', text: `外交 ${c.ab.wai}`, tone: c.ab.wai >= 60 ? 'good' : 'plain' }, { icon: r.score >= 55 ? 'ok' : r.score >= 45 ? 'silver' : 'close', text: r.score >= 55 ? '可望' : r.score >= 45 ? '或要开价' : '难成', tone: r.score >= 55 ? 'good' : r.score >= 45 ? 'plain' : 'bad' }, { icon: 'hourglass', text: m <= 1 ? '下月回报' : `约 ${m} 月后回报` }], note: envoyNote(r.factors, c.name) }; });
     this.sceneNext = { kind: 'parley', opts: { a: this.party(s.player), b: this.party(target), seed: s.turn } };
     this.modal('envoy', `遣使 · ${tf.short} · ${{ alliance: '结盟', truce: '停战', peace: '议和' }[aim0]}`, `选使者 · 把握 55 以上可望议成（临事有上下十分的变数）；45—55 对方多半开价要银；交战中谈崩，使者约三成被扣`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'envoy', char: id, target, aim: aim0 }); }, { stampText: '使' })], [{ label: '换一种所求', icon: 'envoy', onclick: () => { setTimeout(() => this.formEnvoy(target), 0); } }, this.cancelBtn()], 'wide');
   }
@@ -1797,7 +1797,10 @@ export class App {
     const shown = all.filter(r => this.reportTab === '全部' || r.cat === this.reportTab || (this.reportTab === '急报' && r.urgent))
       .sort((a, b) => Number(!!b.urgent) - Number(!!a.urgent));
     // 本月头条：最要紧的一条配一幅会动的小画，压在列表之上
-    const head = shown.find(r => r.urgent || r.cat === '易主') ?? shown.find(r => this.reportScene(r, 0, false)) ?? shown[0];
+    const me = topOf(s, s.player);
+    const ours = (r: ReportEntry) => [r.from, r.to].some(f => f === s.player) || (!!r.node && s.cities[r.node]?.controller === s.player);
+    // 头条：本方直接相关的急报、易主优先；其次本阵营之事；远方易主排后
+    const head = shown.find(r => (r.urgent || r.cat === '易主') && ours(r)) ?? shown.find(r => r.urgent && r.cat !== '易主') ?? shown.find(r => r.cat === '易主' && [r.from, r.to].some(f => f && s.factions[f] && topOf(s, f) === me)) ?? shown.find(r => r.cat === '易主') ?? shown.find(r => this.reportScene(r, 0, false)) ?? shown[0];
     if (head) {
       const sc = this.reportScene(head, t + 11, true);
       if (sc) box.append(h('div', { class: 'rhead', onclick: () => { if (head.node) { this.map.flyTo(head.node, Math.max(this.map.cam.z, 2.2)); this.selectNode(head.node); } } }, scene(sc.kind, sc.opts).el, h('div', { class: 'rhead-cap' }, ic(CAT_ICON[head.cat] ?? 'info'), splitReport(head).hl.slice(0, 34))));
@@ -1880,7 +1883,9 @@ export class App {
       const all = s.reports.filter(r => r.turn === t && (!r.faction || r.faction === s.player));
       const me = topOf(s, s.player);
       const mineNode = (n?: string) => !!n && !!s.cities[n] && topOf(s, s.cities[n].controller) === me;
-      const rank = (r: ReportEntry) => (r.cat === '易主' && (mineNode(r.node) || r.urgent) ? 0 : r.urgent ? 1 : r.cat === '易主' ? 2 : r.cat === '史事' ? 3 : r.cat === '军报' && mineNode(r.node) ? 4 : r.cat === '人事' ? 5 : r.cat === '军报' ? 6 : r.cat === '交涉' ? 6 : r.cat === '线索' ? 7 : 8);
+      // 易主：本方直辖得失最先；下属、盟友之城的得失（如远方的各省官府失城）与他处易主同列，不再月月占头条
+    const direct = (r: ReportEntry) => r.from === s.player || r.to === s.player || (!!r.node && s.cities[r.node]?.controller === s.player);
+    const rank = (r: ReportEntry) => (r.cat === '易主' && direct(r) ? 0 : r.urgent && r.cat !== '易主' ? 1 : r.cat === '易主' ? 2 : r.cat === '史事' ? 3 : r.cat === '军报' && mineNode(r.node) ? 4 : r.cat === '人事' ? 5 : r.cat === '军报' ? 6 : r.cat === '交涉' ? 6 : r.cat === '线索' ? 7 : 8);
       const groups = this.splashGroups();
       const top = groups.map(g => g.lead);
       void rank;
@@ -1992,7 +1997,9 @@ export class App {
     const me = topOf(s, s.player);
     const mineNode = (n?: string) => !!n && !!s.cities[n] && topOf(s, s.cities[n].controller) === me;
     // “由你作主”的史实提示只进军情面板，不占战报
-    const rank = (r: ReportEntry) => (r.cat === '易主' && (mineNode(r.node) || r.urgent) ? 0 : r.urgent ? 1 : r.cat === '易主' ? 2 : r.ok !== undefined ? 2 : r.cat === '史事' ? 3 : r.cat === '军报' && mineNode(r.node) ? 4 : r.cat === '人事' ? 5 : r.cat === '军报' ? 6 : r.cat === '交涉' ? 6 : r.cat === '线索' && !r.text.includes('由你作主') ? 7 : 9);
+    // 易主：本方直辖得失最先；下属、盟友之城的得失（如远方的各省官府失城）与他处易主同列，不再月月占头条
+    const direct = (r: ReportEntry) => r.from === s.player || r.to === s.player || (!!r.node && s.cities[r.node]?.controller === s.player);
+    const rank = (r: ReportEntry) => (r.cat === '易主' && direct(r) ? 0 : r.urgent && r.cat !== '易主' ? 1 : r.cat === '易主' ? 2 : r.ok !== undefined ? 2 : r.cat === '史事' ? 3 : r.cat === '军报' && mineNode(r.node) ? 4 : r.cat === '人事' ? 5 : r.cat === '军报' ? 6 : r.cat === '交涉' ? 6 : r.cat === '线索' && !r.text.includes('由你作主') ? 7 : 9);
     const cap = this.newsMode === 'major' ? 1 : 7;
     const seen = new Set<string>();
     return groupNews(all.filter(r => rank(r) <= 8))
@@ -2551,4 +2558,12 @@ function radar(ab: { tong: number; zheng: number; mou: number; wai: number; wang
   g.fillStyle = '#e8d9b4'; g.font = '700 13px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
   names.forEach((n, i) => { const [x, y] = pt(i, R + 15); g.fillText(n, x, y); });
   return cv;
+}
+
+/** 遣使卡的把握分解：底数、使者本人的长处逐项写，其余局势（交战、兵势、同仇、主战主和）合成一项，各项加起来对得上总数 */
+function envoyNote(factors: string[], who: string): string {
+  const num = (f: string) => { const m = f.match(/([+−-])\s?(\d+)$/); return m ? (m[1] === '+' ? 1 : -1) * Number(m[2]) : 0; };
+  const personal = factors.filter(f => f.startsWith(who));
+  const rest = factors.filter(f => !f.startsWith(who) && !f.startsWith('底数')).reduce((n, f) => n + num(f), 0);
+  return [factors.find(f => f.startsWith('底数')) ?? '', ...personal, rest ? `局势 ${rest > 0 ? '+' : '−'}${Math.abs(rest)}` : ''].filter(Boolean).join(' · ');
 }

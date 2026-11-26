@@ -488,7 +488,7 @@ export function envoyScore(s: GameState, f: string, o: Extract<Order, { kind: 'e
   const factors: string[] = [];
   let score = 30;
   factors.push('底数 30');
-  const w = Math.round((env.ab.wai - 50) / 2); score += w; factors.push(`${env.name}外交 ${w >= 0 ? '+' : ''}${w}`);
+  const w = Math.round((env.ab.wai - 50) / 2); score += w; factors.push(`${env.name}外交 ${w >= 0 ? '+' : '−'}${Math.abs(w)}`);
   if (hasTrait(env, 'biancai')) { score += 6; factors.push(`${env.name}有辩才 +6`); }
   const common = Object.values(s.factions).filter(x => !x.defunct && x.id !== f && x.id !== o.target && hostile(s, f, x.id) && hostile(s, o.target, x.id) && x.id !== 'local');
   if (common.length) { score += 25; factors.push(`同仇${common.map(c => c.short).join('、')} +25`); }
@@ -500,7 +500,7 @@ export function envoyScore(s: GameState, f: string, o: Extract<Order, { kind: 'e
     const theirs = Object.values(s.armies).filter(a => a.faction === o.target).reduce((n, a) => n + a.troops, 0);
     if (theirs < mine) { score += 15; factors.push('对方兵力不及 +15'); } else { score -= 10; factors.push('对方兵强 −10'); }
   }
-  if (leader) { const h = -Math.round(leader.att.hawk / 8); score += h; if (h) factors.push(`${leader.name}${h > 0 ? '主和' : '主战'} ${h >= 0 ? '+' : ''}${h}`); }
+  if (leader) { const h = -Math.round(leader.att.hawk / 8); score += h; if (h) factors.push(`${leader.name}${h > 0 ? '主和' : '主战'} ${h >= 0 ? '+' : '−'}${Math.abs(h)}`); }
   if (s.factions[o.target].polity === s.factions[f].polity) { score += 10; factors.push('同奉一朝 +10'); }
   return { score, factors };
 }
