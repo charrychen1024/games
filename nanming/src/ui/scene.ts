@@ -4,18 +4,20 @@
 import { ink, tint, paper, mountains, mkRnd, puff, splatter, eave, tree, agedEdges, type Rnd } from './ink';
 import { isReduced } from './motion';
 
-export type SceneKind = 'parley' | 'siege' | 'surrender' | 'battle' | 'war' | 'court' | 'throne' | 'death' | 'disaster' | 'march' | 'econ' | 'appoint' | 'recruit';
+export type SceneKind = 'parley' | 'siege' | 'surrender' | 'battle' | 'war' | 'court' | 'throne' | 'death' | 'disaster' | 'march' | 'econ' | 'appoint' | 'recruit' | 'prison' | 'study';
 export type Hat = 'ming' | 'qing' | 'shun' | 'plain' | 'crown';
 export interface Party { color: string; mark?: string; hat?: Hat }
-export interface SceneOpts { a?: Party; b?: Party; seed?: number; ok?: boolean }
+/** mode：loop 一直动（默认）；still 只画最要紧的一帧；hover 平时静止、鼠标移上（或 play()）才动 */
+/** hero：人物档案用，前景中央画一位骑马的主帅（a 方） */
+export interface SceneOpts { a?: Party; b?: Party; seed?: number; ok?: boolean; mode?: 'loop' | 'still' | 'hover'; hero?: boolean }
 
 /** 每种场景一个循环的长度（秒）与“最要紧的一刻”（减少动态时只画这一帧） */
 const LOOP: Record<SceneKind, [number, number]> = {
   parley: [7, 5.4], siege: [7.5, 4.6], surrender: [6.5, 4.5], battle: [6, 3.2], war: [3.2, 0.5], court: [6, 3.5], throne: [6, 3],
-  death: [6, 2], disaster: [6, 2], march: [6, 3], econ: [5, 2.5], appoint: [6, 3.6], recruit: [6, 3],
+  death: [6, 2], disaster: [6, 2], march: [6, 3], econ: [5, 2.5], appoint: [6, 3.6], recruit: [6, 3], prison: [5, 2], study: [6, 3],
 };
 
-export function scene(kind: SceneKind, o: SceneOpts = {}): { el: HTMLElement; stop(): void } {
+export function scene(kind: SceneKind, o: SceneOpts = {}): { el: HTMLElement; stop(): void; play(): void; pause(): void } {
   const el = document.createElement('div');
   el.className = 'scene';
   el.dataset.scene = kind;
@@ -29,6 +31,8 @@ export function scene(kind: SceneKind, o: SceneOpts = {}): { el: HTMLElement; st
   let ro: ResizeObserver | null = null;
   const reduced = isReduced();
   const [loop, climax] = LOOP[kind];
+  /** 此刻是否在动 */
+  let live = !reduced && (o.mode ?? 'loop') === 'loop';
 
   const size = () => {
     // 用布局尺寸（不受入场缩放动画影响）
@@ -46,7 +50,7 @@ export function scene(kind: SceneKind, o: SceneOpts = {}): { el: HTMLElement; st
     if (!el.isConnected) { if (t0) { stop(); return; } raf = requestAnimationFrame(frame); return; }
     if (!W && !size()) { raf = requestAnimationFrame(frame); return; }
     if (!t0) t0 = now;
-    const t = reduced ? climax : ((now - t0) / 1000) % loop;
+    const t = !live ? climax : ((now - t0) / 1000) % loop;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (!bg) bg = backdrop(kind, W, H, dpr, seed, a, b);
     g.drawImage(bg, 0, 0, W, H);
@@ -54,16 +58,20 @@ export function scene(kind: SceneKind, o: SceneOpts = {}): { el: HTMLElement; st
     const Wd = Math.min(W, H * 4.2), off = (W - Wd) / 2;
     g.save(); g.translate(off, 0);
     draw(kind, g, Wd, H, t, (now - t0) / 1000, a, b, seed, o.ok !== false);
+    if (o.hero) rider(g, Wd * 0.5, H * 0.97, H / 150 * 1.25, a, (now - t0) / 1000, kind === 'march');
     g.restore();
     agedEdges(g, W, H, 0.22);
-    if (!reduced) raf = requestAnimationFrame(frame);
+    if (live) raf = requestAnimationFrame(frame);
   };
   const stop = () => { stopped = true; cancelAnimationFrame(raf); ro?.disconnect(); };
+  const play = () => { if (reduced || live || stopped) return; live = true; t0 = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(frame); };
+  const pause = () => { if (!live || (o.mode ?? 'loop') === 'loop') return; live = false; cancelAnimationFrame(raf); raf = requestAnimationFrame(frame); };
+  if (o.mode === 'hover') { el.addEventListener('pointerenter', play); el.addEventListener('pointerleave', pause); }
   raf = requestAnimationFrame(frame);
   // 窗口或容器尺寸变了：重量、重画背景
-  ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { if (W && (el.clientWidth !== W || el.clientHeight !== H)) { size(); if (reduced) raf = requestAnimationFrame(frame); } }) : null;
+  ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { if (W && (el.clientWidth !== W || el.clientHeight !== H)) { size(); if (!live) raf = requestAnimationFrame(frame); } }) : null;
   ro?.observe(el);
-  return { el, stop };
+  return { el, stop, play, pause };
 }
 
 /* ================= 共用小件 ================= */
@@ -106,6 +114,20 @@ function person(g: CanvasRenderingContext2D, x: number, y: number, s: number, p:
   g.strokeStyle = line; g.lineWidth = 1; g.beginPath(); g.moveTo(sx, sy - 3); g.lineTo(ex, ey - 3); g.moveTo(sx, sy + 3); g.lineTo(ex, ey + 3); g.stroke();
   g.fillStyle = skin; g.beginPath(); g.arc(ex + 1.5, ey, 2.4, 0, Math.PI * 2); g.fill();
   g.restore();
+}
+/** 骑马的主帅：马、人、身后一面大旗；walking 时马蹄交替、身形起伏 */
+function rider(g: CanvasRenderingContext2D, x: number, y: number, s: number, p: Required<Party>, T: number, walking: boolean) {
+  const bob = walking ? Math.abs(Math.sin(T * 4)) * -2 * s : Math.sin(T * 1.2) * -0.8 * s;
+  flag(g, x - 26 * s, y - 2 * s, 70 * s, p, T * 3, -1);
+  g.save(); g.translate(x, y + bob); g.lineCap = 'round';
+  const leg = (lx: number, ph: number) => { const sw = walking ? Math.sin(T * 8 + ph) * 5 * s : 0; g.strokeStyle = ink(0.9); g.lineWidth = 3 * s; g.beginPath(); g.moveTo(lx, -14 * s); g.lineTo(lx + sw, 0); g.stroke(); };
+  leg(-14 * s, 0); leg(-8 * s, Math.PI); leg(10 * s, Math.PI); leg(16 * s, 0);
+  g.fillStyle = '#6a5038'; g.beginPath(); g.ellipse(0, -20 * s, 20 * s, 8 * s, 0, 0, Math.PI * 2); g.fill(); g.strokeStyle = ink(0.92); g.lineWidth = 1.2; g.stroke();
+  g.beginPath(); g.moveTo(16 * s, -24 * s); g.quadraticCurveTo(24 * s, -34 * s, 28 * s, -36 * s); g.lineTo(31 * s, -30 * s); g.quadraticCurveTo(25 * s, -26 * s, 20 * s, -16 * s); g.closePath(); g.fill(); g.stroke();
+  g.strokeStyle = ink(0.95, 0.8); g.lineWidth = 2 * s; g.beginPath(); g.moveTo(-20 * s, -22 * s); g.quadraticCurveTo(-28 * s, -16 * s, -26 * s, -6 * s); g.stroke();
+  g.fillStyle = tint(p.color, 0.3); g.fillRect(-9 * s, -29 * s, 18 * s, 5 * s);
+  g.restore();
+  person(g, x - 2 * s, y + bob - 24 * s, s * 0.9, { color: p.color, hat: p.hat, pose: 'sit', facing: 1, arm: 0.3 + (walking ? 0 : Math.abs(Math.sin(T)) * 0.3) });
 }
 /** 小兵（远景群像用）：墨线小人，旗色号衣，持矛 */
 function soldier(g: CanvasRenderingContext2D, x: number, y: number, s: number, color: string, facing: 1 | -1, step: number) {
@@ -165,7 +187,7 @@ function backdrop(kind: SceneKind, W0: number, H: number, dpr: number, seed: num
   const r = mkRnd(seed * 13 + kind.length);
   const dim = kind === 'death' || kind === 'disaster';
   paper(g, W, H, dim ? '#ddd4c0' : '#ebdfc4');
-  const indoor = kind === 'parley' || kind === 'court' || kind === 'throne' || kind === 'appoint' || kind === 'econ';
+  const indoor = kind === 'parley' || kind === 'court' || kind === 'throne' || kind === 'appoint' || kind === 'econ' || kind === 'prison' || kind === 'study';
   if (!indoor) {
     mountains(g, W, H * 0.5, H * 0.32, r, { layers: 3, dark: dim ? 0.65 : 0.5 });
     const gr = g.createLinearGradient(0, H * 0.5, 0, H);
@@ -224,6 +246,23 @@ function backdrop(kind: SceneKind, W0: number, H: number, dpr: number, seed: num
     eave(g, gx, wy - wh - 22 * S, 84 * S, 13 * S, 0.9);
     eave(g, gx, wy - wh - 34 * S, 58 * S, 10 * S, 0.92);
     g.fillStyle = 'rgba(80,110,120,0.5)'; g.fillRect(0, wy + 2, W, 7);
+  }
+  if (kind === 'study') {
+    // 书斋：窗棂、书架
+    g.fillStyle = 'rgba(206,190,150,0.5)'; g.fillRect(W * 0.08, H * 0.12, W * 0.3, H * 0.5);
+    g.strokeStyle = ink(0.8, 0.6); g.lineWidth = 1;
+    for (let k = 0; k <= 6; k++) { g.beginPath(); g.moveTo(W * 0.08 + k * W * 0.05, H * 0.12); g.lineTo(W * 0.08 + k * W * 0.05, H * 0.62); g.stroke(); }
+    for (let k = 0; k <= 5; k++) { g.beginPath(); g.moveTo(W * 0.08, H * 0.12 + k * H * 0.1); g.lineTo(W * 0.38, H * 0.12 + k * H * 0.1); g.stroke(); }
+    g.fillStyle = 'rgba(120,80,45,0.85)'; g.fillRect(W * 0.7, H * 0.1, W * 0.22, H * 0.66);
+    for (let k = 0; k < 4; k++) { g.fillStyle = 'rgba(60,40,25,0.9)'; g.fillRect(W * 0.7, H * 0.1 + k * H * 0.165, W * 0.22, 3); for (let j = 0; j < 7; j++) { g.fillStyle = ['#b8a27a', '#8c6a35', '#6f7a5a', '#a0553a'][(j + k) % 4]; g.fillRect(W * 0.71 + j * W * 0.028, H * 0.1 + k * H * 0.165 + 4, W * 0.022, H * 0.13); } }
+  }
+  if (kind === 'prison') {
+    // 牢：石墙、草席
+    g.fillStyle = 'rgba(120,112,96,0.55)'; g.fillRect(0, 0, W, H * 0.78);
+    g.strokeStyle = ink(0.7, 0.25); g.lineWidth = 0.8;
+    for (let y = 0; y < H * 0.78; y += 14) for (let x = (y / 14) % 2 * 16; x < W; x += 32) g.strokeRect(x, y, 32, 14);
+    g.fillStyle = 'rgba(255,240,200,0.25)'; g.fillRect(W * 0.62, H * 0.12, W * 0.08, H * 0.16);
+    g.strokeStyle = ink(0.9); g.lineWidth = 2; for (let k = 1; k < 4; k++) { g.beginPath(); g.moveTo(W * 0.62 + k * W * 0.02, H * 0.12); g.lineTo(W * 0.62 + k * W * 0.02, H * 0.28); g.stroke(); }
   }
   if (kind === 'disaster') {
     g.strokeStyle = ink(0.8, 0.35); g.lineWidth = 0.9;
@@ -402,6 +441,33 @@ function draw(kind: SceneKind, g: CanvasRenderingContext2D, W: number, H: number
       const k = seg(t, 1.2, 2.6), x = W * 0.42 + k * W * 0.1, y = H * 0.4 + Math.sin(k * Math.PI) * -H * 0.06;
       g.fillStyle = '#c9a33c'; g.fillRect(x - 7 * S, y - 7 * S, 14 * S, 12 * S); g.strokeStyle = ink(0.85); g.lineWidth = 1; g.strokeRect(x - 7 * S, y - 7 * S, 14 * S, 12 * S);
       seal(g, W * 0.5, H * 0.24, 9 * S, seg(t, 3.2, 3.6), '敕');
+      break;
+    }
+    case 'prison': {
+      // 囚：人物坐于草席，镣铐；狱卒踱步；栅栏在前
+      person(g, W * 0.45, H * 0.9, 1.3 * S, { color: a.color, hat: a.hat, pose: 'sit', facing: 1, bob: Math.sin(T * 0.8) * 1.2 });
+      g.strokeStyle = ink(0.6, 0.8); g.lineWidth = 1.2 * S; g.setLineDash([3 * S, 2 * S]); g.beginPath(); g.moveTo(W * 0.47, H * 0.78); g.quadraticCurveTo(W * 0.52, H * 0.9, W * 0.6, H * 0.86); g.stroke(); g.setLineDash([]);
+      const gx = W * 0.15 + (Math.sin(T * 0.6) * 0.5 + 0.5) * W * 0.2;
+      person(g, gx, H * 0.95, 1.05 * S, { color: b.color, hat: b.hat, facing: Math.cos(T * 0.6) > 0 ? 1 : -1, bob: Math.abs(Math.sin(T * 4)) * -1.2 });
+      g.strokeStyle = ink(0.95, 0.9); g.lineWidth = 4 * S;
+      for (let k = 0; k < 9; k++) { const x = W * 0.3 + k * W * 0.07; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+      g.lineWidth = 5 * S; g.beginPath(); g.moveTo(W * 0.28, H * 0.12); g.lineTo(W * 0.9, H * 0.12); g.moveTo(W * 0.28, H * 0.9); g.lineTo(W * 0.9, H * 0.9); g.stroke();
+      break;
+    }
+    case 'study': {
+      // 书斋：灯下伏案，提笔写字，纸上墨迹渐多，烛光摇曳
+      const dx = W * 0.5, dy = H * 0.8;
+      g.fillStyle = '#6a4a2c'; g.fillRect(dx - W * 0.12, dy - 18 * S, W * 0.24, 6 * S); g.fillRect(dx - W * 0.1, dy - 12 * S, 4 * S, 12 * S); g.fillRect(dx + W * 0.1 - 4 * S, dy - 12 * S, 4 * S, 12 * S);
+      const wk = (T % 6) / 6;
+      g.fillStyle = 'rgba(246,238,216,0.98)'; g.fillRect(dx - W * 0.04, dy - 22 * S, W * 0.12, 5 * S);
+      g.strokeStyle = ink(0.9, 0.85); g.lineWidth = 1;
+      for (let k = 0; k < Math.floor(wk * 8); k++) { const x = dx + W * 0.07 - k * W * 0.012; g.beginPath(); g.moveTo(x, dy - 21.5 * S); g.lineTo(x, dy - 18 * S); g.stroke(); }
+      const pen = Math.sin(T * 6) * 0.15;
+      person(g, dx - W * 0.1, dy, 1.25 * S, { color: a.color, hat: a.hat, pose: 'sit', facing: 1, arm: 0.25 + pen, bob: Math.sin(T * 0.9) * 0.8 });
+      const cx = dx + W * 0.1, fl = 1 + Math.sin(T * 11) * 0.12;
+      g.fillStyle = '#e8e0d0'; g.fillRect(cx - 2 * S, dy - 30 * S, 4 * S, 12 * S);
+      const gl = g.createRadialGradient(cx, dy - 34 * S, 0, cx, dy - 34 * S, 34 * S); gl.addColorStop(0, 'rgba(255,200,110,0.35)'); gl.addColorStop(1, 'rgba(255,200,110,0)'); g.fillStyle = gl; g.fillRect(cx - 34 * S, dy - 68 * S, 68 * S, 68 * S);
+      g.fillStyle = 'rgba(240,150,50,0.95)'; g.beginPath(); g.ellipse(cx, dy - 34 * S, 2.2 * S, 5 * S * fl, 0, 0, Math.PI * 2); g.fill();
       break;
     }
     case 'recruit': {

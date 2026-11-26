@@ -12,6 +12,7 @@ import { dangerOf, eraOf } from './musicTheory';
 import { portrait } from './portrait';
 import { cardHand, cardArt, type GameCard, type Chip } from './cards';
 import { newsArt, type ArtCat } from './newsArt';
+import { hashKeys } from '../core/rng';
 import { scene, type SceneKind, type SceneOpts, type Party, type Hat } from './scene';
 import { traitsOf, TRAITS, govEffects, governorOf, prisonerChance, SEEK_SILVER, SEEK_COOLDOWN } from '../core/people';
 import { resolveMonth, unificationProgress, unifierRole, type Answer } from '../core/turn';
@@ -1735,8 +1736,22 @@ export class App {
         h('b', { class: (l.field === 'surrender' ? -l.delta : l.delta) >= 0 ? 'up' : 'down' }, `${{ loyalty: '忠', surrender: '降', hawk: '战' }[l.field]} ${signed(l.delta)}`)));
       body.push(h('div', { class: 'sec-title' }, ic('history'), '心迹'), rows);
     }
+    // 顶部小画：此人此刻在做什么——主君登基、统兵行军、主官授印、被执下狱、已故国丧、闲居武将练兵、闲居文臣灯下著书
+    {
+      const me = this.party(c.faction);
+      const kind: SceneKind = c.status === 'dead' ? 'death' : c.status === 'captured' ? 'prison' : f?.leader === c.id ? 'throne' : leads ? 'march' : post ? 'appoint' : c.ab.tong > c.ab.zheng + 5 ? 'recruit' : 'study';
+      this.sceneNext = { kind, opts: { a: { ...me, hat: c.female ? 'plain' : me.hat }, b: kind === 'prison' ? this.party(c.captor) : me, seed: hashKeys(c.id) % 1000, hero: kind === 'march' || kind === 'recruit' } };
+    }
     const dlg = this.modal('person', c.name, `${f?.name ?? ''} · ${c.title}`, body, [{ label: '人物', icon: 'chars', onclick: () => { setTimeout(() => this.openChars(c.faction === s.player ? 'mine' : f?.overlord === s.player ? 'vassal' : 'others'), 0); } }, { label: '关闭', icon: 'close', onclick: () => {} }], 'wide');
     dlg.classList.add('pdlg');
+    // 生平逐字显出；头像缓缓呼吸、隔一阵扫过一道光（CSS）
+    const bio = dlg.querySelector('.p-bio') as HTMLElement | null;
+    if (bio && !isReduced()) {
+      const full = bio.textContent ?? '';
+      const o = { n: 0 };
+      bio.style.minHeight = bio.offsetHeight + 'px';
+      gsap.to(o, { n: full.length, duration: Math.min(2.4, full.length * 0.03), delay: 0.5, ease: 'none', onUpdate: () => { if (bio.isConnected) bio.textContent = full.slice(0, Math.round(o.n)) + (o.n < full.length ? '▍' : ''); } });
+    }
     gsap.fromTo(card, { rotateY: -70, opacity: 0 }, { rotateY: 0, opacity: 1, duration: 0.55, ease: 'back.out(1.3)' });
     gsap.from(dlg.querySelector('.p-seal'), { scale: 3, rotate: -40, opacity: 0, duration: 0.45, delay: 0.35, ease: 'back.out(2)' });
     gsap.from(dlg.querySelectorAll('.p-bar .meter i, .pa'), { scaleX: 0, opacity: 0, transformOrigin: 'left', duration: 0.4, stagger: 0.04, delay: 0.3 });
@@ -1766,6 +1781,12 @@ export class App {
     const list = h('div', { class: 'entries', id: 'report-entries' });
     const shown = all.filter(r => this.reportTab === '全部' || r.cat === this.reportTab || (this.reportTab === '急报' && r.urgent))
       .sort((a, b) => Number(!!b.urgent) - Number(!!a.urgent));
+    // 本月头条：最要紧的一条配一幅会动的小画，压在列表之上
+    const head = shown.find(r => r.urgent || r.cat === '易主') ?? shown.find(r => this.reportScene(r, 0, false)) ?? shown[0];
+    if (head) {
+      const sc = this.reportScene(head, t + 11, true);
+      if (sc) box.append(h('div', { class: 'rhead', onclick: () => { if (head.node) { this.map.flyTo(head.node, Math.max(this.map.cam.z, 2.2)); this.selectNode(head.node); } } }, scene(sc.kind, sc.opts).el, h('div', { class: 'rhead-cap' }, ic(CAT_ICON[head.cat] ?? 'info'), splitReport(head).hl.slice(0, 34))));
+    }
     for (const r of shown) list.append(this.reportCard(r));
     if (t < 0) list.append(h('div', { class: 'card' }, h('div', { class: 'cic c-史事' }, ic('event')), h('div', { class: 'body' }, h('div', { class: 'hl' }, '北京失守的消息传到南京'), h('div', { class: 'meta' }, '结束本月后，这里列出各地变化'))));
     box.append(list);
@@ -1773,13 +1794,28 @@ export class App {
     gsap.from('#report .cic', { scale: 0.3, duration: 0.4, stagger: 0.035, ease: 'back.out(2)' });
   }
 
-  /** 军情卡的小图：提到的人物用其像，易主用新主颜色作画，其余用类别图标 */
+  /** 一条军情配哪幅小画：易主为城破或开城、交涉为议和、交战围城为交兵攻城；broad 为真时其余类别也配（内政仓廪、人事授印、急报擂鼓、史事按内容） */
+  reportScene(r: ReportEntry, seed: number, broad: boolean): { kind: SceneKind; opts: SceneOpts } | null {
+    const s = this.s!;
+    const c = r.cat;
+    const ctrl = r.node && s.cities[r.node] ? s.cities[r.node].controller : undefined;
+    const sk: SceneKind | null = c === '易主' ? (r.act === 'breach' || r.act === 'abandon' ? 'siege' : 'surrender') : c === '交涉' && r.from && r.to ? 'parley' : (r.act === 'battle' || r.act === 'siege') && r.from && r.to ? (r.act === 'siege' ? 'siege' : 'battle') : null;
+    if (sk) return { kind: sk, opts: { a: this.party(c === '易主' ? r.to ?? ctrl : r.from), b: this.party(c === '易主' ? r.from : r.to), seed, ok: r.ok !== false } };
+    if (!broad) return null;
+    if (c === '史事' || c === '线索') return this.eventScene(r.text.match(/【([^】]+)】/)?.[1] ?? '', r.text);
+    const me = this.party(s.player), other = this.party(r.from ?? r.to ?? ctrl);
+    const k: SceneKind = r.urgent || c === '急报' ? 'war' : c === '军报' ? 'march' : c === '内政' ? 'econ' : c === '人事' ? 'appoint' : c === '交涉' ? 'parley' : 'court';
+    return { kind: k, opts: { a: k === 'march' || k === 'war' ? other : me, b: other, seed, ok: r.ok !== false } };
+  }
+  /** 军情卡的小图：城破、议和、交兵为小画（平时静止，鼠标移上才动）；提到的人物用其像；其余为类别图标（各有轻微动作） */
   reportThumb(r: ReportEntry, cat: ReportCat): HTMLElement {
     const s = this.s!;
     const who = (cat === '人事' || cat === '史事' || cat === '交涉') ? Object.values(s.chars).filter(x => x.status !== 'offstage' && r.text.includes(x.name)).sort((a, b) => r.text.indexOf(a.name) - r.text.indexOf(b.name))[0] : undefined;
+    const sc = this.reportScene(r, r.turn + (r.node?.length ?? 0), false);
+    if (sc) { const m = scene(sc.kind, { ...sc.opts, mode: 'hover' }); m.el.classList.add('rthumb', 'rscene'); (m.el as any).__scene = m; return m.el; }
     if (who) return h('img', { class: 'rthumb pt', src: portrait(who, s.factions[who.faction]?.color ?? '#6a5a48', s.factions[who.faction]?.polity ?? 'none'), alt: '' });
     if (cat === '易主' && r.node && s.cities[r.node]) return h('img', { class: 'rthumb', src: cardArt('capture', s.factions[s.cities[r.node].controller]?.color ?? '#b5342a', 1), alt: '' });
-    return h('div', { class: `cic c-${cat}` }, ic(CAT_ICON[cat] ?? 'info'));
+    return h('div', { class: `cic c-${cat} cic-anim` }, ic(CAT_ICON[cat] ?? 'info'));
   }
   reportCard(r: ReportEntry): HTMLElement {
     const { hl, more } = splitReport(r);
@@ -1800,9 +1836,20 @@ export class App {
       hist = h('div', { class: 'hist hidden' }, r.history);
       btns.append(h('button', { class: 'mini', onclick: (e: Event) => { e.stopPropagation(); hist!.classList.toggle('hidden'); } }, ic('history'), '史实'));
     }
-    return h('div', { class: 'card entry' + (r.urgent ? ' urgent' : ''), onclick: () => moreEl.classList.toggle('hidden') },
-      this.reportThumb(r, cat),
-      h('div', { class: 'body' }, h('div', { class: 'hl' }, hl), h('div', { class: 'meta' }, r.cat, more ? h('span', { style: { marginLeft: 'auto', color: 'var(--gold-dim)' } }, '▾') : null), more ? moreEl : null, hist, btns.childNodes.length ? btns : null));
+    const thumb = this.reportThumb(r, cat);
+    const ts = (thumb as any).__scene as ReturnType<typeof scene> | undefined;
+    // 展开详情：上方配一幅会动的小画（大段文字有图）
+    let big: ReturnType<typeof scene> | null = null;
+    const toggle = () => {
+      const open = moreEl.classList.toggle('hidden') === false;
+      if (open && !big) { const sc = this.reportScene(r, r.turn + 3, true); if (sc) { big = scene(sc.kind, sc.opts); big.el.classList.add('rmore-scene'); moreEl.prepend(big.el); } }
+      if (!open && big) { big.stop(); big.el.remove(); big = null; }
+    };
+    const card = h('div', { class: 'card entry' + (r.urgent ? ' urgent' : ''), onclick: toggle },
+      thumb,
+      h('div', { class: 'body' }, h('div', { class: 'hl' }, hl), h('div', { class: 'meta' }, r.cat, h('span', { style: { marginLeft: 'auto', color: 'var(--gold-dim)' } }, '▾')), moreEl, hist, btns.childNodes.length ? btns : null));
+    if (ts) { card.addEventListener('pointerenter', () => ts.play()); card.addEventListener('pointerleave', () => ts.pause()); }
+    return card;
   }
 
   /** 每月开头的要闻：最多四条 */
@@ -1876,8 +1923,7 @@ export class App {
         const who = Object.values(s.chars).filter(x => x.status !== 'offstage' && r.text.includes(x.name)).sort((a, b) => r.text.indexOf(a.name) - r.text.indexOf(b.name))[0];
         const usePt = !!who && (c === '人事' || c === '史事' || c === '交涉');
         // 城破、献城、议和、交兵：换成会动的小画
-        const sk: SceneKind | null = c === '易主' ? (r.act === 'breach' || r.act === 'abandon' ? 'siege' : 'surrender') : c === '交涉' && r.from && r.to ? 'parley' : (r.act === 'battle' || r.act === 'siege') && r.from && r.to ? (r.act === 'siege' ? 'siege' : 'battle') : null;
-        const scn = sk ? { kind: sk, opts: { a: this.party(c === '易主' ? r.to ?? ctrl?.id : r.from), b: this.party(c === '易主' ? r.from : r.to), seed: k + s.turn, ok: r.ok !== false } } : undefined;
+        const scn = this.reportScene(r, k + s.turn, false) ?? undefined;
         artFx.show({ cat: c as ArtCat, icon: CAT_ICON[c] ?? 'info', color: c === '易主' && ctrl ? ctrl.color : COL[c] ?? '#8c6a35', seed: k, scene: scn,
           portrait: !scn && usePt ? portrait(who, s.factions[who.faction]?.color ?? '#6a5a48', s.factions[who.faction]?.polity ?? 'none') : undefined });
         clear(cat).append(ic(CAT_ICON[c] ?? 'info'), c);

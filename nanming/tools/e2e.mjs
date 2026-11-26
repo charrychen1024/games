@@ -229,6 +229,10 @@ try {
   if (!(await visible('#report-entries'))) await page.click('#btn-report');
   await wait(300);
   check('军情面板有内容', await visible('#report-entries .entry'));
+  check('军情面板顶部有本月头条小画', await page.evaluate(() => { const c = document.querySelector('#report .rhead canvas'); return !!c && c.width > 200; }));
+  await page.locator('#report-entries .entry .hl').first().click(); await wait(400);
+  check('展开一条军情，详情上方配会动的小画', await visible('#report-entries .rmore-scene canvas'));
+  await page.locator('#report-entries .entry .hl').first().click(); await wait(200);
   const reportText = await text('#report-entries');
   check('军情包含号令下属的结果', reportText.includes('号令黄得功部 →'), reportText.slice(0, 200));
   check('月报包含史事', reportText.includes('史可法督师江北'));
@@ -236,6 +240,10 @@ try {
   await wait(250);
   check('点“定位”打开对应城池', await visible('#city-name'));
   check('城池面板有主官或守将头像', await visible('#city-gov img'), await text('#city-gov'));
+  await page.evaluate(() => NM.openChar('shikefa')); await wait(500);
+  const pScene = await page.evaluate(() => document.querySelector('#modal .pdlg > .scene')?.getAttribute('data-scene'));
+  check('人物档案顶部小画写此人此刻所为（史可法统兵：行军）', pScene === 'march', String(pScene));
+  await page.keyboard.press('Escape'); await wait(200);
   check('顶栏显示本月政令余数', /\d+\s*\/\d+ 令/.test(await text('#pill-orders')), await text('#pill-orders'));
   // 试玩反馈：政令用尽时提示被弹窗盖住 → 政令台要占政令的按钮标“令尽”，点了不开选择窗，警示在最上层
   {
