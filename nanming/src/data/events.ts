@@ -143,6 +143,7 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'ss_mashiying', kind: 'shishi', title: '马士英、阮大铖掌权', from: 1, to: 3, node: 'nanjing',
+    prelude: () => '马士英以拥立之功入阁，欲荐阮大铖入兵部。东林诸臣力争，朝局何去何从，待你定夺。',
     cond: s => alive(s, 'mashiying') && s.chars.mashiying.faction === 'hongguang',
     text: () => '马士英以拥立之功独揽朝政，荐阮大铖入兵部。东林旧人相继去位，镇守武昌的左良玉对朝中权臣愈加不满。',
     history: '甲申夏秋，马士英为首辅，阮大铖以兵部右侍郎起用，旋升尚书，朝局为之一变。',
@@ -155,18 +156,20 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'ss_zheng_feng', kind: 'shishi', title: '郑芝龙受封', from: 1, to: 4, node: 'anping',
+    prelude: () => '郑芝龙拥海上之众，朝中议加封以笼络之，并令其弟郑鸿逵率水师守镇江江面。',
     cond: s => s.factions.zheng?.overlord === 'hongguang' && alive(s, 'zhengzhilong'),
     text: () => '朝廷加封郑芝龙为南安伯，令其弟郑鸿逵率水师守镇江江面。郑家受恩，但仍以海上为根本。',
     history: '弘光朝封郑芝龙为南安伯，郑鸿逵以总兵守镇江。',
     source: '《台湾外记》；' + SRC_GU,
     chooser: ['hongguang'],
     choices: () => [
-      { label: '加封南安伯，令郑鸿逵守江', desc: '郑氏服从 +8，郑鸿逵忠诚 +5。（史实）', apply: s => { adjustLoyalty(s, 'zheng', 8, '受封南安伯'); adjustAtt(s, 'zhenghongkui', 'loyalty', 5, '受命守江'); return '郑芝龙受封。'; } },
+      { label: '加封南安伯，令郑鸿逵守江', desc: '郑氏服从 +8，郑鸿逵忠诚 +5。（史实）', apply: s => { adjustLoyalty(s, 'zheng', 8, '受封南安伯'); adjustAtt(s, 'zhenghongkui', 'loyalty', 5, '受命守江'); if (s.chars.zhengzhilong) s.chars.zhengzhilong.title = '南安伯 · 总兵'; return '郑芝龙受封。'; } },
       { label: '暂不加封', desc: '郑氏服从 −5。', apply: s => { adjustLoyalty(s, 'zheng', -5, '朝廷吝封'); return '郑氏未受封。'; } },
     ],
   },
   {
     id: 'ss_chongqing', kind: 'shishi', title: '张献忠破重庆', from: 1, to: 3, node: 'chongqing',
+    altTitle: '重庆未下',
     involves: ['xi'],
     cond: s => ctrl(s, 'chongqing') === 'xi',
     altered: s => ctrl(s, 'chongqing') !== 'xi' && !!s.factions.xi && !s.factions.xi.defunct,
@@ -222,6 +225,7 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'ss_chengdu', kind: 'shishi', title: '张献忠破成都', from: 3, to: 5, node: 'chengdu',
+    altTitle: '成都未下',
     involves: ['xi'],
     cond: s => ctrl(s, 'chengdu') === 'xi',
     altered: s => ctrl(s, 'chengdu') !== 'xi' && ctrl(s, 'chongqing') === 'xi',
@@ -232,6 +236,7 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'ss_qing_south', kind: 'shishi', title: '清廷决意南下', from: 5, to: 8, node: 'beijing',
+    prelude: () => '南京“擅立”，拒不归附。清廷议遣豫亲王多铎南征、英亲王阿济格西击大顺。',
     cond: s => !hostile(s, 'qing', 'hongguang') && s.turn >= Number(s.flags.qing_south_at ?? 6),
     text: () => '清廷以南京“擅立”、拒不归附为由，命豫亲王多铎统兵南征，英亲王阿济格西击大顺。清与弘光朝廷正式为敌。',
     history: '顺治元年十月，清廷命多铎南下、阿济格西征；多铎先转攻潼关，乙酉二月再自河南南下。',
@@ -244,6 +249,7 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'ss_daxi', kind: 'shishi', title: '大西建国', from: 6, to: 7, node: 'chengdu',
+    prelude: () => '张献忠据有成都，部众劝进，议称帝建号。',
     cond: s => ctrl(s, 'chengdu') === 'xi',
     text: () => '张献忠在成都称帝，国号大西，改元大顺，以成都为西京。',
     history: '甲申十一月十六日张献忠在成都即位，国号大西。',
@@ -256,6 +262,7 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'ss_tongguan', kind: 'shishi', title: '李自成失潼关', from: 7, to: 9, node: 'tongguan',
+    altTitle: '潼关未失',
     involves: ['qing', 'shun'],
     cond: s => ctrl(s, 'tongguan') === 'qing',
     altered: s => ctrl(s, 'tongguan') === 'shun',
@@ -283,6 +290,7 @@ export const EVENTS: EventDef[] = [
   },
   {
     id: 'ss_zuo_east', kind: 'shishi', title: '左良玉“清君侧”', from: 10, to: 10, node: 'wuchang',
+    altTitle: '左良玉劾马士英',
     cond: s => alive(s, 'zuoliangyu') && s.factions.zuoliangyu?.overlord === 'hongguang' && (s.factions.zuoliangyu.loyalty ?? 50) < 45,
     altered: s => alive(s, 'zuoliangyu') && s.factions.zuoliangyu?.overlord === 'hongguang',
     text: (_s, v) => v === 'history'
@@ -383,6 +391,9 @@ export { T };
 function qingSouth(s: GameState) {
       setStance(s, 'qing', 'hongguang', 'war');
       s.flags.qing_south = s.turn;
+      // 甲申十月：多铎、阿济格晋亲王
+      if (s.chars.duoduo?.title === '豫郡王') s.chars.duoduo.title = '豫亲王';
+      if (s.chars.ajige?.title === '英郡王') s.chars.ajige.title = '英亲王';
       report(s, { cat: '急报', urgent: true, node: 'beijing', text: '清与弘光朝廷正式为敌。江北各镇须早作防备。' });
       if (s.flags.zuomaodi_mission !== undefined && alive(s, 'zuomaodi')) captureChar(s, 'zuomaodi', 'qing', '北使不屈');
       for (const id of ['liuzeqing', 'liuliangzuo', 'libenshen', 'zhaozhilong', 'qianqianyi']) adjustAtt(s, id, 'surrender', 3, '清兵将至');

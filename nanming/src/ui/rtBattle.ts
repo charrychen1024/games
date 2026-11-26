@@ -4,7 +4,7 @@
  * 点城墙按兵种定（步营登城、撞门，炮营轰墙，火器压制；守军守段、再点本段修城）。底栏只放看板（各营兵数士气）与全军号令。 */
 import type { GameState } from '../core/types';
 import type { BattleState } from '../core/battle';
-import { createSiege, stepSiege, aiCommands, command, drum, defDecision, toBattleResult, runSiege, legal, segName, persuade, persuadeOdds, SEGMENTS, GATE_SEG, WALL_Y, type SUnit, type SOrder } from '../core/siege';
+import { createSiege, stepSiege, aiCommands, command, drum, defDecision, attWithdraw, toBattleResult, runSiege, legal, segName, persuade, persuadeOdds, SEGMENTS, GATE_SEG, WALL_Y, type SUnit, type SOrder } from '../core/siege';
 import { createField, stepField, aiField, commandF, drumF, legalF, toFieldResult, runField, KIND_NAME, DUSK, type FUnit, type FOrder } from '../core/field';
 import { SiegeView } from './siegeView';
 import { FieldView } from './fieldView';
@@ -204,6 +204,21 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
         C('def-abandon', 'withdraw', '弃城突围', fallback ? `城归敌手但不遭屠戮；守军约八成、府库半数退往${nodeNameOf(fallback)}` : '无城可退：城归敌手，守军就地溃散，府库尽失', () => { defDecision(ssim!, 'abandon'); manual = true; ending(); }),
         C('def-surrender', 'persuade', '开城投降', '免于兵燹；城与守军、主官一并归敌', () => { defDecision(ssim!, 'surrender'); manual = true; ending(); }),
         C('battle-auto', 'auto', '交部将坚守', '由部将按常法守城，你只看战况', () => { autoMe = true; start(); })));
+      renderTray();
+      return;
+    }
+    if (phase === 'deploy' && siege && side === 'att') {
+      // 攻城方略：开战前写明兵力比与城防，给出建议；可强攻、交部将、或围而不攻
+      const wall = Math.round(ssim!.segs.reduce((n, g) => n + Math.max(0, g.hp), 0) / SEGMENTS);
+      const ratio = Math.round(ssim!.att.start / Math.max(1, ssim!.def.start) * 10) / 10;
+      const need = 1.6 + wall / 40;   // 约需几比一（墙六十约三比一）
+      const advice = ratio < need * 0.7 ? '城坚兵少：强攻多半折兵而无功，宜先围困断粮，或增兵再攻' : ratio < need ? '胜负难料：先炮击、擂鼓，城门一破再全军登城' : '兵力足以强攻：全军撞门登城，宜速战';
+      const C = (id: string, icon: string, title: string, desc: string, fn: () => void, primary = false) => h('button', { class: 'dchoice' + (primary ? ' primary' : ''), id, onclick: () => { click(); fn(); } }, ic(icon), h('b', null, title), h('small', null, desc));
+      ui.append(h('div', { class: 'dchoices' },
+        h('div', { class: 'dc-head' }, h('b', null, '攻城方略'), h('small', null, `我攻 ${wan(ssim!.att.start)}，敌守 ${wan(ssim!.def.start)}（约 ${ratio} 比 1），城防 ${wall} · ${advice}`)),
+        C('att-assault', 'battle', '亲自攻城', '你来指挥：选营撞门、登城、炮击、劝降', () => { start(); }, ratio >= need * 0.7),
+        C('battle-auto', 'auto', '交部将攻城', '由部将按常法攻城，你只看战况', () => { autoMe = true; start(); }),
+        C('att-blockade', 'wall', '围而不攻', '本月不攻，围城断粮；城中粮尽、军心渐衰，下月再定', () => { attWithdraw(ssim!); manual = true; ending(); }, ratio < need * 0.7)));
       renderTray();
       return;
     }
@@ -455,11 +470,13 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     const o = sim.over!;
     const meWin = o.winner === side;
     if (ssim) {
+      const wallNow = Math.round(ssim.segs.reduce((n, g) => n + Math.max(0, g.hp), 0) / SEGMENTS), wall0 = Math.round(b0.wall ?? wallNow);
+      const wallText = wallNow < wall0 ? `城防由 ${wall0} 降至 ${wallNow}` : `城防 ${wallNow}，未损`;
       const table: Record<string, [string, string, string, string]> = {
         breach: ['破城', `${b0.att.name}夺下${b0.nodeName}。`, '城破', `${b0.nodeName}失守。`],
         surrender: ['城降', `${b0.nodeName}守军开城出降。`, '城降', `${b0.nodeName}守军崩溃，开城出降。`],
         collapse: ['城降', `${b0.nodeName}守军崩溃。`, '城降', `${b0.nodeName}守军崩溃。`],
-        retreat: ['未克', `收兵回营，城未克；围城照旧，城防降至 ${Math.round(ssim.segs.reduce((n, g) => n + Math.max(0, g.hp), 0) / SEGMENTS)}${ssim.gate.hp <= 0 ? '，城门已破' : ''}。`, '守住', `${b0.att.name}收兵退去，${b0.nodeName}守住了。`],
+        retreat: ['未克', `收兵回营，城未克；各军改为围困（要再攻须重新下令）。${wallText}${ssim.gate.hp <= 0 ? '，城门已破' : ''}。`, '守住', `${b0.att.name}收兵退去，${b0.nodeName}守住了。`],
         repulsed: ['受挫', `攻城受挫，${b0.att.name}溃退。`, '击退', `击退${b0.att.name}。`],
         abandon: ['入城', `${b0.def.name}弃城而走，${b0.nodeName}到手。`, '弃城', `弃${b0.nodeName}而走，残部退往邻城。`],
       };
@@ -518,8 +535,8 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   }
   renderUi(); updateHud();
   raf = requestAnimationFrame(frame);
-  // 不另布阵：各营按常法列阵，一开场就交战（守城先定大计）
-  if (!(siege && side === 'def')) start();
+  // 不另布阵：各营按常法列阵，一开场就交战（攻守城先定方略、大计；部将代打则直接开打）
+  if (!siege || (side === 'att' && autoMe)) start();
   return finished;
 
   function finish(result: BattleState, man: boolean) {

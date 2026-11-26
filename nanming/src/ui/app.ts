@@ -5,6 +5,7 @@ import { h, $, clear, fmt, wan, signed } from './dom';
 import { iconSvg } from './icons';
 import { gameSelect, stepper, closeSelects, type SelOpt } from './widgets';
 import gsap from 'gsap';
+gsap.config({ nullTargetWarn: false });   // 弹窗里某类元素没有时，入场动画安静跳过
 import { playBattle } from './battle';
 import type { BattleState } from '../core/battle';
 import { newsSfx, eventSfx, resultSfx, marchSfx, chime, alarm, click, isMuted, setMuted, setScene, setIntensity, audioState, getVolumes, setVolume, paper, scroll, stampSfx, orderSfx, endTurnSfx, monthSfx, captureSfx, distantBattle, choiceSfx, successSfx, denySfx, introSfx, hoverPluck } from './audio';
@@ -64,7 +65,7 @@ const PICK: { id: string; name: string; stars: number; z: number; line: string; 
   { id: 'hongguang', name: '弘光朝廷', stars: 4, z: 1.5, line: '坐拥江南财赋，号令却出不了南京。', situation: '福王在南京即位。江北四镇各拥重兵，朝中党争不息。', goal: '驾驭四镇，守住长江，再图恢复' },
   { id: 'qing', name: '大清', stars: 2, z: 1.2, line: '铁骑新入关，天下尚未归心。', situation: '清军入北京。大顺西撤，江南另立新君。', goal: '先逐大顺，再定江南，一统天下' },
   { id: 'shun', name: '大顺', stars: 5, z: 1.3, line: '山海关新败，退守关中。', situation: '李自成弃北京西走。清军与吴三桂紧追不舍。', goal: '择地站稳，收拾人心，再争天下' },
-  { id: 'xi', name: '张献忠部', stars: 3, z: 1.3, line: '溯江入蜀，天府之国就在眼前。', situation: '西营兵临夔州。四川明军单薄，成都可图。', goal: '取成都，建大西，进而争雄' },
+  { id: 'xi', name: '张献忠部', stars: 3, z: 1.3, line: '溯江入蜀，天府之国就在眼前。', situation: '西营已据夔州，兵锋直指重庆、成都。四川明军单薄。', goal: '取成都，建大西，进而争雄' },
   { id: 'zheng', name: '福建郑氏', stars: 3, z: 1.5, line: '海上船队与贸易都在手里。', situation: '郑芝龙受明封爵，海舶无郑氏令旗不得往来。', goal: '以海养兵，奉明还是自立，由你决定' },
 ];
 
@@ -288,6 +289,10 @@ export class App {
     this.map.view.selected = null;
     this.map.view.selectedArmy = null;
     this.map.view.beacon = null;
+    // 换局：上一局选中的城、政令台、军令环、选目标状态、军情面板一概收起
+    this.cityTab = 'main';
+    this.endTarget(); this.hideRing(); this.renderDock(null);
+    $('#panel').classList.add('hidden'); $('#report').classList.add('hidden');
     this.musicForState();
     this.map.focus(focus ?? state.factions[state.player].capital, focus ? 2.4 : 2.0);
     this.renderAll();
@@ -845,7 +850,7 @@ export class App {
       const st = pend ? '已下令' : a.path.length ? `行军 · 余 ${Math.max(1, pathDays(a.location, a.path) - a.progress)} 日` : a.order.kind === 'siege' ? (a.order.assault ? '攻城' : '围城') : '驻扎';
       return h('button', { class: 'achip' + (this.map.view.selectedArmy === a.id ? ' on' : '') + (pend ? ' pend' : '') + (a.faction !== s.player ? ' vas' : ''), 'data-army': a.id, 'data-tip': `${a.name} · ${nodeName(a.location)}`,
         onclick: () => { click(); this.selectArmy(a.id); this.map.flyTo(a.location, Math.max(this.map.cam.z, 2)); } },
-      face(s, a.commander, 34), h('div', { class: 'ac-t' }, h('b', null, a.name.replace(/部$/, '')), h('small', null, st)), h('span', { class: 'ac-n' }, wan(a.troops)));
+      face(s, a.commander, 34), h('div', { class: 'ac-t' }, h('b', null, a.name.replace(/本部$|部$/, '')), h('small', null, st)), h('span', { class: 'ac-n' }, wan(a.troops)));
     };
     bar.append(h('div', { class: 'ab-h' }, ic('army'), `我军 ${mine.length}`));
     for (const a of mine) bar.append(chip(a));
@@ -1833,7 +1838,8 @@ export class App {
     const moreEl = h('div', { class: 'more hidden' }, more);
     const btns = h('div', { class: 'btns' });
     if (r.node) btns.append(h('button', { class: 'mini locate', onclick: (e: Event) => { e.stopPropagation(); this.map.flyTo(r.node!, Math.max(this.map.cam.z, 2.2)); this.selectNode(r.node!); } }, ic('locate'), nodeName(r.node)));
-    if (r.src?.kind === 'order' && r.src.ref) {
+    // “为什么”只给账上查得到来由的条目（方针、行军之类没有单笔账目，不显示空按钮）
+    if (r.src?.kind === 'order' && r.src.ref && this.s!.ledger.some(l => l.src.ref === r.src!.ref)) {
       const ref = r.src.ref;
       btns.append(h('button', { class: 'mini why', onclick: (e: Event) => {
         e.stopPropagation();
@@ -2311,7 +2317,8 @@ export class App {
         h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic('event')), h('div', null, h('h2', null, c.title), h('small', null, `史事 · ${this.s?.factions[this.s.player]?.name ?? ''}决断`))),
         h('div', { class: 'db' }, h('div', { class: 'lead' }, c.text), opts)));
       gsap.fromTo('#modal .dialog', { scale: 0.85, opacity: 0, rotateX: 20 }, { scale: 1, opacity: 1, rotateX: 0, duration: 0.45, ease: 'back.out(1.6)' });
-      gsap.from('#modal .opt', { opacity: 0, x: -30, duration: 0.35, stagger: 0.1, delay: 0.2, ease: 'power3.out' });
+      gsap.killTweensOf('#modal .opt');
+      gsap.fromTo('#modal .opt', { opacity: 0, x: -30 }, { opacity: 1, x: 0, y: 0, duration: 0.35, stagger: 0.1, delay: 0.2, ease: 'power3.out' });
       requestAnimationFrame(() => ($('#modal .opt') as HTMLElement | null)?.focus({ preventScroll: true }));
     });
   }

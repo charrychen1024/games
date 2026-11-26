@@ -72,7 +72,9 @@ describe('继统：君主被俘后玩家议定监国、另立、迎回或权臣�
     expect(seen).toContain('议立新君');
     const lead = s.chars[s.factions.hongguang.leader];
     expect(lead.royal).toBeTruthy();
-    expect(dateLabel(polityOf(s, 'ming'), s.turn)).toContain(lead.royal!.era.replace(/^监国/, '监国'));
+    // 名号带“监国”者（潞王）只监国、不改元；其余宗室即位改元
+    if (lead.royal!.era.includes('监国')) expect(lead.title).toBe('监国');
+    else expect(dateLabel(polityOf(s, 'ming'), s.turn)).toContain(lead.royal!.era);
   });
   it('权臣主事：不改元，下属服从下降', () => {
     const s = createGame('hongguang');
@@ -104,7 +106,7 @@ describe('明室正统转移', () => {
     expect(court).not.toBe('hongguang');
     expect(s.factions[court].overlord).toBeUndefined();
     expect(s.chars[s.factions[court].leader].royal).toBeTruthy();
-    expect(s.factions[court].name).toMatch(/朝廷/);
+    expect(s.factions[court].name).toMatch(/朝廷|监国/);
   });
 });
 

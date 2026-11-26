@@ -225,7 +225,7 @@ describe('六、兴学的回报', () => {
   it('同城同年：文教高的城，日后成名之士提早出仕，且多些历练', () => {
     const mk = (edu: number) => {
       const s = createGame('hongguang', 1);
-      const c = Object.values(s.chars).find(x => x.status === 'offstage' && x.appear! > s.turn + 12 && s.cities[x.location])!;
+      const c = Object.values(s.chars).find(x => x.status === 'offstage' && x.appear! > s.turn + 12 && s.cities[x.location] && x.id !== 'xuanye')!;   // 储君不作人才出仕
       const base = c.ab.zheng;
       s.cities[c.location].edu = edu;
       s.turn = c.appear! - 6;

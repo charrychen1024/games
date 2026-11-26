@@ -11,18 +11,25 @@ export const eduLead = (edu: number) => Math.max(0, Math.min(12, Math.floor((edu
 /** 出仕时的政务历练：文教每高出 50 十点加一，至多加三 */
 export const eduBonus = (edu: number) => Math.max(0, Math.min(3, Math.floor((edu - 50) / 10)));
 
+/** 储君：不作为人才出仕（由史事立嗣时登场） */
+const HEIRS = new Set(['xuanye']);
+/** 宗嗣：到期必出，不受乡里文教所限 */
+const SCIONS = new Set(['zhengjing']);
+/** 遗民：不仕清、不仕顺（与主战值无关），只投奉明之势力，无处可投则隐居 */
+export const YIMIN = new Set(['fushan', 'sunqifeng', 'songyingxing', 'fangyizhi', 'weixi', 'quedajun', 'liyong']);
+
 export function runTalent(s: GameState) {
   for (const c of Object.values(s.chars)) {
-    if (c.status !== 'offstage' || c.appear === undefined) continue;
+    if (c.status !== 'offstage' || c.appear === undefined || HEIRS.has(c.id)) continue;
     const home = s.cities[c.location];
     if (!home) continue;
     const lead = eduLead(home.edu);
     if (c.appear - lead > s.turn) continue;
-    if (home.edu < 40) continue; // 文教凋零，人才不出
+    if (home.edu < 40 && !SCIONS.has(c.id)) continue; // 文教凋零，人才不出（宗嗣除外）
     let f = c.faction && s.factions[c.faction] && !s.factions[c.faction].defunct ? c.faction : home.controller;
     let fac = s.factions[f];
     const top = fac?.overlord && !s.factions[fac.overlord]?.defunct ? fac.overlord : f;
-    if (!c.faction && (fac?.polity === 'qing' && c.att.hawk > 60 || ['local', 'helan'].includes(f))) {
+    if (!c.faction && (fac?.polity === 'qing' && (c.att.hawk > 60 || YIMIN.has(c.id)) || (YIMIN.has(c.id) && fac?.polity !== 'ming') || ['local', 'helan'].includes(f))) {
       // 不仕清：投就近奉明之势力
       const alt = Object.values(s.cities).filter(x => s.factions[x.controller]?.polity === 'ming' && !s.factions[x.controller].defunct)
         .sort((a, b) => distanceKm(NODE[a.id], NODE[c.location]) - distanceKm(NODE[b.id], NODE[c.location]))[0];

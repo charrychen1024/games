@@ -139,7 +139,7 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
     if (ch) {
       const ans = yield { type: 'choice', choice: ch.pending };
       const idx = ans?.type === 'choice' ? Math.max(0, Math.min(ch.choices.length - 1, ans.index)) : 0;
-      applyChoice(s, def, ch.choices[idx]);
+      applyChoice(s, def, ch.choices[idx], idx, variant);
     } else if (def.choices && !def.chooser?.includes(s.player)) {
       // 电脑一方按第一项处置
       const list = def.choices(s, variant);

@@ -19,6 +19,10 @@ export interface EventDef {
   cond?: (s: GameState) => boolean;
   altered?: (s: GameState) => boolean;
   text: (s: GameState, v: 'history' | 'altered') => string;
+  /** 有玩家抉择时，抉择之前只说缘起（不把可被推翻的结果写成既成事实）；选史实一项后再写 text */
+  prelude?: (s: GameState, v: 'history' | 'altered') => string;
+  /** 改写分支的标题（史实标题如“李自成殒命九宫山”不宜用在没有发生的局面） */
+  altTitle?: string;
   /** 史实对照 */
   history: string;
   source: string;
@@ -43,7 +47,11 @@ export function toneOfTitle(title: string): EventTone {
   if (/破|之战|之役|大捷|斩|北伐|东征|入滇|南下|渡淮|失|争|督师|余部|十三家|逐|退守|扰民/.test(title)) return 'war';
   return 'omen';
 }
-export const toneOf = (def: Pick<EventDef, 'title' | 'tone'>): EventTone => def.tone ?? toneOfTitle(def.title);
+export const toneOf = (def: Pick<EventDef, 'title' | 'tone'>, title = def.title): EventTone => def.tone ?? toneOfTitle(title);
+/** 本次实际显示的标题：改写分支有 altTitle 则用之 */
+export const titleOf = (def: EventDef, v: Variant) => (v === 'altered' && def.altTitle) || def.title;
+/** 这条史事是否要玩家抉择 */
+const asksPlayer = (s: GameState, def: EventDef, v: Variant) => v !== 'player' && !!def.choices && !!def.chooser?.includes(s.player) && def.choices(s, v).length > 0;
 
 /** 此事是否关乎玩家势力的作为、且没有给玩家抉择 */
 export function playerLed(s: GameState, def: EventDef, me = topOf(s, s.player)): boolean {
@@ -78,7 +86,7 @@ export function fireEvent(s: GameState, def: EventDef, variant: Variant) {
   s.events.push({ id: def.id, turn: s.turn, variant });
   if (variant === 'player') {
     const f = s.factions[s.player];
-    report(s, { cat: '线索', tone: 'omen', urgent: false, node: def.node, text: `【${def.title}】史书所载之事，关乎${f?.short ?? '你'}的作为。本局由你作主，不按史实代行。`, history: `史实：${def.history}（${def.source}）`, src: { kind: 'event', ref: def.id } });
+    report(s, { cat: '线索', tone: 'omen', urgent: false, node: def.node, text: `【${def.title}】史书所载此事，本局由你作主（${f?.name ?? '本方'}），不按史实代行。`, history: `史实：${def.history}（${def.source}）`, src: { kind: 'event', ref: def.id } });
     return;
   }
   if (def.kind === 'xiansuo' && variant === 'altered') {
@@ -86,12 +94,15 @@ export function fireEvent(s: GameState, def: EventDef, variant: Variant) {
     return;
   }
   def.effect?.(s, variant);
+  const title = titleOf(def, variant);
+  // 要玩家抉择、又有缘起：月报先只写缘起，结果待抉择后写入
+  const pre = def.prelude && asksPlayer(s, def, variant) ? def.prelude(s, variant) : null;
   report(s, {
     cat: def.kind === 'shishi' ? '史事' : '线索',
-    tone: toneOf(def),
+    tone: toneOf(def, title),
     urgent: false,
     node: def.node,
-    text: `【${def.title}】${def.text(s, variant)}`,
+    text: `【${title}】${pre ?? def.text(s, variant)}`,
     history: `${variant === 'altered' ? '本局与史实不同。' : ''}史实：${def.history}（${def.source}）`,
     src: { kind: 'event', ref: def.id },
   });
@@ -101,10 +112,14 @@ export function choiceFor(s: GameState, def: EventDef, variant: Variant): { pend
   if (variant === 'player' || !def.choices || !def.chooser?.includes(s.player)) return null;
   const choices = def.choices(s, variant);
   if (!choices.length) return null;
-  return { pending: { eventId: def.id, tone: toneOf(def), title: def.title, text: def.text(s, variant), options: choices.map(c => ({ label: c.label, desc: c.desc })) }, choices };
+  const title = titleOf(def, variant);
+  return { pending: { eventId: def.id, tone: toneOf(def, title), title, text: (def.prelude ?? def.text)(s, variant), options: choices.map(c => ({ label: c.label, desc: c.desc })) }, choices };
 }
 
-export function applyChoice(s: GameState, def: EventDef, choice: EventChoice) {
+/** 玩家抉择之后：选了史实一项（第一项）且此前只报了缘起，就把史实经过补进决断 */
+export function applyChoice(s: GameState, def: EventDef, choice: EventChoice, idx = 0, variant: Variant = 'history') {
   const extra = choice.apply(s);
-  report(s, { cat: def.kind === 'shishi' ? '史事' : '线索', tone: toneOf(def), node: def.node, text: `【${def.title}·决断】${choice.label}。${extra ?? ''}`, src: { kind: 'event', ref: def.id } });
+  const title = titleOf(def, variant);
+  const told = idx === 0 && def.prelude && variant !== 'player' ? def.text(s, variant) : '';
+  report(s, { cat: def.kind === 'shishi' ? '史事' : '线索', tone: toneOf(def, title), node: def.node, text: `【${title}·决断】${choice.label}。${told}${extra ?? ''}`, src: { kind: 'event', ref: def.id } });
 }

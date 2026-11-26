@@ -466,10 +466,11 @@ export class SiegeView extends RtView {
     if (best) return { unit: best };
     const [, wy, ws] = this.P(500, WALL_Y);
     const h = WALL_H * ws * this.H / 260;
-    if (sy > wy - h * 1.6 && sy < wy + 8) {
+    // 城墙一带：门段的命中区包住整个门洞，并往墙根外放宽一截（点城门下半截也算撞门）
+    if (sy > wy - h * 1.6 && sy < wy + Math.max(8, h * 0.9)) {
       const [x] = this.unproject(sx, wy - 1);
       const s = Math.max(0, Math.min(SEGMENTS - 1, Math.floor(x / (1000 / SEGMENTS))));
-      return { seg: s };
+      if (sy < wy + 8 || s === GATE_SEG) return { seg: s };
     }
     return {};
   }

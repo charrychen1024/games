@@ -417,7 +417,7 @@ function checkShortage(s: GameState, c: City) {
   if (!visible) return;
   report(s, {
     cat: '急报', urgent: months < 1, node: c.id,
-    text: `${nodeName(c.id)}缺粮：仓粮 ${Math.round(c.grain)} 石，仅够 ${months < 1 ? '不足一' : Math.floor(months)} 个月用度。${cause.text}`,
+    text: `${nodeName(c.id)}缺粮：仓粮 ${Math.round(c.grain)} 石，${months < 1 ? '不足一月之用' : `仅够 ${Math.floor(months)} 个月之用`}。${cause.text}`,
     src: cause.src,
   });
 }

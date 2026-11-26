@@ -38,6 +38,9 @@ export function royalCandidates(s: GameState, f: string) {
     .sort((a, b) => b.royal!.claim - a.royal!.claim || b.ab.wang - a.ab.wang);
 }
 
+/** 宗室名号里带“监国”（如“潞王监国”）：只是监国，不改元、不称帝 */
+const isRegency = (era: string) => era.includes('监国');
+
 export interface SuccessionOpt { kind: 'enthrone' | 'regent' | 'ransom' | 'minister' | 'appointed' | 'summon' | 'join'; char: string; label: string; desc: string; disabled?: string; target?: string }
 export const RANSOM_SILVER = 150000;
 
@@ -50,7 +53,7 @@ export function successionOptions(s: GameState, f: string): SuccessionOpt[] {
   const doves = Object.values(s.chars).filter(c => c.faction === f && c.status === 'active' && c.att.hawk < 0).map(c => c.name).slice(0, 3);
   const royals = f === courtOf(s) ? royalCandidates(s, f) : [];
   for (const r of royals.slice(0, 2)) {
-    out.push({ kind: 'enthrone', char: r.id, label: `拥立${r.name}即位，改元${r.royal!.era.replace(/^监国/, '')}`, desc: `支持：${hawks.join('、') || '主战诸臣'}。代价：${old && old.status === 'captured' ? `旧君${old.name}从此再难迎回；` : ''}各镇须重新归心（服从 −5）。` });
+    out.push({ kind: 'enthrone', char: r.id, label: isRegency(r.royal!.era) ? `奉${r.name}监国` : `拥立${r.name}即位，改元${r.royal!.era}`, desc: `支持：${hawks.join('、') || '主战诸臣'}。代价：${old && old.status === 'captured' ? `旧君${old.name}从此再难迎回；` : ''}各镇须重新归心（服从 −5）。` });
   }
   if (royals[0] && old?.status === 'captured') out.push({ kind: 'regent', char: royals[0].id, label: `请${royals[0].name}监国，待迎旧君`, desc: `支持：${doves.join('、') || '持重诸臣'}。代价：名分未定，号令稍弱（服从 −8）。` });
   if (old?.status === 'captured') {
@@ -95,13 +98,14 @@ export function applySuccession(s: GameState, f: string, opt: SuccessionOpt): st
     case 'enthrone': {
       fac.leader = c.id;
       c.faction = f;
-      c.title = c.royal!.era.startsWith('监国') ? '监国' : `${c.royal!.era}帝`;
+      const regency = isRegency(c.royal!.era);
+      c.title = regency ? '监国' : `${c.royal!.era}帝`;
       if (s.cities[c.location]?.controller === f) fac.capital = c.location;
-      pushEra(s, fac.polity, c.royal!.era);
-      if (fac.polity === 'ming') fac.name = `${c.royal!.era.replace(/^监国/, '')}朝廷`;
+      if (!regency) pushEra(s, fac.polity, c.royal!.era);
+      if (fac.polity === 'ming') fac.name = regency ? c.royal!.era : `${c.royal!.era}朝廷`;
       for (const v of vassals) adjustLoyalty(s, v.id, -5, `新君${c.name}即位`);
-      report(s, { cat: '人事', urgent: f === s.player, node: fac.capital, text: `${c.name}即位于${nodeName(fac.capital)}，改元${c.royal!.era}。${factionName(s, f)}号令天下。` });
-      return `${c.name}即位，改元${c.royal!.era}。`;
+      report(s, { cat: '人事', urgent: f === s.player, node: fac.capital, text: regency ? `${c.name}监国于${nodeName(fac.capital)}。${factionName(s, f)}号令天下。` : `${c.name}即位于${nodeName(fac.capital)}，改元${c.royal!.era}。${factionName(s, f)}号令天下。` });
+      return regency ? `${c.name}监国。` : `${c.name}即位，改元${c.royal!.era}。`;
     }
     case 'regent': {
       fac.leader = c.id;

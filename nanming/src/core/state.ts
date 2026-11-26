@@ -84,6 +84,12 @@ export function adjustLoyalty(s: GameState, faction: string, delta: number, reas
 }
 
 export const citiesOf = (s: GameState, f: FactionId): City[] => Object.values(s.cities).filter(c => c.controller === f);
+/** “某方某将”：势力名已含将名（张献忠部 · 张献忠）只写一次；单字势力名（清）补“军”字 */
+export function sideAndCommander(s: GameState, f: FactionId, char: string): string {
+  const fn = factionName(s, f), cn = charName(s, char);
+  if (!cn || fn.includes(cn)) return fn;
+  return `${fn}${fn.length === 1 ? '军' : ''}${cn}`;
+}
 /** 本方府库所在：治所仍在本方手里才算，治所已失则为空（不得动用敌城府库） */
 export const treasuryOf = (s: GameState, f: FactionId): string => { const id = s.factions[f]?.capital; return id && s.cities[id]?.controller === f ? id : ''; };
 export const armiesOf = (s: GameState, f: FactionId): Army[] => Object.values(s.armies).filter(a => a.faction === f);

@@ -3,7 +3,7 @@
 import { isRuler } from './regime';
 import type { Army, ArmyOrder, GameState, NodeId } from './types';
 import { NODE, routeBetween, shortestPath, neighbors } from '../data/geography';
-import { armiesAt, friendly, hostile, report, nodeName, factionName, charName, troopsText, bump, newId, topOf, adjustAtt } from './state';
+import { armiesAt, friendly, hostile, report, nodeName, factionName, charName, troopsText, bump, newId, topOf, adjustAtt, sideAndCommander } from './state';
 import { createBattle, makeSide, sideTroops, type BattleSide, type BattleState, type Weather, type Terrain, outcomeText, lossesOf } from './battle';
 import { hasTrait } from './people';
 import { rngFor } from './rng';
@@ -234,7 +234,7 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
       const mine = attArmies.filter(a => s.armies[a.id] && topOf(s, a.faction) === s.player && a.order.kind === 'siege' && a.order.assault);
       for (const a of mine) a.order = { ...a.order, assault: false } as typeof a.order;
       if (mine.length) report(s, { cat: '军报', urgent: true, node: b.node, act: 'siege', from: b.att.faction, to: b.def.faction,
-        text: `${nodeName(b.node)}攻城不克（攻方折损 ${troopsText(attLoss)}，守方折损 ${troopsText(defLoss)}）。各军改为围困，断其粮道；城防、城门的损坏留到下月。要再攻，请重新下令攻城。`, src: { kind: 'battle', ref: b.id } });
+        text: attLoss + defLoss < 1 ? `${nodeName(b.node)}：各军围而不攻，断其粮道。要攻城时，请重新下令。` : `${nodeName(b.node)}攻城不克（攻方折损 ${troopsText(attLoss)}，守方折损 ${troopsText(defLoss)}）。各军改为围困，断其粮道；城防、城门的损坏留到下月。要再攻，请重新下令攻城。`, src: { kind: 'battle', ref: b.id } });
     }
   }
   void winnerSide;
@@ -575,7 +575,7 @@ export function updateSieges(s: GameState): string[] {
       const inv = friendly(s, city.controller, s.player) || friendly(s, here[0].faction, s.player);
       const mineDirect = city.controller === s.player || here[0].faction === s.player;
       report(s, { cat: '军报', act: 'siege', from: here[0].faction, to: city.controller, node, urgent: mineDirect, faction: inv ? undefined : here[0].faction,
-        text: `${factionName(s, here[0].faction)}${charName(s, here[0].commander)}兵临${nodeName(node)}城下，开始围城。守军 ${troopsText(city.garrison)}，城防 ${Math.round(city.wall)}。` });
+        text: `${sideAndCommander(s, here[0].faction, here[0].commander)}兵临${nodeName(node)}城下，开始围城。守军 ${troopsText(city.garrison)}，城防 ${Math.round(city.wall)}。` });
     } else {
       existing.armies = here.map(a => a.id);
       // 守军逐月修补：城门修回三成，塌段补起一些（修不到原有城防之上）

@@ -151,6 +151,12 @@ export function defDecision(sim: SiegeSim, d: 'surrender' | 'abandon') {
   for (const u of sim.units) if (u.side === 'def' && u.troops >= 1 && u.state !== 'gone') { if (u.engaged || u.state === 'sortie') u.troops *= 0.85; u.state = 'gone'; }
   end(sim, 'att', 'abandon', `${sim.def.commanderName}弃城突围，率残部退走。`);
 }
+/** 攻方开战前决意围而不攻：全军不动，城未克，围城照旧（无伤亡） */
+export function attWithdraw(sim: SiegeSim) {
+  if (sim.over) return;
+  for (const u of sim.units) if (u.side === 'att' && u.state !== 'gone') u.state = 'gone';
+  end(sim, 'def', 'retreat', `${sim.att.name}围而不攻，深沟高垒，断其粮道。`);
+}
 /** 阵前劝降：攻方遣人入城说降守将，一战一次。看攻方外交、守将降意、守军军心与兵势。成则开城出降。 */
 export function persuadeOdds(sim: SiegeSim): number {
   const ratio = armyStrength(sim, 'att') / Math.max(1, armyStrength(sim, 'def'));

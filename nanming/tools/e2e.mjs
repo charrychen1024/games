@@ -431,6 +431,11 @@ try {
   // 试玩反馈：攻城时点劝降，敌将说的是鼓舞士气的话 → 应是我方喊话、守将拒降或开城
   {
     const pd = page.evaluate(() => NM_testBattle('siege', 'att'));
+    // 攻城方开战前先定方略：写明兵力比、城防与建议
+    await page.waitForSelector('#att-assault', { timeout: 8000 }).catch(() => {});
+    const plan = await text('#battle .dc-head');
+    check('攻城方开战前有“攻城方略”：兵力比、城防与建议，可强攻、交部将或围而不攻', plan.includes('攻城方略') && /比 1/.test(plan) && await visible('#att-blockade') && await visible('#battle-auto'), plan);
+    await page.click('#att-assault').catch(() => {});
     await page.waitForSelector('#siege-persuade', { timeout: 8000 }).catch(() => {});
     await wait(2600);
     await page.click('#siege-persuade').catch(() => {});
