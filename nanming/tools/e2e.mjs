@@ -348,6 +348,31 @@ try {
   await page.mouse.click(yzp[0], yzp[1], { button: 'right' });
   await wait(300);
   check('右键点城即开赴（友城不问宣战）', !!under && (await text('#orders')).includes('开赴' + under), `${under} | ${await text('#orders')}`);
+  // 试玩反馈：选目标时如何取消；能否点野外的敌军
+  await page.evaluate(() => { NM.orders = []; NM.renderAll(); });
+  await page.click('#armybar .achip[data-army="a_shi"]'); await wait(300);
+  await page.click('#ring-march'); await wait(250);
+  const barOn = await visible('#targetbar');
+  await page.click('#target-cancel'); await wait(200);
+  const cancelBtn = !(await visible('#targetbar')) && (await page.evaluate(() => !NM.map.view.targeting));
+  await page.click('#armybar .achip[data-army="a_shi"]'); await wait(300);
+  await page.click('#ring-march'); await wait(250);
+  await page.click('#ring-march'); await wait(200);
+  const toggleOff = await page.evaluate(() => !NM.map.view.targeting);
+  await page.click('#armybar .achip[data-army="a_shi"]'); await wait(300);
+  await page.click('#ring-march'); await wait(250);
+  const empty = await page.evaluate(() => { const m = NM.map; for (let y = 200; y < m.h - 200; y += 23) for (let x = 300; x < m.w - 420; x += 29) if (!m.pick(x, y) && document.elementFromPoint(x, y)?.id === 'map') return [x, y]; return null; });
+  if (empty) { await page.mouse.click(empty[0], empty[1]); await wait(250); }
+  const emptyOff = await page.evaluate(() => !NM.map.view.targeting);
+  check('选目标可取消：取消钮、再点出征、点空地', barOn && cancelBtn && toggleOff && emptyOff, JSON.stringify({ barOn, cancelBtn, toggleOff, emptyOff }));
+  await page.click('#armybar .achip[data-army="a_shi"]'); await wait(300);
+  await page.click('#ring-march'); await wait(250);
+  await page.evaluate(() => NM.map.focus('xiangyang', 2.2)); await wait(400);
+  const foeXY = await armyXY('a_bai');
+  if (foeXY) { await page.mouse.click(foeXY[0], foeXY[1]); await wait(400); }
+  const icp = await page.evaluate(() => NM.orders.filter(o => o.kind === 'army' && o.army === 'a_shi').map(o => o.order.target + ':' + o.order.kind).join(','));
+  check('选目标时点野外敌军即开赴其所在截击', !!foeXY && icp.includes('xiangyang:move'), `${JSON.stringify(foeXY)} ${icp}`);
+  await page.keyboard.press('Escape');
 
   console.log('出兵（任一城）');
   await page.evaluate(() => { NM.selectNode('hangzhou'); });

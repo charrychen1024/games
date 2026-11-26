@@ -46,6 +46,10 @@ function canTake(s: GameState, a: Army, node: string): boolean {
   const c = s.cities[node];
   if (!c) return false;
   if (!hostile(s, a.faction, c.controller)) return false;
+  // 城下屯着远强于己的敌军：不去送死（史实路线也要量力）
+  const foe = Object.values(s.armies).filter(x => x.location === node && hostile(s, a.faction, x.faction)).reduce((n, x) => n + armyPower(x, s), 0);
+  const mine = Object.values(s.armies).filter(x => x.faction === a.faction && (x.location === a.location || x.location === node)).reduce((n, x) => n + armyPower(x, s), 0);
+  if (foe > mine * 1.5) return false;
   return true;
 }
 
@@ -97,7 +101,7 @@ export function aiOrders(s: GameState, f: string): Order[] {
       const months = s.sieges[a.order.target].months;
       // 兵少粮尽：解围回城休整
       const besiegers = s.sieges[a.order.target].armies.map(x => s.armies[x]).filter(Boolean).reduce((m, x) => m + armyPower(x, s), 0);
-      if (besiegers < cityDefense(city) * 0.45 || (a.hunger >= 2 && ratio < 1)) {
+      if (besiegers < cityDefense(city) * 0.45 || (a.hunger >= 2 && ratio < 1) || a.morale < 25) {
         const { dist } = distancesFrom(a.location, canSea(a));
         const back = citiesOf(s, f).map(c => c.id).filter(c => dist[c] !== undefined).sort((x, y) => dist[x] - dist[y])[0];
         if (back) { orders.push({ id: id(), kind: 'army', army: a.id, order: { kind: 'move', target: back, attack: false } }); continue; }
@@ -110,6 +114,14 @@ export function aiOrders(s: GameState, f: string): Order[] {
     if (underPlayer && a.order.kind !== 'hold' && a.path.length) continue;
     // 断粮：回粮台
     if (a.hunger > 0 && a.location !== a.supply) { orders.push({ id: id(), kind: 'army', army: a.id, order: { kind: 'move', target: a.supply, attack: false } }); continue; }
+    // 军心将溃：不再进攻、不再围城，回最近的本方城休整（已在本方城则就地休整）
+    if (a.morale < 30) {
+      const here0 = s.cities[a.location];
+      if (here0 && sameTop(s, here0.controller, f)) { if (a.order.kind !== 'hold') orders.push({ id: id(), kind: 'army', army: a.id, order: { kind: 'hold' } }); continue; }
+      const { dist } = distancesFrom(a.location, sea);
+      const rest = citiesOf(s, f).map(c => c.id).filter(cid => dist[cid] !== undefined).sort((x, y) => dist[x] - dist[y])[0];
+      if (rest) { orders.push({ id: id(), kind: 'army', army: a.id, order: { kind: 'move', target: rest, attack: false } }); continue; }
+    }
     // 强敌压境：退守
     const threat = Object.values(s.armies).filter(x => hostile(s, x.faction, f) && (x.location === a.location || neighbors(a.location).some(nb => nb.to === x.location)));
     const threatPower = threat.reduce((sum, x) => sum + armyPower(x, s), 0);

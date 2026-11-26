@@ -63,6 +63,10 @@ const alive = (u: FUnit) => u.state !== 'gone' && u.troops >= 1;
 const foeOf = (s: 'att' | 'def') => (s === 'att' ? 'def' : 'att');
 /** 各方的后方：攻方在纵 1000 一侧 */
 const homeY = (s: 'att' | 'def') => (s === 'att' ? 1080 : -80);
+/** 追击：一方全军溃败后，胜方追杀溃兵的时限（秒）；溃兵逃出战场或时限到即收兵 */
+export const PURSUIT = 40;
+/** 敌军逼近（接战、中箭、或最近的敌营在两百步内）：士气再低，未见敌也不会自溃 */
+const pressed = (sim: FieldSim, u: FUnit) => u.engaged || u.hit > 0 || sim.units.some(x => x.side !== u.side && active(x) && dist(u, x) < 220);
 const dist = (a: FUnit, b: FUnit) => Math.hypot(a.x - b.x, a.y - b.y);
 export const onRidge = (sim: FieldSim, x: number, y: number) => sim.mode === 'field' && sim.terrain === 'hills' && x > RIDGE.x0 && x < RIDGE.x1 && y > RIDGE.y0 && y < RIDGE.y1;
 export const inRiver = (sim: FieldSim, x: number, y: number) => sim.mode === 'field' && sim.terrain === 'river' && y > RIVER.y0 && y < RIVER.y1 && (x < RIVER.ford0 || x > RIVER.ford1);
@@ -78,7 +82,8 @@ export function createField(b: BattleState): FieldSim {
   const mode: 'field' | 'naval' = b.kind === 'naval' ? 'naval' : 'field';
   const units: FUnit[] = [];
   for (const side of ['att', 'def'] as const) compose(units, side, b[side], mode, b.weather, rng);
-  const mA = avgMorale(b.att), mD = avgMorale(b.def);
+  // 临阵尚有余勇：军心再低，开战时全军军心不低于 25（各营士气在 compose 里不低于 22），免得未见敌便全线崩溃
+  const mA = Math.max(25, avgMorale(b.att)), mD = Math.max(25, avgMorale(b.def));
   const tot = (s: BattleSide) => s.lanes.reduce((n, l) => n + l.troops, 0) + (s.reserve ?? 0);
   const sim: FieldSim = {
     mode, terrain: b.terrain, t: 0, seed: b.seed, units,
@@ -95,7 +100,7 @@ function avgMorale(s: BattleSide) { const t = s.lanes.reduce((n, l) => n + l.tro
 
 function compose(units: FUnit[], side: 'att' | 'def', s: BattleSide, mode: 'field' | 'naval', weather: string, rng: Rng) {
   const total = s.lanes.reduce((n, l) => n + l.troops, 0) + (s.reserve ?? 0);
-  const morale = avgMorale(s);
+  const morale = Math.max(22, avgMorale(s));
   const mix = s.mix;
   const parts: { kind: FKind; name: string; share: number; pos: [number, number] }[] = [];
   if (mode === 'field') {
@@ -204,7 +209,8 @@ function moveAll(sim: FieldSim, dt: number) {
     if (u.state === 'rout') {
       // 溃兵奔回本阵之后；士气回升、军心尚在则收拢再战；奉令撤退者离场
       const ry = u.side === 'att' ? 880 : 120;
-      if (u.order.t === 'retreat') { if (goTo(sim, u, clamp(u.x, 120, 880), homeY(u.side), dt)) u.state = 'gone'; continue; }
+      // 全军已溃（追击中）：溃兵只顾逃出战场
+      if (u.order.t === 'retreat' || sim.flags['pursuit' + u.side] !== undefined) { if (goTo(sim, u, clamp(u.x, 120, 880), homeY(u.side), dt)) u.state = 'gone'; continue; }
       goTo(sim, u, clamp(u.x, 150, 850), ry, dt);
       if (!contacts(sim, u).length) u.morale = Math.min(100, u.morale + 0.7 * dt);
       const behind = u.side === 'att' ? u.y > ry - 20 : u.y < ry + 20;
@@ -240,7 +246,7 @@ function moveAll(sim: FieldSim, dt: number) {
       case 'move': u.state = goTo(sim, u, o.x, o.y, dt) ? 'idle' : 'move'; break;
       case 'attack': {
         let tg = sim.units.find(x => x.id === o.target);
-        if (!tg || !alive(tg) || (tg.state === 'rout' && u.kind !== 'cav')) {
+        if (!tg || !alive(tg) || (tg.state === 'rout' && u.kind !== 'cav' && sim.flags['pursuit' + tg.side] === undefined)) {
           // 目标已溃或已灭：就近再找一营（骑兵追溃兵）
           tg = nearestFoe(sim, u, x => active(x) || (u.kind === 'cav' && x.state === 'rout' && dist(u, x) < 260));
           if (!tg) { u.order = { t: 'hold' }; u.state = 'idle'; break; }
@@ -332,7 +338,7 @@ function fightAll(sim: FieldSim, dt: number, rng: Rng) {
         const key = `rear${a.id}${d.id}`;
         if (!sim.flags[key]) { sim.flags[key] = 1; ev(sim, 'flank', `${sim[a.side].name}${a.name}抄到${sim[d.side].name}${d.name}背后！`, { side: a.side, unit: a.id }); }
       }
-      if (onRidge(sim, d.x, d.y) && !onRidge(sim, a.x, a.y)) m *= 0.75;      // 仰攻高地
+      if (onRidge(sim, d.x, d.y) && !onRidge(sim, a.x, a.y)) m *= 0.65;      // 仰攻高地
       if (inRiver(sim, a.x, a.y)) m *= 0.8;
       if (inRiver(sim, d.x, d.y)) m *= 1.25;
       hurt(d, frontage(a.troops) * power(sim, a) * 0.0036 * m * share * jit() * dt, shock);
@@ -356,6 +362,15 @@ function fightAll(sim: FieldSim, dt: number, rng: Rng) {
     if (inRiver(sim, d.x, d.y)) rate *= 1.2;
     hurt(d, a.troops * rate * power(sim, a) * (a.kind === 'gun' ? rain : 0.8 + rain * 0.2) * fall * jit() * dt, a.kind === 'art' ? 1.3 : 1);
     a.engaged = true;
+  }
+  // 溃兵被追：沿途逃散、被俘，敌近时每秒折去千分之三，有骑兵追则千分之六
+  for (const u of all) {
+    if (u.state !== 'rout') continue;
+    const near = sim.units.filter(x => x.side !== u.side && active(x) && dist(u, x) < 170);
+    if (!near.length) continue;
+    const cav = near.some(x => x.kind === 'cav');
+    const n = u.troops * (cav ? 0.006 : 0.003) * dt;
+    u.troops -= n; u.hit += n;
   }
   // 3. 火船：接敌即燃，顺风大成
   for (const f of all) {
@@ -384,7 +399,7 @@ function moraleAll(sim: FieldSim, dt: number) {
     const cap = sim[u.side].morale0 + 10;
     if (!u.engaged) u.morale = Math.min(cap, u.morale + 0.5 * dt);
     u.morale = clamp(u.morale, 0, 100);
-    if (u.morale < 12) { u.state = 'rout'; u.charge = 0; ev(sim, 'rout', `${sim[u.side].name}${u.name}溃散！`, { side: u.side, unit: u.id }); }
+    if (u.morale < 12 && pressed(sim, u)) { u.state = 'rout'; u.charge = 0; ev(sim, 'rout', `${sim[u.side].name}${u.name}溃散！`, { side: u.side, unit: u.id }); }
   }
   for (const sd of ['att', 'def'] as const) {
     const list = sim.units.filter(u => u.side === sd && active(u));
@@ -400,7 +415,7 @@ function moraleAll(sim: FieldSim, dt: number) {
     const r = sim.resolve[sd];
     if (r < 30 && !sim.flags['shaky' + sd]) { sim.flags['shaky' + sd] = 1; ev(sim, 'shaky', `${sim[sd].name}军心动摇！`, { side: sd }); }
     if (r < 15 && !sim.flags['waver' + sd]) { sim.flags['waver' + sd] = 1; ev(sim, 'waver', `${sim[sd].name}将溃——士气低落的营伍开始后退！`, { side: sd }); }
-    if (r < 15) for (const u of list) if (u.morale < 30) u.state = 'rout';
+    if (r < 15) for (const u of list) if (u.morale < 30 && pressed(sim, u)) u.state = 'rout';
     if (r >= 35) delete sim.flags['waver' + sd];
   }
 }
@@ -414,15 +429,27 @@ function settleF(sim: FieldSim) {
   for (const sd of ['att', 'def'] as const) {
     const foe = foeOf(sd);
     const act = sim.units.filter(u => u.side === sd && active(u));
-    if (sim.resolve[sd] <= 0 || (!act.length && !sim.flags['retreat' + sd])) {
-      for (const u of sim.units) if (u.side === sd && alive(u)) u.state = 'rout';
-      endF(sim, foe, sd === 'def' ? 'rout' : 'collapse', `${sim[sd].name}全军溃败，${sim[foe].name}大胜。`);
-      return;
+    const pk = 'pursuit' + sd;
+    // 军心归零：已与敌交手（或开战一分钟后仍在场）才全线崩溃
+    const broke = sim.resolve[sd] <= 0 && (sim.t > 60 || sim.units.some(u => u.side === sd && alive(u) && pressed(sim, u)));
+    if (sim.flags[pk] === undefined && (broke || (!act.length && !sim.flags['retreat' + sd]))) {
+      // 全军溃败：不当场收场，胜方追杀一阵，溃兵逃出战场或追击时限到才定局
+      for (const u of sim.units) if (u.side === sd && alive(u)) { u.state = 'rout'; u.charge = 0; }
+      sim.flags[pk] = sim.t;
+      ev(sim, 'rout', `${sim[sd].name}全军溃退，${sim[foe].name}乘势追杀！`, { side: foe });
+    }
+    if (sim.flags[pk] !== undefined) {
+      const left = sim.units.filter(u => u.side === sd && alive(u));
+      if (!left.length || sim.t - sim.flags[pk] >= PURSUIT) {
+        for (const u of left) u.state = 'gone';
+        endF(sim, foe, sd === 'def' ? 'rout' : 'collapse', `${sim[sd].name}全军溃败，${sim[foe].name}大胜。`);
+        return;
+      }
     }
   }
   for (const sd of ['att', 'def'] as const) {
     const mine = sim.units.filter(u => u.side === sd && alive(u));
-    if (sim.flags['retreat' + sd] && mine.every(u => u.order.t === 'retreat' || u.state === 'rout')) {
+    if (sim.flags['pursuit' + sd] === undefined && sim.flags['retreat' + sd] && mine.every(u => u.order.t === 'retreat' || u.state === 'rout')) {
       const off = mine.every(u => (sd === 'att' ? u.y > 960 : u.y < 40));
       if (!mine.length || off) { for (const u of mine) u.state = 'gone'; endF(sim, foeOf(sd), 'retreat', `${sim[sd].name}收兵退走，${sim[foeOf(sd)].name}据有战场。`); return; }
     }
@@ -445,9 +472,21 @@ export function aiField(sim: FieldSim, side: 'att' | 'def', opts: { eager?: bool
   const set = (u: FUnit, o: FOrder) => { if (JSON.stringify(u.order) !== JSON.stringify(o)) { cmds.push({ unit: u.id, side, order: o }); commandF(sim, { unit: u.id, side, order: o }); } };
   const mine = sim.units.filter(u => u.side === side && active(u));
   const foes = sim.units.filter(u => u.side !== side && active(u));
-  if (!mine.length || !foes.length) return cmds;
+  if (!mine.length || (!foes.length && sim.flags['pursuit' + foeOf(side)] === undefined)) return cmds;
   const sa = strengthF(sim, side), sf = strengthF(sim, foeOf(side));
-  if (!opts.eager && sim.t > 40 && ((sim.resolve[side] < 24 && sa < sf * 0.9) || sa < sf * 0.45)) {
+  // 追击：敌已全溃，各营追杀溃兵（步卒追近处的，骑兵追远的）
+  if (sim.flags['pursuit' + foeOf(side)] !== undefined) {
+    const routers = sim.units.filter(u => u.side !== side && alive(u));
+    for (const u of mine) {
+      if (u.kind === 'art' || u.kind === 'gun' || u.kind === 'fire') continue;
+      const t = routers.slice().sort((a, b) => dist(u, a) - dist(u, b))[0];
+      if (t && (u.kind === 'cav' || dist(u, t) < 300)) set(u, { t: 'attack', target: t.id });
+    }
+    return cmds;
+  }
+  // 撤退：两军照面（或已交手）之后才会自觉不敌而退，不会未见敌就走
+  const met = sim.units.some(m => m.side === side && alive(m) && (m.engaged || m.hit > 0 || foes.some(f => dist(m, f) < 320)));
+  if (!opts.eager && sim.t > 40 && met && ((sim.resolve[side] < 24 && sa < sf * 0.9) || sa < sf * 0.45)) {
     commandF(sim, { unit: 'all', side, order: { t: 'retreat' } });
     for (const u of mine) cmds.push({ unit: u.id, side, order: { t: 'retreat' } });
     return cmds;

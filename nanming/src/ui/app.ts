@@ -110,6 +110,8 @@ export class App {
   lastPills: Record<string, number> = {};
   hintStep = 0;
   targetCb: ((node: NodeId) => void) | null = null;
+  /** 选目标时可否点敌军（出征、进攻：点敌军即开赴其所在截击） */
+  targetArmy: ((foe: string) => void) | null = null;
   drag: { x: number; y: number; moved: boolean } | null = null;
 
   constructor() {
@@ -333,7 +335,18 @@ export class App {
       if (!this.s) return;
       const r = canvas.getBoundingClientRect();
       const p = this.map.pick(e.clientX - r.left, e.clientY - r.top);
-      if (this.targetCb) { if (p?.kind === 'node') { const cb = this.targetCb; this.endTarget(); cb(p.id); } return; }
+      if (this.targetCb) {
+        // 选目标中：点城即去；点敌军即截击；点本方另一军改选它；点空地取消
+        if (p?.kind === 'node') { const cb = this.targetCb; this.endTarget(); cb(p.id); return; }
+        if (p?.kind === 'army') {
+          const o = this.s.armies[p.id];
+          if (o && this.isMineOrVassal(o.faction)) { this.endTarget(); this.selectArmy(p.id); return; }
+          if (o && this.targetArmy) { const cb = this.targetArmy; this.endTarget(); cb(p.id); return; }
+          return;
+        }
+        this.endTarget(); this.toast('已取消', 'close');
+        return;
+      }
       if (!p) { this.closePanel(); return; }
       if (p.kind === 'node') this.selectNode(p.id); else this.selectArmy(p.id);
     });
@@ -343,9 +356,11 @@ export class App {
       if (!this.s || this.resolving) return;
       const id = this.map.view.selectedArmy;
       const a = id ? this.s.armies[id] : null;
-      if (!a || !this.isMineOrVassal(a.faction)) return;
       const r = canvas.getBoundingClientRect();
       const p = this.map.pick(e.clientX - r.left, e.clientY - r.top);
+      // 选目标中右键点空处：取消
+      if (this.targetCb && !p) { this.endTarget(); this.toast('已取消', 'close'); return; }
+      if (!a || !this.isMineOrVassal(a.faction)) return;
       const node = p?.kind === 'node' ? p.id : p?.kind === 'army' ? this.s.armies[p.id]?.location : null;
       if (node) { this.endTarget(); this.issueMarch(a.id, node); }
     });
@@ -459,6 +474,9 @@ export class App {
       // 敌军的去向与日程不得而知，只见其所在
       const seen = mine || friendly(s, s.player, a.faction);
       tip.append(h('div', { class: 'tt-h' }, a.name), row('person', charName(s, a.commander)), row('troops', mine ? troopsText(a.troops) : roughTroops(a.troops)), row('move', seen ? armyOrderText(a.order) : a.progress > 0 ? '行军中，去向不明' : '驻扎'));
+      if (this.map.view.targeting && this.targetArmy && !mine) {
+        tip.append(h('div', { class: 'mc-act' }, hostile(s, s.player, a.faction) ? `左键：开赴${nodeName(a.location)}截击` : '未交战，不能截击'));
+      }
     }
     tip.classList.remove('hidden');
     tip.style.left = Math.min(window.innerWidth - 270, x + 16) + 'px';
@@ -509,16 +527,39 @@ export class App {
     ]);
   }
 
-  beginTarget(army: string, text: string, cb: (node: NodeId) => void) {
+  /** 进入选目标：屏幕上方一条提示带“取消”；点空地、右键、Esc、再点一次出征都可取消 */
+  beginTarget(army: string, text: string, cb: (node: NodeId) => void, onArmy?: (foe: string) => void) {
     this.map.view.targeting = { army, path: null };
     this.targetCb = cb;
+    this.targetArmy = onArmy ?? null;
     ($('#map') as HTMLCanvasElement).classList.add('targeting');
-    this.toast(text + '（Esc 取消）', 'target');
+    document.getElementById('targetbar')?.remove();
+    const bar = h('div', { id: 'targetbar', class: 'hud' }, ic('target'), h('span', null, text),
+      h('small', null, '点空地、右键或 Esc 也可取消'),
+      h('button', { id: 'target-cancel', onclick: (e: Event) => { e.stopPropagation(); click(); this.endTarget(); } }, ic('close'), '取消'));
+    $('#app').append(bar);
+    gsap.fromTo(bar, { y: -12, opacity: 0 }, { y: 0, opacity: 1, duration: isReduced() ? 0.01 : 0.2 });
   }
   endTarget() {
     this.map.view.targeting = null;
     this.targetCb = null;
+    this.targetArmy = null;
     ($('#map') as HTMLCanvasElement).classList.remove('targeting');
+    document.getElementById('targetbar')?.remove();
+  }
+  /** 截击敌军：开赴其所在之地；两军同处即野战 */
+  issueIntercept(armyId: string, foeId: string) {
+    const s = this.s!, a = s.armies[armyId], foe = s.armies[foeId];
+    if (!a || !foe) return;
+    if (!hostile(s, a.faction, foe.faction)) { this.toast(`与${s.factions[foe.faction].short}未交战，不能截击；可点其城宣战`, 'close'); return; }
+    const mi = this.marchInfo(armyId, foe.location);
+    if (!mi.path) { this.toast('无路可达', 'close'); return; }
+    if (foe.location === a.location) { this.toast(`${foe.name}就在此地，月末两军相遇即交战`, 'war'); return; }
+    const c = s.cities[foe.location];
+    const attackCity = !!c && hostile(s, a.faction, c.controller);
+    const order = { kind: 'move' as const, target: foe.location, attack: attackCity };
+    if (a.faction !== s.player) this.formCommand(armyId, order); else this.addOrder({ id: this.newOrderId(), kind: 'army', army: armyId, order });
+    this.toast(`${a.name}开赴${nodeName(foe.location)}截击${foe.name}${foe.progress > 0 || foe.path.length ? '（敌在行军，未必遇上）' : ''}`, 'war');
   }
 
   /* ================= 工具 ================= */
@@ -798,7 +839,7 @@ export class App {
     const here = s.cities[a.location];
     const B = (bid: string, icon: string, label: string, key: string, fn: () => void) => h('button', { class: 'rbtn', id: bid, 'data-tip': `${label}${key ? `（${key}）` : ''}`, onclick: (e: Event) => { e.stopPropagation(); click(); fn(); } }, ic(icon), h('span', null, label));
     const btns: HTMLElement[] = [
-      B('ring-march', 'move', vassal ? '开赴' : '出征', 'M', () => this.beginTarget(id, `点选${a.name}要去的城（敌城即进攻）`, n => this.issueMarch(id, n))),
+      B('ring-march', 'move', vassal ? '开赴' : '出征', 'M', () => this.targetCb ? this.endTarget() : this.beginTarget(id, `点选${a.name}要去的城或要截击的敌军`, n => this.issueMarch(id, n), foe => this.issueIntercept(id, foe))),
       B('ring-hold', 'hold', '驻扎', 'H', () => vassal ? this.formCommand(id, { kind: 'hold' }) : this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'hold' } })),
     ];
     if (!vassal && a.progress === 0 && here && hostile(s, s.player, here.controller)) {
@@ -1156,7 +1197,7 @@ export class App {
       sec.append(h('div', { class: 'sec-title' }, ic('war'), '军令'));
       const acts = h('div', { class: 'acts' },
         A('act-move', 'move', '行军', () => this.beginTarget(id, `点选${a.name}要去的城`, n => this.issueMarch(id, n, 'move'))),
-        A('act-attack', 'attack', '进攻', () => this.beginTarget(id, `点选${a.name}要攻的城`, n => this.issueMarch(id, n, 'attack'))),
+        A('act-attack', 'attack', '进攻', () => this.beginTarget(id, `点选${a.name}要攻的城或敌军`, n => this.issueMarch(id, n, 'attack'), foe => this.issueIntercept(id, foe))),
         A('act-hold', 'hold', '驻扎', () => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'hold' } })),
       );
       const here = s.cities[a.location];
@@ -1171,7 +1212,7 @@ export class App {
       sec.append(meter(f.loyalty ?? 50, mcol(f.loyalty ?? 50)));
       sec.append(h('div', { class: 'acts', style: { marginTop: '8px' } },
         A('act-command-move', 'move', '开赴', () => this.beginTarget(id, `点选要${f.short}部去的城`, n => this.issueMarch(id, n, 'move'))),
-        A('act-command-attack', 'attack', '进攻', () => this.beginTarget(id, `点选要${f.short}部攻的城`, n => this.issueMarch(id, n, 'attack'))),
+        A('act-command-attack', 'attack', '进攻', () => this.beginTarget(id, `点选要${f.short}部攻的城或敌军`, n => this.issueMarch(id, n, 'attack'), foe => this.issueIntercept(id, foe))),
         A('act-command-hold', 'hold', '驻守', () => this.formCommand(id, { kind: 'hold' })),
         A('act-reward', 'reward', '犒赏', () => this.formReward(a.faction)),
       ));

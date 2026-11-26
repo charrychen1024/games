@@ -463,8 +463,8 @@ export function aiCommands(sim: SiegeSim, side: 'att' | 'def', opts: { eager?: b
   const mine = sim.units.filter(u => u.side === side && active(u));
   if (side === 'att') {
     const sa = armyStrength(sim, 'att'), sd = armyStrength(sim, 'def');
-    // 大势已去，或顿兵过久而仍无缺口：鸣金
-    if (!opts.eager && ((sim.resolve.att < 26 && sa < sd * 2.2) || (sim.t > 600 && !openings(sim).length && sim.resolve.att < 45) || (sim.t > 900 && !openings(sim).length) || sa < sd * 0.7)) {
+    // 大势已去，或顿兵过久而仍无缺口：鸣金。兵力不及守军七成者也要先试攻一阵（四十五秒）再收兵，不会一照面就走
+    if (!opts.eager && ((sim.resolve.att < 26 && sa < sd * 2.2) || (sim.t > 600 && !openings(sim).length && sim.resolve.att < 45) || (sim.t > 900 && !openings(sim).length) || (sim.t > 45 && sa < sd * 0.7))) {
       for (const u of mine) set(u, { t: 'retreat' });
       if (!sim.flags.retreatEv) { sim.flags.retreatEv = 1; ev(sim, 'retreat', `${sim.att.commanderName}见势不可为，鸣金收兵。`, { side: 'att' }); }
       return cmds;
