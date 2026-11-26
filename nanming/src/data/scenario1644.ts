@@ -5,6 +5,7 @@ import { CHARACTERS } from './characters';
 import { FACTIONS } from './factions';
 import { NODES } from './geography';
 import { setArmyOrder } from '../core/military';
+import { staffAdmin } from '../core/people';
 
 // [控制者, 人口(万), 农, 商, 文教, 城防, 驻军, 仓粮, 府库, 民心, 吏治, 主官, 海贸]
 type Row = [string, number, number, number, number, number, number, number, number, number, number, string?, number?];
@@ -256,5 +257,6 @@ export function createState1644(seed = 1644): GameState {
   };
   // 李自成正自山西撤回关中
   setArmyOrder(state, state.armies.a_li, { kind: 'move', target: 'xian', attack: false });
+  staffAdmin(state);
   return state;
 }

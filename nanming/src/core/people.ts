@@ -101,7 +101,7 @@ const MIL_TITLES = ['营将', '千总', '把总', '武举', '乡勇首领'];
 
 const GEN_NAMES = new WeakMap<GameState, Set<string>>();
 /** 生成一位地方人物。edu 为乡里文教（高则多出能吏），名字不与在世者重复 */
-export function genLocal(s: GameState, f: string, node: string, rng: Rng, edu: number): Character {
+export function genLocal(s: GameState, f: string, node: string, rng: Rng, edu: number, office?: string): Character {
   const used = GEN_NAMES.get(s) ?? new Set<string>(); GEN_NAMES.set(s, used);
   const taken = new Set([...Object.values(s.chars).map(c => c.name), ...used]);
   let name = '';
@@ -111,7 +111,7 @@ export function genLocal(s: GameState, f: string, node: string, rng: Rng, edu: n
     name = sur + GIVEN_A[Math.floor(rng.next() * GIVEN_A.length)] + (one ? '' : GIVEN_B[Math.floor(rng.next() * GIVEN_B.length)]);
   }
   used.add(name);
-  const martial = rng.chance(0.4);
+  const martial = office ? false : rng.chance(0.4);
   const gift = rng.chance(0.06 + Math.max(0, edu - 50) / 400);   // 偶有出众者
   const lift = Math.round((edu - 50) / 5);
   const r = (lo: number, hi: number) => rng.int(lo, hi);
@@ -119,7 +119,7 @@ export function genLocal(s: GameState, f: string, node: string, rng: Rng, edu: n
   const ab = martial
     ? { tong: main, zheng: r(20, 45), mou: r(25, 55), wai: r(15, 40), wang: r(20, 40) }
     : { tong: r(15, 40), zheng: main, mou: r(30, 60), wai: r(30, 55), wang: r(25, 50) };
-  const title = martial ? MIL_TITLES[Math.floor(rng.next() * MIL_TITLES.length)] : CIVIL_TITLES[Math.floor(rng.next() * CIVIL_TITLES.length)];
+  const title = office ?? (martial ? MIL_TITLES[Math.floor(rng.next() * MIL_TITLES.length)] : CIVIL_TITLES[Math.floor(rng.next() * CIVIL_TITLES.length)]);
   const id = `gen${s.nextId++}`;
   const traits: TraitId[] = [];
   if (gift || rng.chance(0.3)) {
@@ -127,7 +127,9 @@ export function genLocal(s: GameState, f: string, node: string, rng: Rng, edu: n
     traits.push(pool[Math.floor(rng.next() * pool.length)]);
   }
   if (rng.chance(0.08)) traits.push(martial ? 'kuli' : 'tan');
-  const bio = `${nodeName(node)}人，${title}${gift ? '，乡里称其才' : ''}。应${factionName(s, f)}之招出仕。`;
+  const bio = office
+    ? `${factionName(s, f)}所设${nodeName(node)}${office}，守土治民${gift ? '，颇有能名' : ''}。`
+    : `${nodeName(node)}人，${title}${gift ? '，乡里称其才' : ''}。应${factionName(s, f)}之招出仕。`;
   return { id, name, faction: f, title, ab: { ...ab, tong: Math.min(90, ab.tong), zheng: Math.min(90, ab.zheng) }, att: { loyalty: r(65, 85), surrender: r(20, 45), hawk: r(-20, 50) },
     attLog: [], location: node, status: 'active', bio, traits, gen: true, female: false };
 }
@@ -234,8 +236,23 @@ export function aiAppoint(s: GameState, f: string) {
   void topOf; void charName;
 }
 
-/** 电脑各家招贤：派完闲人仍有空缺、所在城府库宽裕，每月在至多两座空城招贤 */
+/** 电脑各家招贤：派完闲人仍有空缺、所在城府库有两倍招贤之资，每月在一至三座空城招贤（空缺越多招得越多） */
 export function aiSeek(s: GameState, f: string) {
-  const empty = citiesOf(s, f).filter(c => !governorOf(s, c) && !seekError(s, f, c.id) && c.silver >= SEEK_SILVER * 4).sort((a, b) => b.pop - a.pop);
-  for (const c of empty.slice(0, empty.length > 8 ? 2 : 1)) seekTalent(s, f, c.id, 'ai');
+  const empty = citiesOf(s, f).filter(c => !governorOf(s, c) && !seekError(s, f, c.id) && c.silver >= SEEK_SILVER * 2).sort((a, b) => b.pop - a.pop);
+  for (const c of empty.slice(0, empty.length > 12 ? 3 : empty.length > 6 ? 2 : 1)) seekTalent(s, f, c.id, 'ai');
+}
+
+/** 开局为“各省明官府”这类地方官署补齐守土之官：先派闲着的史实人物，余下府州由地方知府、知州、知县署理（按人口定官名） */
+export function staffAdmin(s: GameState) {
+  for (const fac of Object.values(s.factions)) {
+    if (!fac.admin) continue;
+    aiAppoint(s, fac.id);
+    for (const c of citiesOf(s, fac.id)) {
+      if (governorOf(s, c)) continue;
+      const office = c.pop >= 50 ? '知府' : c.pop >= 25 ? '知州' : '知县';
+      const ch = genLocal(s, fac.id, c.id, rngFor(s.seed, 'staff', c.id), c.edu, office);
+      s.chars[ch.id] = ch;
+      c.governor = ch.id;
+    }
+  }
 }

@@ -74,11 +74,13 @@ describe('招贤：招来地方人物', () => {
     const s = createGame('hongguang', 1);
     const c = s.cities.changzhou; c.governor = undefined; c.silver = 50000;
     const n0 = Object.keys(s.chars).length;
+    const ids0 = new Set(Object.keys(s.chars));
     const o = { id: 'k1', kind: 'seek' as const, node: 'changzhou' };
     expect(validateOrder(s, 'hongguang', o)).toBeNull();
     applyOrder(s, 'hongguang', o);
     expect(Object.keys(s.chars).length).toBe(n0 + 1);
-    const got = Object.values(s.chars).find(x => x.gen)!;
+    const got = Object.values(s.chars).find(x => !ids0.has(x.id))!;
+    expect(got.gen).toBe(true);
     expect(got.faction).toBe('hongguang');
     expect(got.status).toBe('active');
     expect(c.governor).toBe(got.id);
@@ -164,9 +166,34 @@ describe('电脑招贤', () => {
     const { aiSeek } = await import('../src/core/people');
     const s = createGame('hongguang', 1);
     aiAppoint(s, 'mingprov');
+    for (const c of citiesOf(s, 'mingprov').filter(c => s.chars[c.governor!]?.gen).slice(0, 8)) delete c.governor;
     const e0 = citiesOf(s, 'mingprov').filter(c => !c.governor).length;
     for (const c of citiesOf(s, 'mingprov')) c.silver = 50000;
     aiSeek(s, 'mingprov');
     expect(citiesOf(s, 'mingprov').filter(c => !c.governor).length).toBe(e0 - 2);
+  });
+});
+
+describe('各省明官府：开局府州有守土之官', () => {
+  it('开局各省之城几乎都有主官：史实人物在前，余者为地方知府、知州', () => {
+    const s = createGame('hongguang', 1);
+    const cs = citiesOf(s, 'mingprov');
+    const empty = cs.filter(c => !c.governor).length;
+    expect(empty).toBeLessThanOrEqual(Math.ceil(cs.length * 0.1));
+    const gens = cs.map(c => s.chars[c.governor!]).filter(g => g?.gen);
+    expect(gens.length).toBeGreaterThan(20);
+    for (const g of gens) { expect(g.faction).toBe('mingprov'); expect(g.title).toMatch(/知府|知州|知县/); expect(s.cities[g.location].governor).toBe(g.id); }
+    // 史实人物原任之城不被顶替
+    expect(s.cities.changsha.governor).toBe('hetengjiao');
+    // 同一种子开局一致
+    expect(JSON.stringify(createGame('hongguang', 1).chars)).toBe(JSON.stringify(s.chars));
+  });
+  it('电脑招贤门槛放低：府库有两倍招贤之资即可招', async () => {
+    const { aiSeek } = await import('../src/core/people');
+    const s = createGame('hongguang', 1);
+    const c = citiesOf(s, 'mingprov')[0];
+    delete c.governor; c.silver = SEEK_SILVER * 2;
+    aiSeek(s, 'mingprov');
+    expect(c.governor).toBeTruthy();
   });
 });
