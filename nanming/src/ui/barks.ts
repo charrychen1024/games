@@ -2,7 +2,7 @@
 import type { Character } from '../core/types';
 import { hashKeys } from '../core/rng';
 
-export type BarkWhen = 'open' | 'openDef' | 'lead' | 'stratOk' | 'stratFail' | 'routedMine' | 'routedFoe' | 'ahead' | 'behind' | 'win' | 'lose' | 'breach' | 'hold';
+export type BarkWhen = 'open' | 'openDef' | 'lead' | 'stratOk' | 'stratFail' | 'routedMine' | 'routedFoe' | 'ahead' | 'behind' | 'win' | 'lose' | 'breach' | 'hold' | 'urge' | 'refuse' | 'yield';
 type Temper = 'fierce' | 'steady' | 'crafty' | 'wavering' | 'proud';
 
 export function temperOf(c?: Character): Temper {
@@ -28,11 +28,15 @@ const LINES: Record<BarkWhen, Partial<Record<Temper, string[]>> & { any: string[
   lose: { any: ['今日之败，来日必报。', '撤！保全余众。'], wavering: ['降了吧……'], fierce: ['恨不能死于阵前！'] },
   breach: { any: ['城破了！'], fierce: ['登城者赏千金！'] },
   hold: { any: ['城头尚在，敌不得进！'], fierce: ['再来多少，也叫他有来无回！'] },
+  // 劝降：我方遣使喊话；守将拒降或开城
+  urge: { any: ['城中将士听着：早降免死！', '开城纳款，可保一城生灵。'], crafty: ['大势已定，何苦为人守此孤城？'], fierce: ['速速开城，免得玉石俱焚！'] },
+  refuse: { any: ['休想！此城有死无降！', '回去告诉你家主将：要城，拿命来取！'], fierce: ['斩来使！誓与此城共存亡！'], wavering: ['……容我再想想。不，不降！'], crafty: ['巧言令色，岂能动我？'], proud: ['我岂是屈膝之人！'] },
+  yield: { any: ['罢了……开城吧，保全满城百姓。', '愿降。只求勿伤城中百姓。'], fierce: ['……天意如此，降了。'] },
 };
 
 /** 青史有载、合乎其人的话 */
 const OWN: Record<string, Partial<Record<BarkWhen, string>>> = {
-  shikefa: { openDef: '城存与存，城亡与亡！', lose: '吾头可断，而志不可屈。' },
+  shikefa: { openDef: '城存与存，城亡与亡！', lose: '吾头可断，而志不可屈。', refuse: '我为朝廷首辅，岂肯偷生为万世罪人！' },
 };
 
 export function barkLine(c: Character | undefined, when: BarkWhen, salt = 0): string {

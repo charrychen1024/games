@@ -237,6 +237,19 @@ try {
   check('点“定位”打开对应城池', await visible('#city-name'));
   check('城池面板有主官或守将头像', await visible('#city-gov img'), await text('#city-gov'));
   check('顶栏显示本月政令余数', /\d+\s*\/\d+ 令/.test(await text('#pill-orders')), await text('#pill-orders'));
+  // 试玩反馈：政令用尽时提示被弹窗盖住 → 政令台要占政令的按钮标“令尽”，点了不开选择窗，警示在最上层
+  {
+    const saved = await page.evaluate(() => JSON.stringify(NM.orders));
+    await page.evaluate(() => { const s = NM.s; const cities = Object.values(s.cities).filter(c => c.controller === s.player); const bud = NM_budget(); NM.orders = []; for (let i = 0; i < bud; i++) NM.orders.push({ id: 'b' + i, kind: 'policy', node: cities[i % cities.length].id, policy: 'agri' }); NM.selectNode('suzhou'); NM.renderAll(); });
+    await wait(300);
+    const spentBtn = await page.evaluate(() => { const b = [...document.querySelectorAll('#cmddock .dk-btn')].find(x => x.classList.contains('spent')); return b?.id ?? ''; });
+    if (spentBtn) await page.click('#' + spentBtn);
+    await wait(300);
+    const modalOpen = await visible('#modal .dialog');
+    const z = await page.evaluate(() => { const t = document.querySelector('#toast div.alert'); return t ? +getComputedStyle(document.getElementById('toast')).zIndex : 0; });
+    check('政令用尽：按钮标令尽、点了不开选择窗、警示压在弹窗之上', !!spentBtn && !modalOpen && z > 70, `${spentBtn} ${modalOpen} z=${z}`);
+    await page.evaluate(s => { NM.orders = JSON.parse(s); NM.renderAll(); }, saved);
+  }
   // 钱粮：粜籴、劝饷
   await page.evaluate(() => NM.selectNode('nanjing'));
   await wait(300);
@@ -407,6 +420,19 @@ try {
     await wait(500);
   }
 
+  // 试玩反馈：攻城时点劝降，敌将说的是鼓舞士气的话 → 应是我方喊话、守将拒降或开城
+  {
+    const pd = page.evaluate(() => NM_testBattle('siege', 'att'));
+    await page.waitForSelector('#siege-persuade', { timeout: 8000 }).catch(() => {});
+    await wait(2600);
+    await page.click('#siege-persuade').catch(() => {});
+    await wait(1400);
+    const me = await text('#battle .bbark.l span'), foe = await text('#battle .bbark.r span');
+    check('劝降：我方喊话，守将答以拒降或开城', /降|开城|孤城|玉石/.test(me) && /降|城|使|拿命|屈|开/.test(foe) && !/再加一鼓|再进一步|不堪一击/.test(foe), `${me} | ${foe}`);
+    await page.click('#siege-auto').catch(() => {});
+    await pd.catch(() => {});
+    await wait(400);
+  }
   console.log('战斗画面：一开场即交战，只在战场上下令');
   const unitXY = id => page.evaluate(id => { const v = NM_siege.view; const q = v.unitScreen(id); const r = v.cv.getBoundingClientRect(); return [r.left + q[0], r.top + q[1]]; }, id);
   for (const kind of ['field', 'naval']) {

@@ -133,6 +133,7 @@ export class App {
     (window as any).NM_nodePt = nodePt;
     (window as any).NM_newsArt = newsArt;
     (window as any).NM_scene = scene;
+    (window as any).NM_budget = () => orderBudget(this.s!, this.s!.player).total;
     (window as any).NM_portrait = portrait;
     (window as any).NM_presets = { createGame, yangzhouSiegeState, name: nodeName };
     (window as any).NM_audio = audioState;
@@ -592,8 +593,7 @@ export class App {
     if (err) { this.toast(err, 'close'); return false; }
     const bud = orderBudget(s, s.player);
     if (ordersUsed(rest) + orderCost(o) > bud.total) {
-      this.toast(`本月政令已满（${bud.total} 道）。可撤下一道再下；调动军队不占政令。`, 'close');
-      gsap.fromTo('#pill-orders', { scale: 1.3 }, { scale: 1, duration: 0.5, ease: 'elastic.out(1, 0.4)' });
+      this.warnBudget();
       return false;
     }
     this.orders = rest;
@@ -637,9 +637,16 @@ export class App {
     if (btn) gsap.fromTo(btn, { scale: 1.08 }, { scale: 1, duration: 0.35, ease: 'power2.out' });
   }
   removeOrder(id: string) { this.orders = this.orders.filter(o => o.id !== id); this.renderOrders(); this.renderTop(); this.refreshPanel(); this.renderArmyBar(); }
-  toast(text: string, icon = 'info') {
+  /** 政令用尽：醒目的红色警示（在一切弹窗之上），顶栏政令数与政令台的令点一齐跳动 */
+  warnBudget() {
+    const bud = orderBudget(this.s!, this.s!.player);
+    this.toast(`本月政令已用尽（${bud.total} 道）· 可撤下一道再下 · 调动军队不占政令`, 'close', 'alert');
+    gsap.fromTo('#pill-orders', { scale: 1.35 }, { scale: 1, duration: 0.6, ease: 'elastic.out(1, 0.4)' });
+    if (!isReduced()) gsap.fromTo('#cmddock .dk-pips', { x: -6 }, { x: 0, duration: 0.5, ease: 'elastic.out(1.2, 0.3)' });
+  }
+  toast(text: string, icon = 'info', kind?: 'alert') {
     if (icon === 'close') denySfx();
-    const el = h('div', { class: 'hud' }, ic(icon), text);
+    const el = h('div', { class: 'hud' + (kind ? ' ' + kind : '') }, ic(icon), text);
     $('#toast').append(el);
     gsap.from(el, { y: -16, opacity: 0, scale: 0.9, duration: 0.3, ease: 'back.out(2)' });
     setTimeout(() => el.remove(), 3300);
@@ -1088,8 +1095,10 @@ export class App {
       h('b', null, NODE[id].name), h('small', null, mine ? '政令' : vassal ? '下属' : '交涉'),
       h('div', { class: 'dk-pips', 'data-tip': `本月政令 ${used}/${bud.total}` }, ...Array.from({ length: bud.total }, (_, i) => h('i', { class: i < used ? 'used' : '' })))));
     const row = h('div', { class: 'dk-row' });
-    cmds.forEach((m, i) => row.append(h('button', { class: 'dk-btn' + (m.done ? ' done' : '') + (m.primary ? ' primary' : ''), id: m.id, 'data-tip': m.tip, 'data-key': String(i + 1), onclick: () => { click(); m.fn(); } },
-      h('span', { class: 'dk-medal' }, ic(m.icon), m.done ? h('span', { class: 'dk-ok' }, ic('ok')) : null), h('b', null, m.label), h('kbd', null, String(i + 1)))));
+    // 政令用尽：要占政令的按钮变暗、标“令尽”，点了只提醒，不再打开选择窗（已下过的可改，调兵不占政令）
+    const full = used >= bud.total;
+    cmds.forEach((m, i) => { const spent = full && !m.done && !m.free; row.append(h('button', { class: 'dk-btn' + (m.done ? ' done' : '') + (m.primary && !spent ? ' primary' : '') + (spent ? ' spent' : ''), id: m.id, 'data-tip': spent ? `本月政令已用尽（${used}/${bud.total}）· ${m.tip}` : m.tip, 'data-key': String(i + 1), onclick: () => { if (spent) { this.warnBudget(); return; } click(); m.fn(); } },
+      h('span', { class: 'dk-medal' }, ic(m.icon), m.done ? h('span', { class: 'dk-ok' }, ic('ok')) : spent ? h('span', { class: 'dk-spent' }, '令尽') : null), h('b', null, m.label), h('kbd', null, String(i + 1)))); });
     dock.append(row);
     if (!isReduced() && dock.dataset.city !== id) gsap.fromTo(row.children, { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, stagger: 0.03, ease: 'back.out(1.7)' });
     dock.dataset.city = id;

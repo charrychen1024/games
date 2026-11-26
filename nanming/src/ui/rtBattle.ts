@@ -223,7 +223,10 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
             if (ssim!.flags.persuaded) return;
             manual = true;
             const ok = persuade(ssim!);
-            if (ok) battleSfx.persuade(); else { battleSfx.rout(); bark('foe', 'ahead'); }
+            // 先我方喊话，片刻后守将作答：拒降或开城
+            bark('me', 'urge');
+            window.setTimeout(() => bark('foe', ok ? 'yield' : 'refuse'), isReduced() ? 0 : 900);
+            if (ok) battleSfx.persuade(); else battleSfx.rout();
             renderUi();
           }, false, ssim!.flags.persuaded ? '一战只能劝一次' : `遣使入城说降守将（约 ${Math.round(persuadeOdds(ssim!) * 100)}% 能成；不成则守军益坚）。城门已破、守军动摇时更易成`, ssim!.flags.persuaded ? 'cool' : '')] : []),
           A('siege-drum', cd > 0 ? `擂鼓 ${Math.ceil(cd)}` : '擂鼓', 'battle', () => { if (ssim ? drum(ssim, side) : drumF(fsim!, side)) { battleSfx.ambush(); bark('me', 'lead'); } renderUi(); }, false, '全军士气上扬一阵；六十秒一次', cd > 0 ? 'cool' : ''),
@@ -465,7 +468,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     view.selected = null;
     const r = resultWord();
     gong(r.win);
-    bark('me', r.win ? 'win' : 'lose');
+    bark('me', r.win ? 'win' : r.tone === 'even' ? 'behind' : 'lose');
     // 战果配一幅小画：破城、城降、野战交锋
     const pty = (f: string): Party => { const lk = lookOf(s, f); return { color: colorOf(f), mark: lk.mark, hat: lk.helmet === 'xi' ? 'shun' : lk.helmet === 'plain' ? 'plain' : lk.helmet }; };
     const oc = sim.over!.outcome as string;

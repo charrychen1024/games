@@ -193,7 +193,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #tooltip .tt-r { display: flex; align-items: center; gap: 5px; color: var(--dim); margin-top: 3px; }
 #tooltip .tt-r .ic { width: 15px; height: 15px; color: var(--gold); }
 #tooltip .tt-r b { color: var(--text); }
-#toast { position: absolute; top: 84px; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+#toast { position: absolute; top: 84px; left: 50%; transform: translateX(-50%); z-index: 90; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
 #toast div { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13.5px; font-weight: 700; animation: fade 3.2s forwards; }
 #toast .ic { width: 20px; height: 20px; color: var(--gold-2); }
 @keyframes fade { 0% { opacity: 0; transform: translateY(-6px); } 10%, 80% { opacity: 1; transform: none; } 100% { opacity: 0; } }
@@ -1256,3 +1256,9 @@ button.rc.on::after { content: '▴'; color: var(--gold-2); }
 .nw-art .na-scene { position: absolute; inset: 0; height: 100%; }
 @media (max-height: 720px) { .dialog > .scene { height: 110px; } .dialog.wide > .scene { height: 90px; } }
 .sresult .sr-scene { width: 420px; max-width: 70vw; height: 128px; margin: 0 auto 6px; border-radius: 10px; border: 2px solid rgba(217, 173, 91, 0.55); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55); }
+
+/* 政令用尽：政令台按钮变暗、角上“令尽” */
+.dk-btn.spent .dk-medal { filter: grayscale(0.85) brightness(0.6); }
+.dk-btn.spent b { color: var(--dim); }
+.dk-spent { position: absolute; right: -10px; bottom: -8px; transform: rotate(-45deg); padding: 1px 5px; border-radius: 4px; background: #8f2015; color: #fff3d9; font: 900 10px/1.3 var(--serif); border: 1px solid #e0503f; white-space: nowrap; }
+#toast div.alert { animation: fade 3.6s forwards; border-color: #c8352a; background: linear-gradient(#3a1410, #24100c); font-size: 14.5px; padding: 10px 18px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6), 0 0 18px rgba(200, 53, 42, 0.45); }
