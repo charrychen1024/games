@@ -82,7 +82,12 @@ export function moveArmies(s: GameState): Contact[] {
       if (a.order.attack && city && hostile(s, a.faction, city.controller)) {
         // 被途中敌城挡住：先攻此城，记住原定目标，拿下后接着去
         const then = a.order.target !== a.location ? a.order.target : undefined;
-        a.order = then ? { kind: 'siege', target: a.location, assault: true, then } : { kind: 'siege', target: a.location, assault: true };
+        // 玩家之军照令强攻；电脑之军量力：城下本方兵力不到守城之力（驻军连同城中之军，计城防）的一倍半，先围不攻
+        const ours = topOf(s, a.faction) === s.player;
+        const mine = armies.filter(x => s.armies[x.id] && x.location === a.location && x.faction === a.faction && x.progress === 0).reduce((n, x) => n + x.troops, 0);
+        const inside = Object.values(s.armies).filter(x => x.location === a.location && x.progress === 0 && topOf(s, x.faction) === topOf(s, city.controller)).reduce((n, x) => n + x.troops, 0);
+        const assault = ours || mine > (city.garrison + inside) * (1 + city.wall / 60) * 1.5 || city.wall < 30;
+        a.order = then ? { kind: 'siege', target: a.location, assault, then } : { kind: 'siege', target: a.location, assault };
         if (then && topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}开往${nodeName(then)}，为${nodeName(a.location)}所阻，先攻${nodeName(a.location)}；拿下后接着开往${nodeName(then)}。`, src: { kind: 'order', ref: a.id } });
       }
       else if (a.location === a.order.target) a.order = { kind: 'hold' };
@@ -224,6 +229,12 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
   } else {
     if (b.winner === 'att' && (b.outcome === 'breach' || b.outcome === 'surrender' || b.outcome === 'abandon')) {
       capture(s, b.node, b.att.faction, b.outcome === 'surrender' ? '献城' : b.outcome === 'abandon' ? '弃城' : '陷城', b.att.commander);
+    } else if (b.winner === 'def') {
+      // 攻城不克：玩家之军改为围而不攻，不再每月自动强攻、白白折兵；要再攻须重新下令
+      const mine = attArmies.filter(a => s.armies[a.id] && topOf(s, a.faction) === s.player && a.order.kind === 'siege' && a.order.assault);
+      for (const a of mine) a.order = { ...a.order, assault: false } as typeof a.order;
+      if (mine.length) report(s, { cat: '军报', urgent: true, node: b.node, act: 'siege', from: b.att.faction, to: b.def.faction,
+        text: `${nodeName(b.node)}攻城不克（攻方折损 ${troopsText(attLoss)}，守方折损 ${troopsText(defLoss)}）。各军改为围困，断其粮道；城防、城门的损坏留到下月。要再攻，请重新下令攻城。`, src: { kind: 'battle', ref: b.id } });
     }
   }
   void winnerSide;
@@ -329,6 +340,23 @@ export function succession(s: GameState, faction: string, why: string) {
   f.leader = next.id;
   report(s, { cat: '人事', urgent: faction === s.player, text: `${why}，${f.name}${ask ? '暂由' + next.name + '摄事，待议' + (isRuler(s, faction) ? '继统' : '主事之人') : '由' + next.name + '主事'}。` });
 }
+/** 民变：民心跌破一成连续三月，每月一成五的机会，饥民啸聚、地方豪强据城自守。治所、被围之城、本方驻有野战军之城不变。 */
+export function unrest(s: GameState) {
+  if (!s.factions.local) return;
+  for (const c of Object.values(s.cities).sort((x, y) => x.id < y.id ? -1 : 1)) {
+    const f = c.controller, k = 'unrest_' + c.id;
+    if (f === 'local' || f === 'helan' || c.minxin >= 10) { delete s.flags[k]; continue; }
+    const n = (Number(s.flags[k]) || 0) + 1;
+    s.flags[k] = n;
+    if (n < 3 || s.sieges[c.id] || s.factions[f]?.capital === c.id || Object.values(s.armies).some(a => a.location === c.id && a.faction === f)) continue;
+    if (!rngFor(s.seed, 'unrest', s.turn, c.id).chance(0.15)) continue;
+    report(s, { cat: '急报', urgent: topOf(s, f) === s.player, node: c.id, text: `${nodeName(c.id)}民心尽失，饥民啸聚，地方豪强据城自守，不复听${factionName(s, f)}号令。` });
+    capture(s, c.id, 'local', '归附');
+    c.minxin = Math.max(c.minxin, 30);
+    delete s.flags[k];
+  }
+}
+
 /** 人物一致性：死去、被俘或改投他方之人卸去主官、交出兵权；首领身故则议继。史事、分裂、委派之后都要过一遍。 */
 export function tidyPeople(s: GameState) {
   for (const c of Object.values(s.cities)) {

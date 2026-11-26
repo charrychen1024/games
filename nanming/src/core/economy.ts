@@ -56,7 +56,9 @@ export function monthlyIncome(s: GameState, c: City): { silver: number; grain: n
   const ge = govEffects(s, c);
   const sieged = !!s.sieges[c.id];
   let silver = c.pop * (c.commerce / 100) * (0.5 + c.order / 100) * 160 * ge.silverMul;
-  if (c.policy === 'levy') silver *= 1.5;
+  // 民心四成以下，赋税渐收不上来（至零时只得五成）；加派之利随民心而尽，民心三成以下越加越少
+  silver *= c.minxin >= 40 ? 1 : 0.5 + c.minxin / 80;
+  if (c.policy === 'levy') silver *= 1 + 0.5 * Math.min(1, c.minxin / 30);
   let grain = c.pop * (c.agri / 100) * (0.55 + c.minxin / 220) * 260 * harvest * ge.grainMul;
   const trade = c.trade ? c.trade * 2600 * (c.commerce / 100) : 0;
   if (sieged) { silver *= 0.1; grain *= 0.15; }

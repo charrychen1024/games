@@ -6,7 +6,7 @@ import type { BattleState } from './battle';
 import { autoResolve } from './battle';
 import { applyOrder, resolveMissions, orderBudget, orderCost, answerCounter } from './orders';
 import { proposalsFor, applyOffer, aiDiplomacyTalks } from './diplomacy';
-import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects, tidyPeople } from './military';
+import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects, tidyPeople, unrest } from './military';
 import { runEconomy } from './economy';
 import { aiOrders, aiFixSupply, aiPayArmies, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy } from './ai';
 import { dueEvents, fireEvent, choiceFor, applyChoice, type EventDef, type PendingChoice } from './events';
@@ -129,6 +129,7 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
 
   // 六、内政与钱粮
   runEconomy(s);
+  unrest(s);
 
   // 七、史事与线索
   for (const { def, variant } of dueEvents(s, events)) {

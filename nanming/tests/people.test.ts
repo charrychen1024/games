@@ -155,9 +155,11 @@ describe('特长落到募兵、出使与战斗', () => {
     expect(maxRecruit(c, s)).toBeGreaterThanOrEqual(Math.floor(base * 1.25 / 100) * 100);
     const env = idleOf(s, 'hongguang');
     env.traits = [];
-    const p0 = persuadeChance(s, 'hongguang', env.id, 'xian').p;
+    // 城外有我军（空言劝降成算减半封顶，这里只比较辩才）
+    Object.values(s.armies).find(a => a.faction === 'hongguang')!.location = 'luoyang';
+    const p0 = persuadeChance(s, 'hongguang', env.id, 'luoyang').p;
     env.traits = ['biancai'];
-    expect(persuadeChance(s, 'hongguang', env.id, 'xian').p).toBeCloseTo(Math.min(0.9, p0 + 0.08), 5);
+    expect(persuadeChance(s, 'hongguang', env.id, 'luoyang').p).toBeCloseTo(Math.min(0.9, p0 + 0.08), 5);
   });
 });
 

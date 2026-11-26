@@ -42,6 +42,13 @@ function areaWeight(s: GameState, f: string, area: string): number {
   return 1;
 }
 
+/** 守城之力：城中驻军连同屯在城里的本方野战军，一并凭城而守（城防加成同样算上） */
+function holdStrength(s: GameState, node: string): number {
+  const c = s.cities[node];
+  const inside = Object.values(s.armies).filter(x => x.location === node && x.progress === 0 && sameTop(s, x.faction, c.controller)).reduce((m, x) => m + x.troops, 0);
+  return (c.garrison + inside) * (1 + c.wall / 60);
+}
+
 function canTake(s: GameState, a: Army, node: string): boolean {
   const c = s.cities[node];
   if (!c) return false;
@@ -50,6 +57,8 @@ function canTake(s: GameState, a: Army, node: string): boolean {
   const foe = Object.values(s.armies).filter(x => x.location === node && hostile(s, a.faction, x.faction)).reduce((n, x) => n + armyPower(x, s), 0);
   const mine = Object.values(s.armies).filter(x => x.faction === a.faction && (x.location === a.location || x.location === node)).reduce((n, x) => n + armyPower(x, s), 0);
   if (foe > mine * 1.5) return false;
+  // 强攻要三倍上下的兵力才破得了城（见攻城模拟）：连围带攻也不及守城之力的七成，就别去
+  if (mine < holdStrength(s, node) * 0.7) return false;
   return true;
 }
 
@@ -97,16 +106,19 @@ export function aiOrders(s: GameState, f: string): Order[] {
     // 已在围城：继续
     if (a.order.kind === 'siege' && s.sieges[a.order.target] && a.location === a.order.target) {
       const city = s.cities[a.order.target];
-      const ratio = power / Math.max(1, cityDefense(city));
+      const ratio = power / Math.max(1, holdStrength(s, city.id));
       const months = s.sieges[a.order.target].months;
       // 兵少粮尽：解围回城休整
       const besiegers = s.sieges[a.order.target].armies.map(x => s.armies[x]).filter(Boolean).reduce((m, x) => m + armyPower(x, s), 0);
-      if (besiegers < cityDefense(city) * 0.45 || (a.hunger >= 2 && ratio < 1) || a.morale < 25) {
+      if (besiegers < holdStrength(s, city.id) * 0.45 || (a.hunger >= 2 && ratio < 1) || a.morale < 25) {
         const { dist } = distancesFrom(a.location, canSea(a));
         const back = citiesOf(s, f).map(c => c.id).filter(c => dist[c] !== undefined).sort((x, y) => dist[x] - dist[y])[0];
         if (back) { orders.push({ id: id(), kind: 'army', army: a.id, order: { kind: 'move', target: back, attack: false } }); continue; }
       }
-      const assault = ratio > 1.2 || city.wall < 45 || (months >= 3 && ratio > 0.9);
+      // 强攻：兵力约为守城之力的一倍半（墙六十时约三比一）、或城墙已残、或久围之后守军已疲；否则只围不攻，等其断粮
+      const sg = s.sieges[a.order.target];
+      const ratioAll = besiegers / Math.max(1, holdStrength(s, city.id));
+      const assault = ratioAll > 1.5 || city.wall < 30 || (months >= 4 && ratioAll > 1.1) || (!!sg.gate && sg.gate <= 0.3 && ratioAll > 1);
       orders.push({ id: id(), kind: 'army', army: a.id, order: { kind: 'siege', target: a.order.target, assault } });
       continue;
     }
@@ -161,7 +173,7 @@ export function aiOrders(s: GameState, f: string): Order[] {
     const targets = doctrineTargets(s, a).filter(t => canTake(s, a, t));
     if (targets.length) {
       const t = targets[0];
-      const order: ArmyOrder = a.location === t ? { kind: 'siege', target: t, assault: power > cityDefense(s.cities[t]) * 1.6 } : { kind: 'move', target: t, attack: true };
+      const order: ArmyOrder = a.location === t ? { kind: 'siege', target: t, assault: power > holdStrength(s, t) * 1.5 } : { kind: 'move', target: t, attack: true };
       if (!(a.order.kind === order.kind && (a.order as any).target === t && a.path.length)) orders.push({ id: id(), kind: 'army', army: a.id, order });
       continue;
     }
@@ -180,7 +192,7 @@ export function aiOrders(s: GameState, f: string): Order[] {
       if (!c || !hostile(s, f, c.controller)) continue;
       const w = areaWeight(s, f, NODE[node].area);
       if (w <= 0) continue;
-      const def = cityDefense(c) + Object.values(s.armies).filter(x => x.location === node && x.progress === 0 && sameTop(s, x.faction, c.controller)).reduce((m, x) => m + armyPower(x, s), 0);
+      const def = holdStrength(s, node);
       const avail = idle.filter(x => x.dist[node] !== undefined && x.dist[node] <= reach).reduce((m, x) => m + x.power, 0);
       if (avail < def * 1.3) continue;
       const near = Math.min(...idle.filter(x => x.dist[node] !== undefined).map(x => x.dist[node]));
@@ -195,7 +207,7 @@ export function aiOrders(s: GameState, f: string): Order[] {
       if (sum >= best.def * 1.6) break;
       sum += it.power;
       idle.splice(idle.indexOf(it), 1);
-      orders.push({ id: id(), kind: 'army', army: it.a.id, order: best.node === it.a.location ? { kind: 'siege', target: best.node, assault: sum > best.def * 1.3 } : { kind: 'move', target: best.node, attack: true } });
+      orders.push({ id: id(), kind: 'army', army: it.a.id, order: best.node === it.a.location ? { kind: 'siege', target: best.node, assault: sum > best.def * 1.5 } : { kind: 'move', target: best.node, attack: true } });
     }
   }
   // 余者：在敌境则回驻地

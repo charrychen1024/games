@@ -543,6 +543,8 @@ function setStanceExplicit(s: GameState, a: string, b: string, st: 'alliance' | 
   s.relations[[a, b].sort().join('|')] = until === undefined ? { stance: st } : { stance: st, until };
 }
 
+/** 劝降不成后，同一城这么多个月内再劝成算减半 */
+export const PERSUADE_COOLDOWN = 6;
 export function persuadeChance(s: GameState, f: string, charId: string, node: string): { p: number; factors: string[] } {
   const city = s.cities[node];
   const env = s.chars[charId];
@@ -561,6 +563,11 @@ export function persuadeChance(s: GameState, f: string, charId: string, node: st
   if (city.minxin < 40) { p += 0.08; factors.push('城中人心离散 +8%'); }
   const ctrl = s.factions[city.controller];
   if (ctrl && ctrl.polity === s.factions[f].polity) { p += 0.1; factors.push('同奉一朝 +10%'); }
+  if (ctrl && ctrl.capital === node) { p *= 0.6; factors.push('治所重地 ×0.6'); }
+  const failed = s.flags['persuade_fail_' + node + '_' + topOf(s, f)];
+  if (typeof failed === 'number' && s.turn - failed < PERSUADE_COOLDOWN) { p *= 0.5; factors.push('前番劝降不成，守将戒备 ×0.5'); }
+  // 兵临城下才有分量：城外无我军（不在城下、也不在邻城）且未围城，空言难动
+  if (!near && !(sg && topOf(s, sg.attacker) === topOf(s, f))) { p = Math.min(0.15, p * 0.5); factors.push('城外无我军，空言难动（减半，至多 15%）'); }
   p = Math.max(0.02, Math.min(0.9, p));
   return { p, factors };
 }
@@ -577,7 +584,9 @@ function resolvePersuade(s: GameState, f: string, o: Extract<Order, { kind: 'per
   if (ok) {
     report(s, { cat: '交涉', node: o.node, ok: true, origin: s.factions[f]?.capital, text: `${env.name}入${nodeName(o.node)}劝降，守将应允。（成功率 ${Math.round(p * 100)}%：${factors.join('，')}）`, src });
     capture(s, o.node, f, '献城');
+    bump(s, o.node, 'minxin', -5, '新附之城，人心未定', src);
   } else {
+    s.flags['persuade_fail_' + o.node + '_' + topOf(s, f)] = s.turn;
     const detained = rng.chance(0.2);
     if (detained) { env.status = 'captured'; env.captor = old; env.capturedAt = s.turn; env.location = s.factions[old]?.capital ?? o.node; }
     if (f === s.player || old === s.player) report(s, { cat: '交涉', node: o.node, ok: false, origin: s.factions[f]?.capital, text: `${env.name}赴${nodeName(o.node)}劝降，${detained ? '被扣留' : '无功而返'}。（成功率 ${Math.round(p * 100)}%：${factors.join('，')}）`, src });
