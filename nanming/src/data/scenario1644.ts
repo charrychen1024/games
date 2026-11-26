@@ -215,6 +215,9 @@ export function createState1644(seed = 1644): GameState {
       id: n.id, controller, pop, agri, commerce, edu, wall, garrison, grain, silver, minxin, order,
       policy: 'balanced' as Policy, governor, trade, uncertain: UNCERTAIN[n.id],
     };
+    // 不留值为 undefined 的键：存读档前后字段次序一致，结果逐字相同
+    const c = cities[n.id] as unknown as Record<string, unknown>;
+    for (const k of Object.keys(c)) if (c[k] === undefined) delete c[k];
   }
   // 增补人物出任开局主官
   const GOV: Record<string, string> = { suzhou: 'qibiaojia', ningbo: 'wangzhiren', chengdu: 'longwenguang', xuzhousc: 'fanyiheng', zunyi: 'wangyingxiong', taiyuan: 'chenyongfu', hanzhong: 'hezhen', datong: 'jiangxiang' };

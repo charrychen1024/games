@@ -94,6 +94,13 @@ export interface Character {
   appear?: number;
   /** 女子：画像不画须、换发式 */
   female?: boolean;
+  /** 特长（缺省按史或按能力推出，见 people.ts） */
+  traits?: string[];
+  /** 被俘时：为谁所执、何月被俘 */
+  captor?: FactionId;
+  capturedAt?: number;
+  /** 招贤所得的地方人物 */
+  gen?: boolean;
   /** 宗室：可被拥立；era 为即位后所用年号 */
   royal?: { era: string; claim: number };
 }
@@ -194,7 +201,11 @@ export type Order =
   | { id: string; kind: 'reward'; vassal: FactionId; silver: number }
   | { id: string; kind: 'independence' }
   | { id: string; kind: 'war'; target: FactionId }
-  | { id: string; kind: 'raise'; node: NodeId; char: CharId; troops: number; navy: boolean };
+  | { id: string; kind: 'raise'; node: NodeId; char: CharId; troops: number; navy: boolean }
+  /** 招贤：在本城延请地方人物 */
+  | { id: string; kind: 'seek'; node: NodeId }
+  /** 处置俘虏：劝降、释放、处斩 */
+  | { id: string; kind: 'prisoner'; char: CharId; act: 'recruit' | 'release' | 'execute' };
 
 /** 跨月进行中的交涉 */
 export interface Mission {

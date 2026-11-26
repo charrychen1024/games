@@ -12,6 +12,7 @@ import { dangerOf, eraOf } from './musicTheory';
 import { portrait } from './portrait';
 import { cardHand, cardArt, type GameCard, type Chip } from './cards';
 import { newsArt, type ArtCat } from './newsArt';
+import { traitsOf, TRAITS, govEffects, governorOf, prisonerChance, SEEK_SILVER, SEEK_COOLDOWN } from '../core/people';
 import { resolveMonth, unificationProgress, unifierRole, type Answer } from '../core/turn';
 import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
 import { POLITIES } from '../data/factions';
@@ -53,7 +54,7 @@ const FIELD_NAME: Record<string, string> = { grain: '仓粮', silver: '府库', 
 const FIELD_ICON: Record<string, string> = { grain: 'grain', silver: 'silver', pop: 'pop', minxin: 'minxin', garrison: 'troops', wall: 'wall', order: 'order', agri: 'agri', commerce: 'commerce', edu: 'edu' };
 const CAT_ICON: Record<ReportCat, string> = { 急报: 'urgent', 军报: 'war', 易主: 'capture', 交涉: 'envoy', 内政: 'admin', 人事: 'person', 史事: 'event', 线索: 'clue' };
 const POLICY_ICON: Record<Policy, string> = { balanced: 'order', agri: 'agri', commerce: 'commerce', fortify: 'wall', relief: 'minxin', edu: 'edu', levy: 'reward' };
-const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', supply: 'grain', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army' };
+const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', supply: 'grain', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army', seek: 'chars', prisoner: 'prisoner' };
 const HINT_KEY = 'nanming:hint';
 
 /** 选势力卡片：难度、一句处境、目标 */
@@ -889,7 +890,9 @@ export class App {
       const who = person ?? ({ id: 'anon:' + id, name: '佚名', faction: c.controller, title: anonTitle, ab: { tong: mil ? 60 : 35, zheng: mil ? 30 : 55, mou: 40, wai: 40, wang: 40 }, att: { loyalty: 50, surrender: 50, hawk: 0 }, attLog: [], location: id, status: 'active', bio: '' } as Character);
       const role = govOk ? '主官' : person ? '驻军主将' : '地方' + (mil ? '守将' : '主官');
       // 主官放在右上角：头像、职分、姓名
-      banner.append(h('div', { class: 'gov-top' + (person ? ' named' : ''), id: 'city-gov', onclick: person ? () => this.openChar(person.id) : undefined, 'data-tip': person ? `${who.name} · ${who.title} · 点看人物档案` : '此城未委任主官；可在“任命”里派人' },
+      const ge = govEffects(s, c);
+      const effTip = govOk ? `吏治趋向 ${Math.min(95, ge.orderTarget!)}、民心趋向 ${Math.min(95, ge.minxinTarget!)}（每月一点）${ge.wallRepair ? `，每月修城 +${ge.wallRepair}` : ''}；赋税 ${ge.silverMul >= 1 ? '+' : '−'}${Math.abs(Math.round((ge.silverMul - 1) * 100))}%、田粮 ${ge.grainMul >= 1 ? '+' : '−'}${Math.abs(Math.round((ge.grainMul - 1) * 100))}%${traitsOf(govOk).length ? '；长于' + traitsOf(govOk).map(t => TRAITS[t].name).join('、') : ''}` : '';
+      banner.append(h('div', { class: 'gov-top' + (person ? ' named' : ''), id: 'city-gov', onclick: person ? () => this.openChar(person.id) : undefined, 'data-tip': person ? `${who.name} · ${who.title}${effTip ? ' · ' + effTip : ''} · 点看人物档案` : '此城未委任主官：赋税田粮按平庸之才计，吏治民心无人整饬。可“任命”或“招贤”' },
         h('img', { src: portrait(who, ctrl.color, ctrl.polity), alt: who.name }),
         h('small', null, role), h('b', null, person ? who.name : '佚名')));
     }
@@ -1002,7 +1005,8 @@ export class App {
       { id: 'act-transfer', icon: 'transfer', label: '调拨', tip: '把钱粮运往别城', fn: () => this.formTransfer(id), done: has('transfer') },
       { id: 'act-trade', icon: 'grain', label: '粜籴', tip: '买粮卖粮', fn: () => this.formTrade(id), done: has('trade') },
       { id: 'act-loan', icon: 'silver', label: '劝饷', tip: '向绅商劝捐银两（伤民心）', fn: () => this.formLoan(id), done: has('loan') },
-      { id: 'act-appoint', icon: 'appoint', label: '任命', tip: '派人主政此城', fn: () => this.formAppoint(id), done: has('appoint') });
+      { id: 'act-appoint', icon: 'appoint', label: '任命', tip: '派人主政此城', fn: () => this.formAppoint(id), done: has('appoint') },
+      { id: 'act-seek', icon: 'chars', label: '招贤', tip: `花 ${SEEK_SILVER} 两延请本地人物；本城无主官则暂署`, fn: () => this.formSeek(id), done: has('seek'), primary: !governorOf(s, c) });
     else if (vassal) cmds.push(
       { id: 'act-reward', icon: 'reward', label: '犒赏', tip: `犒赏${ctrl.short}部，提高服从`, fn: () => this.formReward(c.controller) },
       { id: 'act-supply', icon: 'transfer', label: '拨粮', tip: '从治所拨钱粮给此城', fn: () => this.formTransfer(s.factions[s.player].capital, id) });
@@ -1344,7 +1348,7 @@ export class App {
     const pctMark = Math.max(0, Math.min(100, (room - 100) / Math.max(1, max - 100) * 100));
     mark.style.left = pctMark + '%';
     mark.classList.toggle('hidden', room < 100 || room >= max);
-    this.modal('recruit', '募兵', `${nodeName(node)} · 本月还可募 ${fmt(left)}（上限 ${fmt(maxRecruit(s.cities[node]))}）· 长期可养约 ${fmt(room)}`, [big, h('div', { class: 'field rq-field' }, input, mark), costs, proj],
+    this.modal('recruit', '募兵', `${nodeName(node)} · 本月还可募 ${fmt(left)}（上限 ${fmt(maxRecruit(s.cities[node], s))}）· 长期可养约 ${fmt(room)}`, [big, h('div', { class: 'field rq-field' }, input, mark), costs, proj],
       [this.cancelBtn(), { label: '募兵', icon: 'ok', primary: true, id: 'recruit-ok', onclick: () => { this.addOrder({ id: this.newOrderId(), kind: 'recruit', node, troops: +input.value }); } }]);
   }
 
@@ -1395,6 +1399,28 @@ export class App {
     return box;
   }
 
+  /** 特长小签：名称与说明 */
+  traitChips(c: Character): HTMLElement | null {
+    const ts = traitsOf(c);
+    if (!ts.length) return null;
+    return h('div', { class: 'traits' }, ...ts.map(t => h('span', { class: 'trait ' + TRAITS[t].tone, 'data-tip': TRAITS[t].desc }, ic(TRAITS[t].icon), TRAITS[t].name)));
+  }
+
+  formSeek(node: string) {
+    const s = this.s!;
+    const err = validateQueued(s, this.orders.filter(o => !(o.kind === 'seek' && o.node === node)), { id: 'x', kind: 'seek', node });
+    if (err) { this.toast(err, 'close'); return; }
+    const c = s.cities[node];
+    const vacant = !governorOf(s, c);
+    const edu = c.edu;
+    const odds = Math.round((0.06 + Math.max(0, edu - 50) / 400) * 100);
+    this.modal('seek', '招贤', `${nodeName(node)} · 延请本地的举人、乡绅、营将出仕`, [
+      h('div', { class: 'big-num' }, ic('chars'), ' 一人应招'),
+      h('div', { class: 'costs' }, h('span', { class: 'cost bad' }, ic('silver'), `−${fmt(SEEK_SILVER)} 两`), h('span', { class: 'cost' }, ic('edu'), `文教 ${Math.round(edu)}`), h('span', { class: 'cost good' }, ic('star'), `出众者约 ${odds}%`), h('span', { class: 'cost' }, ic('hourglass'), `此城 ${SEEK_COOLDOWN} 个月内不能再招`)),
+      h('div', { class: 'note' }, `应招者多是寻常之才（能力四五十），文教越高越多能吏，偶有出众者并带特长。${vacant ? '本城现无主官，来者暂署主官，吏治、民心从此逐月向其所能靠拢。' : '本城已有主官，来者可另行任命到缺官的城。'}`),
+    ], [this.cancelBtn(), { label: '招贤', icon: 'ok', primary: true, id: 'seek-ok', onclick: () => { this.addOrder({ id: this.newOrderId(), kind: 'seek', node }); } }]);
+  }
+
   formAppoint(node: string) {
     const s = this.s!;
     const list = this.freeChars().filter(c => s.cities[node].governor !== c.id).sort((a, b) => b.ab.zheng - a.ab.zheng);
@@ -1405,10 +1431,16 @@ export class App {
     const incomeWith = (city: string, gov: string | undefined) => { const c0 = s.cities[city]; const t = { ...s, cities: { ...s.cities, [city]: { ...c0, governor: gov } } }; const i = monthlyIncome(t, t.cities[city]); return { sv: i.silver, gr: i.grain }; };
     const now = incomeWith(node, s.cities[node].governor);
     const sg = (v: number) => `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v))}`;
+    const c0 = s.cities[node];
+    /** 吏治、民心会趋向何处（与本城现值相比） */
+    const driftChip = (g: Character): Chip => { const e = govEffects({ ...s, chars: { ...s.chars, [g.id]: { ...g, faction: c0.controller, status: 'active' } }, cities: { ...s.cities, [node]: { ...c0, governor: g.id } } }, { ...c0, governor: g.id });
+      const o = Math.min(95, e.orderTarget ?? 0), m = Math.min(95, e.minxinTarget ?? 0);
+      return { icon: 'order', text: `吏治→${o} 民心→${m}`, tone: o >= c0.order && m >= c0.minxin ? 'good' : o < c0.order - 5 && m < c0.minxin - 5 ? 'bad' : 'plain' }; };
     const cards: GameCard[] = list.map(c => { const p = postOf(c.id); const w = incomeWith(node, c.id); const dS = w.sv - now.sv, dG = w.gr - now.gr;
       const lost = p ? (() => { const a0 = incomeWith(p, c.id), a1 = incomeWith(p, undefined); return { sv: a1.sv - a0.sv, gr: a1.gr - a0.gr }; })() : null;
       return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true, badge: `政 ${c.ab.zheng}`,
-      chips: [{ icon: 'silver', text: `赋税 ${sg(dS)}/月`, tone: dS >= 0 ? 'good' : 'bad' }, { icon: 'grain', text: `田粮 ${sg(dG)}/月`, tone: dG >= 0 ? 'good' : 'bad' }, { icon: 'morale', text: `忠 ${Math.round(c.att.loyalty)}`, tone: c.att.loyalty >= 60 ? 'good' : 'bad' }],
+      chips: [{ icon: 'silver', text: `赋税 ${sg(dS)}/月`, tone: dS >= 0 ? 'good' : 'bad' }, { icon: 'grain', text: `田粮 ${sg(dG)}/月`, tone: dG >= 0 ? 'good' : 'bad' }, driftChip(c),
+        ...traitsOf(c).map(t => ({ icon: TRAITS[t].icon, text: TRAITS[t].name, tone: TRAITS[t].tone })), { icon: 'morale', text: `忠 ${Math.round(c.att.loyalty)}`, tone: c.att.loyalty >= 60 ? 'good' : 'bad' }],
       note: p ? `调离${nodeName(p)}：那城每月赋税 ${sg(lost!.sv)}、田粮 ${sg(lost!.gr)}` : `现在${nodeName(c.location)}` }; });
     this.modal('appoint', '任命主官', `${nodeName(node)} · 与现任${s.cities[node].governor ? charName(s, s.cities[node].governor) : '（佚名）'}相比，本城每月收入的增减`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'appoint', node, char: id }); }, { stampText: '任' })], [this.cancelBtn()], 'wide');
   }
@@ -1533,11 +1565,12 @@ export class App {
     ], [{ label: '关闭', icon: 'close', onclick: () => {} }]);
   }
 
-  openChars(group: 'mine' | 'vassal' | 'others' = 'mine') {
+  openChars(group: 'mine' | 'vassal' | 'others' | 'prisoners' = 'mine') {
     const s = this.s!;
-    const tabs = h('div', { class: 'tabs', style: { margin: '0 0 10px' } }, ...([['mine', 'chars', '本方'], ['vassal', 'urgent', '诸镇'], ['others', 'factions', '他方']] as const)
+    const held = Object.values(s.chars).filter(c => c.status === 'captured' && c.captor === s.player);
+    const tabs = h('div', { class: 'tabs', style: { margin: '0 0 10px' } }, ...([['mine', 'chars', '本方'], ['vassal', 'urgent', '诸镇'], ['others', 'factions', '他方'], ['prisoners', 'prisoner', `俘虏${held.length ? ' ' + held.length : ''}`]] as const)
       .map(([k, icon, n]) => h('button', { class: 'tab' + (k === group ? ' on' : ''), onclick: () => { this.closeModal(); this.openChars(k); } }, ic(icon), n)));
-    const list = Object.values(s.chars).filter(c => c.status !== 'offstage' && (group === 'mine' ? c.faction === s.player : group === 'vassal' ? s.factions[c.faction]?.overlord === s.player : c.faction !== s.player && s.factions[c.faction]?.overlord !== s.player && s.factions[c.faction] && !s.factions[c.faction].defunct && (s.factions[c.faction].leader === c.id || c.ab.wang >= 60)))
+    const list = group === 'prisoners' ? held : Object.values(s.chars).filter(c => c.status !== 'offstage' && (group === 'mine' ? c.faction === s.player : group === 'vassal' ? s.factions[c.faction]?.overlord === s.player : c.faction !== s.player && s.factions[c.faction]?.overlord !== s.player && s.factions[c.faction] && !s.factions[c.faction].defunct && (s.factions[c.faction].leader === c.id || c.ab.wang >= 60)))
       .sort((a, b) => Number(b.status === 'active') - Number(a.status === 'active') || Number(s.factions[b.faction]?.leader === b.id) - Number(s.factions[a.faction]?.leader === a.id) || Math.max(b.ab.tong, b.ab.zheng) - Math.max(a.ab.tong, a.ab.zheng));
     const grid = h('div', { class: 'roster' });
     for (const c of list) {
@@ -1550,10 +1583,31 @@ export class App {
         f?.leader === c.id ? h('span', { class: 'r-lead' }, ic('crown')) : null,
         c.status !== 'active' ? h('span', { class: 'r-st' }, c.status === 'captured' ? '被执' : '已故') : null,
         h('b', null, c.name), h('small', null, leads ? `统 ${leads.name}` : post ? `守${nodeName(post)}` : c.title),
-        h('div', { class: 'r-stat' }, h('span', null, `${best[0]} ${best[1]}`), group !== 'others' ? h('span', { class: c.att.loyalty >= 60 ? 'up' : 'down' }, `忠 ${Math.round(c.att.loyalty)}`) : null)));
+        h('div', { class: 'r-stat' }, h('span', null, `${best[0]} ${best[1]}`), group !== 'others' ? h('span', { class: c.att.loyalty >= 60 ? 'up' : 'down' }, `忠 ${Math.round(c.att.loyalty)}`) : null),
+        traitsOf(c).length ? h('div', { class: 'r-traits' }, ...traitsOf(c).map(t => h('i', { class: TRAITS[t].tone, 'data-tip': `${TRAITS[t].name}：${TRAITS[t].desc}` }, TRAITS[t].name))) : null,
+        group === 'prisoners' ? this.prisonerBtns(c) : null));
     }
-    this.modal('chars', '人物', `${list.length} 人 · 点人物看档案`, [tabs, list.length ? grid : h('div', { class: 'note' }, '无')], [{ label: '关闭', icon: 'close', onclick: () => {} }], 'wide');
+    const empty = group === 'prisoners' ? '眼下没有俘虏。城破被执、阵前被擒、扣下的敌使都会押到这里，由你劝降、释放或处斩。' : '无';
+    this.modal('chars', '人物', group === 'prisoners' ? `${list.length} 人在押 · 劝降成则改投、可以任用；释放得仁名；处斩则其旧主上下同仇` : `${list.length} 人 · 点人物看档案`, [tabs, list.length ? grid : h('div', { class: 'note' }, empty)], [{ label: '关闭', icon: 'close', onclick: () => {} }], 'wide');
     gsap.from('#modal .rcard', { opacity: 0, y: 20, scale: 0.9, duration: 0.3, stagger: 0.02, ease: 'back.out(1.6)' });
+  }
+
+  /** 俘虏卡下的三个处置：劝降（把握）、释放、处斩；已排的显示为已定 */
+  prisonerBtns(c: Character): HTMLElement {
+    const s = this.s!;
+    const queued = this.orders.find(o => o.kind === 'prisoner' && o.char === c.id) as Extract<Order, { kind: 'prisoner' }> | undefined;
+    const p = prisonerChance(s, s.player, c.id);
+    const act = (a: 'recruit' | 'release' | 'execute') => (e: Event) => {
+      e.stopPropagation();
+      this.orders = this.orders.filter(o => !(o.kind === 'prisoner' && o.char === c.id));
+      this.addOrder({ id: this.newOrderId(), kind: 'prisoner', char: c.id, act: a });
+      this.closeModal(); this.openChars('prisoners');
+    };
+    const b = (a: 'recruit' | 'release' | 'execute', label: string, tip: string) => h('span', { class: 'pr-b' + (queued?.act === a ? ' on' : '') + (a === 'execute' ? ' bad' : ''), role: 'button', 'data-tip': tip, onclick: act(a) }, label);
+    return h('div', { class: 'pr-acts' },
+      b('recruit', p < 0.05 ? '劝降·极难' : `劝降 约${Math.round(p * 20) * 5}%`, '成则改投我方、可以任用；不成则降意稍增，下月可再劝'),
+      b('release', '释放', '遣归旧主；我方各城民心 +1'),
+      b('execute', '处斩', '身死；其旧主上下主战 +5，我方主战之臣忠诚 +1'));
   }
 
   openChar(id: string) {
@@ -1579,6 +1633,7 @@ export class App {
           post ? h('span', { class: 'tag' }, ic('appoint'), `主官 · ${nodeName(post)}`) : null,
           leads ? h('span', { class: 'tag' }, ic('army'), `统 ${leads.name}`) : null),
         h('div', { class: 'p-bio' }, '“', c.bio, '”'),
+        this.traitChips(c),
         h('div', { class: 'p-mid' }, radar(c.ab), h('div', { class: 'p-abil' }, ...([['统军', c.ab.tong, 'army'], ['政务', c.ab.zheng, 'admin'], ['谋略', c.ab.mou, 'event'], ['外交', c.ab.wai, 'envoy'], ['威望', c.ab.wang, 'crown']] as const)
           .map(([k, v, icon]) => h('div', { class: 'pa' }, ic(icon), h('span', null, k), h('b', { class: v >= 70 ? 'hi' : v < 40 ? 'lo' : '' }, String(v)))))),
         own ? h('div', { class: 'p-bars' }, bar('忠诚', c.att.loyalty, c.att.loyalty >= 50, 'morale'), bar('降意', c.att.surrender, c.att.surrender < 40, 'prisoner'), bar('主战', (c.att.hawk + 100) / 2, true, 'war')) : h('div', { class: 'note' }, '敌方人物的心思不得而知。'),

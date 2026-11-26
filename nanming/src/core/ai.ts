@@ -203,7 +203,7 @@ export function aiOrders(s: GameState, f: string): Order[] {
     if (!urgent.has(c.id) && !thin) continue;
     if (soldiers > capWant && !danger.some(d => d.node === c.id)) continue;
     const grainOk = Math.floor((c.grain / 8) / GRAIN_PER_SOLDIER / 100) * 100;
-    const want = Math.min(maxRecruit(c), Math.floor(c.silver * 0.3 / RECRUIT_SILVER / 100) * 100, grainOk);
+    const want = Math.min(maxRecruit(c, s), Math.floor(c.silver * 0.3 / RECRUIT_SILVER / 100) * 100, grainOk);
     if (want >= 500) orders.push({ id: id(), kind: 'recruit', node: c.id, troops: want });
   }
   return orders;
@@ -245,7 +245,7 @@ export function aiRaiseArmies(s: GameState) {
     const govs = new Set(Object.values(s.cities).map(c => c.governor));
     const pool = Object.values(s.chars).filter(c => c.faction === f.id && c.status === 'active' && !leading.has(c.id) && c.id !== f.leader && !c.royal && c.ab.tong >= 45 && !s.missions.some(m => (m.order as any).char === c.id));
     const cmd = pool.filter(c => !govs.has(c.id)).sort((x, y) => y.ab.tong - x.ab.tong)[0] ?? pool.sort((x, y) => y.ab.tong - x.ab.tong)[0];
-    if (cmd) for (const c of Object.values(s.cities)) if (c.governor === cmd.id) c.governor = undefined;
+    if (cmd) for (const c of Object.values(s.cities)) if (c.governor === cmd.id) delete c.governor;
     if (!cmd) continue;
     const troops = Math.min(40000, cap.garrison - keep);
     const id = `a_${f.id}_${s.nextId++}`;

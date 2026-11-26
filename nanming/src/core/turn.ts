@@ -15,6 +15,7 @@ import { pruneLedger, topOf, report, citiesOf, armiesOf } from './state';
 import { TOTAL_TURNS, dateLabel } from './calendar';
 import { VICTORY_AREAS, NODE } from '../data/geography';
 import { runTalent } from './talent';
+import { governorDrift, aiAppoint, aiSeek, aiPrisoners } from './people';
 import { pendingSuccessions, successionOptions, applySuccession, autoSuccession, courtOf, transferCourt, polityOf } from './regime';
 
 export type Interrupt =
@@ -145,8 +146,11 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
     }
   }
 
-  // 人才出仕
+  // 人才出仕；主官治城；电脑各家补派主官、处置俘虏
   runTalent(s);
+  governorDrift(s);
+  for (const f of Object.keys(s.factions).sort()) if (f !== s.player && !s.factions[f].defunct) { aiAppoint(s, f); aiSeek(s, f); }
+  aiPrisoners(s);
 
   // 继统：君主被俘或身故的势力议定监国、另立、迎回或权臣主事
   for (const f of pendingSuccessions(s)) {

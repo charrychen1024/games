@@ -1194,3 +1194,17 @@ button.rc.on::after { content: '▴'; color: var(--gold-2); }
 .na-fx { inset: 0; }
 .na-p { position: absolute; border-radius: 50%; margin: -2px 0 0 -2px; box-shadow: 0 0 6px currentColor; }
 .na-shine { top: -20%; bottom: -20%; left: 0; width: 60%; opacity: 0; background: linear-gradient(100deg, transparent 20%, rgba(255, 246, 220, 0.5) 50%, transparent 80%); }
+
+/* ---------- 人物特长、俘虏处置 ---------- */
+.traits { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 4px; }
+.trait { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px 2px 6px; border-radius: 11px; font-size: 12.5px; font-weight: 900; color: #fff3d9; background: linear-gradient(180deg, #4f7a3a, #2f4f22); border: 1px solid rgba(240, 207, 134, 0.55); }
+.trait.bad { background: linear-gradient(180deg, #8f2a1f, #5a160f); }
+.trait .ic { width: 14px; height: 14px; }
+.rcard .r-traits { display: flex; gap: 3px; justify-content: center; flex-wrap: wrap; margin-top: 2px; }
+.rcard .r-traits i { font-style: normal; font-size: 10.5px; font-weight: 900; padding: 0 5px; border-radius: 6px; color: #fff3d9; background: #3f6a2e; }
+.rcard .r-traits i.bad { background: #8f2a1f; }
+.rcard .pr-acts { display: flex; gap: 3px; margin-top: 4px; justify-content: center; flex-wrap: wrap; }
+.rcard .pr-b { font-size: 11px; font-weight: 900; padding: 2px 6px; border-radius: 7px; border: 1px solid var(--gold-dim); color: var(--gold-2); background: rgba(0, 0, 0, 0.35); cursor: pointer; }
+.rcard .pr-b:hover { background: #5a3a1f; }
+.rcard .pr-b.bad { color: #ff9a85; border-color: #8f2a1f; }
+.rcard .pr-b.on { color: #fff3d9; background: linear-gradient(180deg, #c23a2b, #6e170f); border-color: var(--gold); }

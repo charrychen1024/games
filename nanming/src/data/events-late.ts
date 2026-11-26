@@ -434,7 +434,7 @@ export const LATE_EVENTS: EventDef[] = [
     effect: s => {
       s.chars.jierhalang.status = 'dead';
       for (const a of Object.values(s.armies)) if (a.commander === 'jierhalang') handover(s, a);
-      for (const c of Object.values(s.cities)) if (c.governor === 'jierhalang') c.governor = undefined;
+      for (const c of Object.values(s.cities)) if (c.governor === 'jierhalang') delete c.governor;
       if (s.factions.qing.leader === 'jierhalang') s.factions.qing.leader = alive(s, 'fulin') ? 'fulin' : s.factions.qing.leader;
     },
   }),
@@ -547,7 +547,7 @@ function zhengSplit(s: GameState, playerFollowsChenggong: boolean) {
   if (!keep.length) {
     // 无港可据：厦门若无人或在郑氏手中则入据，若为他家所占则只率船队入海
     const c = s.cities.xiamen;
-    if (c && (c.controller === 'zheng' || c.controller === 'local')) { c.controller = 'zhengcg'; c.governor = undefined; }
+    if (c && (c.controller === 'zheng' || c.controller === 'local')) { c.controller = 'zhengcg'; delete c.governor; }
     else if (fleet.length) cg.capital = s.armies[fleet[0]].location;
   }
   // 郑芝龙一支归清，芝龙本人被挟北上
@@ -612,7 +612,7 @@ function luSplit(s: GameState) {
       s.chars.zhuyihai.title = '监国';
       setStance(s, 'lu', court, 'neutral');
       setStance(s, 'lu', 'qing', 'war');
-      for (const n of east) if (s.cities[n].governor && s.chars[s.cities[n].governor!]?.faction !== 'lu') s.cities[n].governor = undefined;
+      for (const n of east) if (s.cities[n].governor && s.chars[s.cities[n].governor!]?.faction !== 'lu') delete s.cities[n].governor;
 }
 
 /** 迁界：沿海清属港口内迁 */

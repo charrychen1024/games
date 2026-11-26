@@ -198,6 +198,17 @@ try {
   const le = await page.evaluate(() => NM.map.view.lens);
   const legend = await page.locator('#lens .lens-lg .lg-i').count();
   await page.keyboard.press('l'); await wait(200);
+  // 招贤：城池政令台有“招贤”，下令后本月多出一位地方人物
+  {
+    const n0 = await page.evaluate(() => Object.keys(NM.s.chars).length);
+    await page.evaluate(() => { const c = Object.values(NM.s.cities).find(x => x.controller === NM.s.player && x.silver >= 4000 && !NM.s.sieges[x.id]); NM.selectNode(c.id); });
+    await wait(400);
+    const hasSeek = await visible('#act-seek');
+    if (hasSeek) { await page.click('#act-seek'); await wait(300); await page.click('#seek-ok').catch(() => {}); await wait(200); }
+    const queued = await page.evaluate(() => NM.orders.some(o => o.kind === 'seek'));
+    check('城池政令台可以招贤，下令后排入本月命令', hasSeek && queued, `${hasSeek} ${queued} ${n0}`);
+    await page.evaluate(() => NM.closePanel());
+  }
   check('地图图层：点军情、按 L 换到钱粮并附图例、再按回到势力', lw === 'war' && le === 'econ' && legend >= 4 && (await page.evaluate(() => NM.map.view.lens)) === 'faction', `${lw} ${le} ${legend}`);
   check('每条战报都有配声', !!probe.cardSound, JSON.stringify(probe));
   check('月末军队沿路行进有动画', m1.marched > 0, JSON.stringify(m1));

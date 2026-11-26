@@ -21,7 +21,7 @@ export function yangzhouSiegeState(seed = 1645): GameState {
   s.flags.qing_south = turnOf(1644, 10);
   setStance(s, 'qing', 'hongguang', 'war');
   // 江北局势：徐州、泗州、淮安已失，刘良佐已归附清朝，高杰已死
-  for (const id of ['xuzhou', 'sizhou', 'guide', 'suizhou', 'kaifeng', 'daming', 'jinan', 'taiyuan', 'tongguan', 'xian', 'luoyang']) { s.cities[id].controller = 'qing'; s.cities[id].governor = undefined; }
+  for (const id of ['xuzhou', 'sizhou', 'guide', 'suizhou', 'kaifeng', 'daming', 'jinan', 'taiyuan', 'tongguan', 'xian', 'luoyang']) { s.cities[id].controller = 'qing'; delete s.cities[id].governor; }
   s.cities.huaian.controller = 'liuzeqing';
   defectFaction(s, 'liuliangzuo', 'qing');
   s.chars.liuliangzuo.att.loyalty = 70;
@@ -49,7 +49,7 @@ export function yangzhouSiegeState(seed = 1645): GameState {
   // 黄得功西御左良玉，驻芜湖
   s.armies.a_huang.location = 'wuhu';
   s.armies.a_zuo.location = 'jiujiang'; delete s.factions.zuoliangyu.overlord; setStance(s, 'zuoliangyu', 'hongguang', 'war');
-  s.cities.jiujiang.controller = 'zuoliangyu'; s.cities.jiujiang.governor = undefined; s.chars.yuanjixian.location = 'anqing';
+  s.cities.jiujiang.controller = 'zuoliangyu'; delete s.cities.jiujiang.governor; s.chars.yuanjixian.location = 'anqing';
   s.flags.zuo_rebel = turnOf(1645, 3);
   // 左良玉四月初病死九江，左梦庚继统：人物、势力、军队与军报一致
   s.chars.zuoliangyu.status = 'dead';

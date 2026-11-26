@@ -5,6 +5,7 @@ import type { Army, ArmyOrder, GameState, NodeId } from './types';
 import { NODE, routeBetween, shortestPath, neighbors } from '../data/geography';
 import { armiesAt, friendly, hostile, report, nodeName, factionName, charName, troopsText, bump, newId, topOf, adjustAtt } from './state';
 import { createBattle, makeSide, sideTroops, type BattleSide, type BattleState, type Weather, type Terrain, outcomeText, lossesOf } from './battle';
+import { hasTrait } from './people';
 import { rngFor } from './rng';
 import { lunarOf } from './calendar';
 
@@ -135,12 +136,15 @@ function combineSide(s: GameState, armies: Army[], opts: { garrison?: { node: st
   }
   for (const k of ['inf', 'cav', 'gun', 'navy'] as const) mix[k] = troops ? mix[k] / troops : 0;
   const ch = s.chars[commander];
+  // 特长：骁勇统军 +6；水战（水师过半）统军 +8；智谋多一道计策；善守者守城士气 +8
+  const tong = (ch?.ab.tong ?? 40) + (hasTrait(ch, 'xiaoyong') ? 6 : 0) + (hasTrait(ch, 'shuishi') && mix.navy >= 0.5 ? 8 : 0);
+  const avgMorale = troops ? Math.round(morale / troops) : 50;
   return makeSide({
     faction, name: factionName(s, faction), commander, commanderName: ch?.name ?? '守将',
-    tong: ch?.ab.tong ?? 40, mou: ch?.ab.mou ?? 35, wai: ch?.ab.wai ?? 35,
+    tong: Math.min(99, tong), mou: ch?.ab.mou ?? 35, wai: ch?.ab.wai ?? 35,
     surrender: ch?.att.surrender ?? 40,
-    mix, stratagems: 1 + Math.floor((ch?.ab.mou ?? 30) / 40), armies: armies.map(a => a.id), garrison: !!opts.garrison,
-    troops, morale: troops ? Math.round(morale / troops) : 50,
+    mix, stratagems: 1 + Math.floor((ch?.ab.mou ?? 30) / 40) + (hasTrait(ch, 'zhimou') ? 1 : 0), armies: armies.map(a => a.id), garrison: !!opts.garrison,
+    troops, morale: opts.garrison && hasTrait(ch, 'shanshou') ? Math.min(100, avgMorale + 8) : avgMorale,
   });
 }
 
@@ -273,13 +277,14 @@ export function captureChar(s: GameState, id: string, by: string, how: string) {
   const ch = s.chars[id];
   if (!ch || ch.status !== 'active') return;
   ch.status = 'captured';
+  ch.captor = by; ch.capturedAt = s.turn;
   ch.location = s.factions[by]?.capital ?? ch.location;
   const ours = topOf(s, ch.faction) === s.player;
   const isLeader = s.factions[ch.faction]?.leader === id;
   report(s, { cat: '人事', urgent: ours, text: `${ch.name}${how}，为${factionName(s, by)}所执。`, faction: ours || isLeader ? undefined : ch.faction });
   // 军权交接
   for (const a of Object.values(s.armies)) if (a.commander === id) handover(s, a);
-  for (const c of Object.values(s.cities)) if (c.governor === id) c.governor = undefined;
+  for (const c of Object.values(s.cities)) if (c.governor === id) delete c.governor;
   const f = s.factions[ch.faction];
   if (f && f.leader === id) succession(s, f.id, `${ch.name}被俘`);
 }
@@ -353,7 +358,7 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
       bump(s, dest.id, 'silver', sv, `${nodeName(node)}弃城时运出`, src0);
       bump(s, node, 'garrison', -c.garrison, '弃城而走', src0);
       bump(s, node, 'silver', -sv, '弃城时运走', src0);
-      if (c.governor && s.chars[c.governor]?.faction === old) { s.chars[c.governor].location = dest.id; c.governor = undefined; }
+      if (c.governor && s.chars[c.governor]?.faction === old) { s.chars[c.governor].location = dest.id; delete c.governor; }
       fled = `守军 ${troopsText(g)} 携银 ${troopsText(sv)} 两退往${nodeName(dest.id)}`;
     } else {
       // 无城可退：守军就地溃散，府库来不及运走

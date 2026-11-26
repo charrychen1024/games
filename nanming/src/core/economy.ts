@@ -6,6 +6,7 @@ import { bump, report, nodeName, topOf, troopsText, charName, hostile, friendly 
 import { neighbors, NODE } from '../data/geography';
 import { lunarOf } from './calendar';
 import { shortDate } from './calendar';
+import { govEffects } from './people';
 
 export const POLICY_NAME: Record<Policy, string> = {
   balanced: '均衡', agri: '劝农', commerce: '通商', fortify: '整军修城', relief: '赈济', edu: '兴学', levy: '加派',
@@ -44,10 +45,6 @@ export const REMIT_RATE = 0.3; // 直辖城起运上缴比例
 /** 起运：本月赋税海贸的三成解往治所（出征各军多由治所支饷，钱要集中到治所才用得上） */
 export const remitAmount = (_c: { garrison: number }, income: number) => Math.round(income * REMIT_RATE);
 
-function governorZheng(s: GameState, c: City): number {
-  const g = c.governor ? s.chars[c.governor] : undefined;
-  return g && g.status === 'active' && g.faction === c.controller ? g.ab.zheng : 40;
-}
 
 /** 田粮的季节系数：秋收（七至九月）1.7，五六月 0.9，其余 0.75；全年平均约为 1 */
 export function harvestFactor(turn: number): number {
@@ -56,11 +53,11 @@ export function harvestFactor(turn: number): number {
 }
 export function monthlyIncome(s: GameState, c: City): { silver: number; grain: number; trade: number } {
   const harvest = harvestFactor(s.turn);
-  const gov = 1 + (governorZheng(s, c) - 50) / 250;
+  const ge = govEffects(s, c);
   const sieged = !!s.sieges[c.id];
-  let silver = c.pop * (c.commerce / 100) * (0.5 + c.order / 100) * 160 * gov;
+  let silver = c.pop * (c.commerce / 100) * (0.5 + c.order / 100) * 160 * ge.silverMul;
   if (c.policy === 'levy') silver *= 1.5;
-  let grain = c.pop * (c.agri / 100) * (0.55 + c.minxin / 220) * 260 * harvest * gov;
+  let grain = c.pop * (c.agri / 100) * (0.55 + c.minxin / 220) * 260 * harvest * ge.grainMul;
   const trade = c.trade ? c.trade * 2600 * (c.commerce / 100) : 0;
   if (sieged) { silver *= 0.1; grain *= 0.15; }
   return { silver: Math.round(silver), grain: Math.round(grain), trade: Math.round(sieged ? 0 : trade) };

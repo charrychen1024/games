@@ -1,14 +1,16 @@
 /* 命令：校验、执行、留痕。玩家与电脑用同一套命令。 */
-import type { ArmyOrder, GameState, Order } from './types';
+import type { ArmyOrder, City, GameState, Order } from './types';
 import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance } from './state';
 import { setArmyOrder, capture } from './military';
 import { RECRUIT_SILVER, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
 import { rngFor } from './rng';
+import { seekTalent, seekError, prisonerError, handlePrisoner, SEEK_SILVER, govEffects, hasTrait } from './people';
 import { shortestPath, neighbors, NODE, pathDays } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
   trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', supply: '粮台', reinforce: '增兵',
   envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立', war: '宣战', raise: '出兵',
+  seek: '招贤', prisoner: '俘虏',
 };
 
 /** 命令的一句话描述 */
@@ -16,6 +18,8 @@ export function describeOrder(s: GameState, o: Order): string {
   switch (o.kind) {
     case 'policy': return `${nodeName(o.node)}改行“${POLICY_NAME[o.policy]}”方针`;
     case 'appoint': return `任命${charName(s, o.char)}主政${nodeName(o.node)}`;
+    case 'seek': return `在${nodeName(o.node)}招贤（${SEEK_SILVER / 1000}千两）`;
+    case 'prisoner': return `${o.act === 'recruit' ? '劝降' : o.act === 'release' ? '释放' : '处斩'}俘虏${charName(s, o.char)}`;
     case 'transfer': return `自${nodeName(o.from)}调${o.grain ? `粮 ${o.grain} 石` : ''}${o.grain && o.silver ? '、' : ''}${o.silver ? `银 ${o.silver} 两` : ''}往${nodeName(o.to)}`;
     case 'recruit': return `${nodeName(o.node)}募兵 ${o.troops} 人`;
     case 'trade': return o.grain >= 0 ? `${nodeName(o.node)}籴粮 ${o.grain} 石` : `${nodeName(o.node)}粜粮 ${-o.grain} 石`;
@@ -63,6 +67,8 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
   const own = (node: string) => s.cities[node]?.controller === f;
   switch (o.kind) {
     case 'policy': return own(o.node) ? null : '只能给自己的城定方针';
+    case 'seek': return seekError(s, f, o.node);
+    case 'prisoner': return prisonerError(s, f, o.char);
     case 'appoint': {
       const c = s.chars[o.char];
       if (!own(o.node)) return '只能任命自己城池的主官';
@@ -211,7 +217,7 @@ export function validateQueued(s: GameState, queued: Order[], o: Order): string 
 export function recruitLeft(s: GameState, node: string): number {
   const c = s.cities[node];
   const used = c.recruitTurn === s.turn ? c.recruitN ?? 0 : 0;
-  return Math.max(0, maxRecruit(c) - used);
+  return Math.max(0, maxRecruit(c, s) - used);
 }
 
 /**
@@ -220,7 +226,8 @@ export function recruitLeft(s: GameState, node: string): number {
  */
 export { supplyBlock } from './economy';
 
-export const maxRecruit = (c: { pop: number; minxin: number }) => Math.max(0, Math.round(c.pop * 10000 * 0.004 * (0.5 + c.minxin / 100) / 100) * 100);
+/** 每月募兵上限：按人口与民心；主官长于练兵者多三成 */
+export const maxRecruit = (c: City, s?: GameState) => Math.max(0, Math.round(c.pop * 10000 * 0.004 * (0.5 + c.minxin / 100) * (s ? govEffects(s, c).recruitMul : 1) / 100) * 100);
 
 /** 执行一道命令（已在月初校验）。交涉类只建立任务，下月抵达。 */
 export function applyOrder(s: GameState, f: string, o: Order) {
@@ -232,6 +239,8 @@ export function applyOrder(s: GameState, f: string, o: Order) {
   }
   const src = { kind: 'order' as const, ref: o.id, turn: s.turn };
   switch (o.kind) {
+    case 'seek': seekTalent(s, f, o.node, o.id); break;
+    case 'prisoner': handlePrisoner(s, f, o.char, o.act, o.id); break;
     case 'policy':
       s.cities[o.node].policy = o.policy;
       if (isPlayer) report(s, { cat: '内政', node: o.node, text: `${describeOrder(s, o)}。`, src });
@@ -241,7 +250,7 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       const prev = c.governor;
       // 一人只任一城：调任即卸旧职
       const old = Object.values(s.cities).find(x => x.id !== o.node && x.governor === o.char);
-      if (old) old.governor = undefined;
+      if (old) delete old.governor;
       c.governor = o.char;
       s.chars[o.char].location = o.node;
       if (isPlayer) report(s, { cat: '人事', node: o.node, text: `${describeOrder(s, o)}${old ? `，卸去${nodeName(old.id)}主官` : ''}${prev && prev !== o.char ? `，接替${charName(s, prev)}` : ''}。`, src });
@@ -323,7 +332,7 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       ch.location = o.node;
       // 领兵即离任：原任何城主官都卸去，该城不再得其治理
       const posts = Object.values(s.cities).filter(x => x.governor === ch.id);
-      for (const x of posts) x.governor = undefined;
+      for (const x of posts) delete x.governor;
       bump(s, o.node, 'garrison', -o.troops, `编成${ch.name}${o.navy ? '水师' : '部'}出征`, src);
       report(s, { cat: '军报', node: o.node, text: `${nodeName(o.node)}抽驻军 ${troopsText(o.troops)} 人编成${ch.name}${o.navy ? '水师' : '部'}，听候调遣。${posts.length ? `${ch.name}卸去${posts.map(x => nodeName(x.id)).join('、')}主官。` : ''}`, src });
       break;
@@ -480,6 +489,7 @@ export function envoyScore(s: GameState, f: string, o: Extract<Order, { kind: 'e
   let score = 30;
   factors.push('底数 30');
   const w = Math.round((env.ab.wai - 50) / 2); score += w; factors.push(`${env.name}外交 ${w >= 0 ? '+' : ''}${w}`);
+  if (hasTrait(env, 'biancai')) { score += 6; factors.push(`${env.name}有辩才 +6`); }
   const common = Object.values(s.factions).filter(x => !x.defunct && x.id !== f && x.id !== o.target && hostile(s, f, x.id) && hostile(s, o.target, x.id) && x.id !== 'local');
   if (common.length) { score += 25; factors.push(`同仇${common.map(c => c.short).join('、')} +25`); }
   const st = s.relations[[f, o.target].sort().join('|')]?.stance ?? 'neutral';
@@ -513,7 +523,7 @@ function resolveEnvoy(s: GameState, f: string, o: Extract<Order, { kind: 'envoy'
   // 交战之中谈崩：使者可能被扣
   if (!ok && total < 35 && hostile(s, f, o.target) && rng.chance(0.3)) {
     const env = s.chars[o.char];
-    if (env && env.status === 'active') { env.status = 'captured'; env.location = t.capital; }
+    if (env && env.status === 'active') { env.status = 'captured'; env.captor = o.target; env.capturedAt = s.turn; env.location = t.capital; }
     if (f === s.player || o.target === s.player) report(s, { cat: '交涉', ok: false, urgent: f === s.player, node: t.capital, origin: s.factions[f]?.capital, text: `${charName(s, o.char)}出使${t.name}议${aimText0}，${charName(s, t.leader)}怒而扣留来使。（合计 ${total}，需 55）`, src: { kind: 'diplomacy', ref: o.id, turn: s.turn } });
     return null;
   }
@@ -543,6 +553,7 @@ export function persuadeChance(s: GameState, f: string, charId: string, node: st
   // 敌将心意不可精知：只说个大概
   p += sur / 250; factors.push(`${gov ? gov.name : '守将'}降意${sur >= 60 ? '颇高' : sur >= 35 ? '平常' : '甚低'}`);
   p += (env.ab.wai - 50) / 300; factors.push(`${env.name}外交（${env.ab.wai >= 50 ? '+' : ''}${Math.round((env.ab.wai - 50) / 3)}%）`);
+  if (hasTrait(env, 'biancai')) { p += 0.08; factors.push(`${env.name}有辩才 +8%`); }
   const sg = s.sieges[node];
   if (sg && topOf(s, sg.attacker) === topOf(s, f)) { p += 0.25; factors.push('城已被我军围困 +25%'); }
   const near = Object.values(s.armies).filter(a => topOf(s, a.faction) === topOf(s, f) && (a.location === node || shortestPath(a.location, node, false)?.length === 1)).reduce((n, a) => n + a.troops, 0);
@@ -568,7 +579,7 @@ function resolvePersuade(s: GameState, f: string, o: Extract<Order, { kind: 'per
     capture(s, o.node, f, '献城');
   } else {
     const detained = rng.chance(0.2);
-    if (detained) { env.status = 'captured'; env.location = s.factions[old]?.capital ?? o.node; }
+    if (detained) { env.status = 'captured'; env.captor = old; env.capturedAt = s.turn; env.location = s.factions[old]?.capital ?? o.node; }
     if (f === s.player || old === s.player) report(s, { cat: '交涉', node: o.node, ok: false, origin: s.factions[f]?.capital, text: `${env.name}赴${nodeName(o.node)}劝降，${detained ? '被扣留' : '无功而返'}。（成功率 ${Math.round(p * 100)}%：${factors.join('，')}）`, src });
   }
 }
