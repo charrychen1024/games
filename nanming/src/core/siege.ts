@@ -110,7 +110,7 @@ export function createSiege(b: BattleState): SiegeSim {
     resolve: { att: mA, def: mD }, capture: 0, events: [],
     att: { name: b.att.name, commanderName: b.att.commanderName, tong: b.att.tong, mix: b.att.mix, wai: b.att.wai, surrender: b.att.surrender, start: totA, morale0: mA },
     def: { name: b.def.name, commanderName: b.def.commanderName, tong: b.def.tong, mix: b.def.mix, wai: b.def.wai, surrender: b.def.surrender, start: totD, morale0: mD },
-    weather: b.weather, flags: {}, drum: { att: 0, def: 0, cdAtt: 0, cdDef: 0 },
+    weather: b.weather, flags: { work: clamp(Math.sqrt(10000 / Math.max(1, totD)), 0.8, 3) }, drum: { att: 0, def: 0, cdAtt: 0, cdDef: 0 },
   };
   // 上一战（同一场围城）留下的缺口与残墙
   sim.segs.forEach((s, i) => { s.hp = b.segs && b.segs.length === SEGMENTS ? clamp(b.segs[i], 0, s.max) : wall; });
@@ -160,7 +160,7 @@ export function persuade(sim: SiegeSim): boolean | null {
   if (sim.over || sim.flags.persuaded) return null;
   sim.flags.persuaded = 1;
   const p = persuadeOdds(sim);
-  const ok = makeRng(sim.seed * 13 + 7).next() < p;
+  const ok = makeRng(sim.seed * 13 + 7 + Math.floor(sim.t * 10)).next() < p;   // 何时劝也算在骰里：读档重打不会骰值不变
   if (ok) end(sim, 'att', 'surrender', `${sim.att.name}遣使入城说降，${sim.def.commanderName}开城出降。`);
   else ev(sim, 'drum', `${sim.att.name}遣使入城劝降，${sim.def.commanderName}斩使示众，守军益坚。`, { side: 'def' });
   if (!ok) for (const u of sim.units) if (u.side === 'def' && active(u)) u.morale = Math.min(100, u.morale + 4);
@@ -320,10 +320,10 @@ function fight(sim: SiegeSim, dt: number, rng: Rng) {
     if (a.state !== 'bombard' || a.seg === undefined) continue;
     const s = sim.segs[a.seg];
     if (s.hp > 0) {
-      s.hp = Math.max(0, s.hp - a.troops * 0.000055 * rain * jit() * dt * (0.8 + sim.att.tong / 300));
+      s.hp = Math.max(0, s.hp - Math.min(a.troops, 4000) * 0.000055 * (sim.flags.work ?? 1) * rain * jit() * dt * (0.8 + sim.att.tong / 300));
       if (s.hp <= 0) { ev(sim, 'breach', `${segName(a.seg)}城墙被轰塌，现出缺口！`, { side: 'att', seg: a.seg }); }
     }
-    spread(defOnSeg(sim, a.seg), a.troops * 0.0004 * dt);
+    spread(defOnSeg(sim, a.seg), Math.min(a.troops, 4000) * 0.0004 * dt);   // 一段城前炮位有数，炮多也只能轮番放
   }
   // 3. 火器压制城头
   for (const a of att) {
@@ -337,7 +337,7 @@ function fight(sim: SiegeSim, dt: number, rng: Rng) {
   for (const a of att) {
     if (a.state !== 'ram') continue;
     if (sim.gate.hp > 0) {
-      sim.gate.hp = Math.max(0, sim.gate.hp - Math.min(a.troops, 3000) * 0.00022 * power(sim, a) * jit() * dt);
+      sim.gate.hp = Math.max(0, sim.gate.hp - Math.min(a.troops, 3000) * 0.00022 * (sim.flags.work ?? 1) * power(sim, a) * jit() * dt);
       if (sim.gate.hp <= 0) ev(sim, 'gate', `城门被撞开！`, { side: 'att', seg: GATE_SEG });
     }
     a.engaged = true;
@@ -390,7 +390,8 @@ function morale(sim: SiegeSim, dt: number) {
   for (const u of sim.units) {
     if (!active(u)) continue;
     const cap = u.side === 'att' ? sim.att.morale0 + 10 : sim.def.morale0 + 10;
-    if (!u.engaged) u.morale = Math.min(cap, u.morale + 0.5 * dt);
+    // 顿兵日久：攻方歇着也不再回士气
+    if (!u.engaged && !(supply && u.side === 'att')) u.morale = Math.min(cap, u.morale + 0.5 * dt);
     if (supply && u.side === 'att') { u.morale -= 0.06 * dt; u.stamina = Math.max(0, u.stamina - 0.05 * dt); }
     u.morale = clamp(u.morale, 0, 100);
     if (u.morale < 12 && u.state !== 'rout') { u.state = 'rout'; ev(sim, 'rout', `${sim[u.side].name}${u.name}溃散。`, { side: u.side, unit: u.id }); }
@@ -423,6 +424,9 @@ function morale(sim: SiegeSim, dt: number) {
 }
 
 /* ---------------- 胜负 ---------------- */
+/** 城小则门小墙薄：撞门、炮击的功效按守军规模折算（flags.work），免得小城反比大城难打 */
+/** 一场攻城至多打这么久（秒），到点收兵 */
+export const SIEGE_DUSK = 1200;
 function end(sim: SiegeSim, winner: 'att' | 'def', outcome: NonNullable<SiegeSim['over']>['outcome'], text: string) {
   sim.over = { t: sim.t, winner, outcome };
   ev(sim, 'end', text, { side: winner });
@@ -449,6 +453,8 @@ function settle(sim: SiegeSim, dt: number) {
     end(sim, 'def', retreated ? 'retreat' : 'repulsed', retreated ? `${sim.att.name}收兵回营，城未克。` : `${sim.att.name}溃退。`);
     return;
   }
+  // 攻了二十分钟仍未破城：天晚收兵（围城未解，下月再战）
+  if (sim.t >= SIEGE_DUSK) { for (const u of attAct) u.state = 'gone'; end(sim, 'def', 'retreat', `天色已晚，${sim.att.name}收兵回营，城未克。`); return; }
   // 全军已在撤：余者离场即止
   if (attAct.every(u => u.order.t === 'retreat') && attAct.every(u => u.y > 900)) {
     for (const u of attAct) u.state = 'gone';
@@ -457,6 +463,11 @@ function settle(sim: SiegeSim, dt: number) {
 }
 
 /* ---------------- 电脑指挥 ---------------- */
+/** 及早止损：已折两成以上，城门尚坚（三成血以上）、城墙无缺口，再攻只是白填人命 */
+function stalled(sim: SiegeSim) {
+  const left = sim.units.filter(u => u.side === 'att' && u.state !== 'gone').reduce((n, u) => n + Math.max(0, u.troops), 0);
+  return sim.t > 90 && left < sim.att.start * 0.78 && sim.gate.hp > sim.gate.max * 0.3 && !openings(sim).length;
+}
 export function aiCommands(sim: SiegeSim, side: 'att' | 'def', opts: { eager?: boolean } = {}): SCommand[] {
   const cmds: SCommand[] = [];
   const set = (u: SUnit, o: SOrder) => { if (JSON.stringify(u.order) !== JSON.stringify(o)) { cmds.push({ unit: u.id, side, order: o }); command(sim, { unit: u.id, side, order: o }); } };
@@ -464,7 +475,7 @@ export function aiCommands(sim: SiegeSim, side: 'att' | 'def', opts: { eager?: b
   if (side === 'att') {
     const sa = armyStrength(sim, 'att'), sd = armyStrength(sim, 'def');
     // 大势已去，或顿兵过久而仍无缺口：鸣金。兵力不及守军七成者也要先试攻一阵（四十五秒）再收兵，不会一照面就走
-    if (!opts.eager && ((sim.resolve.att < 26 && sa < sd * 2.2) || (sim.t > 600 && !openings(sim).length && sim.resolve.att < 45) || (sim.t > 900 && !openings(sim).length) || (sim.t > 45 && sa < sd * 0.7))) {
+    if (!opts.eager && ((sim.resolve.att < 26 && sa < sd * 2.2) || (sim.t > 600 && !openings(sim).length && sim.resolve.att < 45) || (sim.t > 900 && !openings(sim).length) || (sim.t > 45 && sa < sd * 0.7 && sim.gate.hp > 0 && !openings(sim).length) || stalled(sim))) {
       for (const u of mine) set(u, { t: 'retreat' });
       if (!sim.flags.retreatEv) { sim.flags.retreatEv = 1; ev(sim, 'retreat', `${sim.att.commanderName}见势不可为，鸣金收兵。`, { side: 'att' }); }
       return cmds;
@@ -489,7 +500,9 @@ export function aiCommands(sim: SiegeSim, side: 'att' | 'def', opts: { eager?: b
     const fresh = infs.filter(u => u.morale > 45).sort((a, b) => b.troops - a.troops);
     const assigned = (u: SUnit) => u.order.t === 'ram' || (u.order.t === 'assault' && u.order.seg === focus);
     const leads = infs.filter(u => assigned(u) && u.morale > 45 && u.troops > (fresh[0]?.troops ?? 0) * 0.35);
-    for (const u of fresh) if (leads.length < Math.min(2, infs.length) && !leads.includes(u)) leads.push(u);
+    // 生力军一齐上：门前、梯下人多，城头箭铳分摊开，伤亡反倒少
+    for (const u of fresh) if (!leads.includes(u)) leads.push(u);
+    if (infs.some(u => u.state === 'ram' || u.state === 'climb')) drum(sim, 'att');
     infs.forEach(u => {
       if (op.length) set(u, { t: 'enter' });
       else if (leads.includes(u)) set(u, focus === GATE_SEG && sim.gate.hp > 0 ? { t: 'ram' } : { t: 'assault', seg: focus });
@@ -521,6 +534,8 @@ export function aiCommands(sim: SiegeSim, side: 'att' | 'def', opts: { eager?: b
       }
     }
     void worst;
+    // 守方：敌已攀城、撞门或入城而军心见低，擂鼓激励
+    if (sim.resolve.def < 55 && att.some(a => a.state === 'climb' || a.state === 'ram' || a.state === 'inside')) drum(sim, 'def');
     for (const u of mine) {
       if (u.order.t !== 'man' && u.order.t !== 'repair') continue;
       const s = u.order.seg, seg = sim.segs[s];

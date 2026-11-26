@@ -22,6 +22,8 @@ export interface FUnit {
   /** 正在接战或射击的对象（画面连线、飘字用） */
   target?: string;
   hit: number; engaged: boolean;
+  /** 临阵状态：开战时每营抽一次（0.86–1.14），乘在战力上；加上全军的“将运”，同样兵力的仗不再开战即定 */
+  luck?: number;
   /** 连续行进的时间（冲势）、接敌后冲锋余时 */
   run: number; charge: number;
 }
@@ -53,8 +55,8 @@ const SPACING = 84;
 const RANGE: Record<FKind, number> = { inf: 0, cav: 0, gun: 240, art: 520, fire: 0 };
 const SPEED_FIELD: Record<FKind, number> = { inf: 38, cav: 76, gun: 34, art: 16, fire: 40 };
 const SPEED_NAVAL: Record<FKind, number> = { inf: 30, cav: 56, gun: 30, art: 22, fire: 50 };
-/** 高地（丘陵）：守方阵前一道岗 */
-export const RIDGE = { x0: 230, x1: 770, y0: 150, y1: 262 };
+/** 高地（丘陵）：守方阵地连同阵前一道缓坡 */
+export const RIDGE = { x0: 210, x1: 790, y0: 150, y1: 330 };
 /** 河（平原有河）：横贯战场，中间一处浅滩 */
 export const RIVER = { y0: 470, y1: 530, ford0: 430, ford1: 570 };
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
@@ -82,6 +84,8 @@ export function createField(b: BattleState): FieldSim {
   const mode: 'field' | 'naval' = b.kind === 'naval' ? 'naval' : 'field';
   const units: FUnit[] = [];
   for (const side of ['att', 'def'] as const) compose(units, side, b[side], mode, b.weather, rng);
+  // 临阵状态：全军将运 ±9%，各营再 ±8%（种子定，读档重打不变）
+  for (const side of ['att', 'def'] as const) { const fortune = 0.8 + rng.next() * 0.4; for (const u of units) if (u.side === side) u.luck = fortune * (0.92 + rng.next() * 0.16); }
   // 临阵尚有余勇：军心再低，开战时全军军心不低于 25（各营士气在 compose 里不低于 22），免得未见敌便全线崩溃
   const mA = Math.max(25, avgMorale(b.att)), mD = Math.max(25, avgMorale(b.def));
   const tot = (s: BattleSide) => s.lanes.reduce((n, l) => n + l.troops, 0) + (s.reserve ?? 0);
@@ -185,7 +189,7 @@ const contacts = (sim: FieldSim, u: FUnit) => sim.units.filter(x => x.side !== u
 function speedOf(sim: FieldSim, u: FUnit, dy: number) {
   let sp = (sim.mode === 'naval' ? SPEED_NAVAL : SPEED_FIELD)[u.kind] * (0.6 + 0.4 * u.stamina / 100);
   if (inRiver(sim, u.x, u.y)) sp *= 0.35;
-  if (sim.mode === 'naval' && sim.wind) sp *= 1 + 0.3 * Math.sign(dy) * sim.wind;   // 顺风快、逆风慢
+  if (sim.mode === 'naval' && sim.wind) sp *= 1 + 0.12 * Math.sign(dy) * sim.wind;   // 顺风快、逆风慢
   if (u.state === 'rout') sp *= 1.15;
   return sp;
 }
@@ -289,12 +293,12 @@ function moveAll(sim: FieldSim, dt: number) {
 /* ---------------- 交战 ---------------- */
 function power(sim: FieldSim, u: FUnit) {
   const drum = sim.drum[u.side] > 0 ? 1.12 : 1;
-  return (0.5 + u.morale / 200) * (0.55 + 0.45 * u.stamina / 100) * (0.85 + sim[u.side].tong / 400) * drum;
+  return (0.5 + u.morale / 200) * (0.55 + 0.45 * u.stamina / 100) * (0.85 + sim[u.side].tong / 400) * drum * (u.luck ?? 1);
 }
 function hurt(u: FUnit, dmg: number, shock = 1) {
   if (dmg <= 0 || u.troops < 1) return;
   const n = Math.min(u.troops, dmg);
-  u.morale -= n / Math.max(1, u.troops) * 110 * shock;
+  u.morale -= n / Math.max(1, u.troops) * 110 * shock / (u.luck ?? 1);
   u.troops -= n; u.hit += n; u.engaged = true;
 }
 /** 一营之兵同时接敌者有限：人多也只能轮番上 */
@@ -303,8 +307,8 @@ function meleeMult(sim: FieldSim, a: FUnit, d: FUnit): number {
   if (sim.mode === 'naval') return ({ inf: 1, cav: 0.8, gun: 0.6, art: 0.4, fire: 0 } as Record<FKind, number>)[a.kind];
   const steady = d.state === 'idle' || (d.state === 'melee' && d.order.t === 'hold');
   switch (a.kind) {
-    case 'inf': return d.kind === 'gun' ? 1.2 : d.kind === 'art' ? 1.4 : 1;
-    case 'cav': return (d.kind === 'gun' ? 1.6 : d.kind === 'art' ? 1.8 : d.kind === 'inf' && steady ? 0.7 : 0.9) * (a.charge > 0 ? 2 : 1) * (d.state === 'rout' ? 1.8 : 1);
+    case 'inf': return d.kind === 'gun' ? 1.1 : d.kind === 'art' ? 1.4 : 1;
+    case 'cav': return (d.kind === 'gun' ? 1.4 : d.kind === 'art' ? 1.8 : d.kind === 'inf' && steady ? 0.7 : 0.9) * (a.charge > 0 ? 2 : 1) * (d.state === 'rout' ? 1.8 : 1);
     case 'gun': return 0.55;
     case 'art': return 0.25;
     default: return 0;
@@ -338,9 +342,11 @@ function fightAll(sim: FieldSim, dt: number, rng: Rng) {
         const key = `rear${a.id}${d.id}`;
         if (!sim.flags[key]) { sim.flags[key] = 1; ev(sim, 'flank', `${sim[a.side].name}${a.name}抄到${sim[d.side].name}${d.name}背后！`, { side: a.side, unit: a.id }); }
       }
-      if (onRidge(sim, d.x, d.y) && !onRidge(sim, a.x, a.y)) m *= 0.65;      // 仰攻高地
-      if (inRiver(sim, a.x, a.y)) m *= 0.8;
-      if (inRiver(sim, d.x, d.y)) m *= 1.25;
+      // 结阵坚守的营：正面来敌一概少伤一成半（被抄背则无此利）
+      else if (d.order.t === 'hold' && d.state !== 'rout' && d.state !== 'move') m *= 0.85;
+      if (onRidge(sim, d.x, d.y) && !onRidge(sim, a.x, a.y)) m *= 0.55;      // 仰攻高地
+      if (inRiver(sim, a.x, a.y)) m *= 0.7;
+      if (inRiver(sim, d.x, d.y)) m *= 1.3;
       hurt(d, frontage(a.troops) * power(sim, a) * 0.0036 * m * share * jit() * dt, shock);
     }
     a.engaged = true;
@@ -351,7 +357,7 @@ function fightAll(sim: FieldSim, dt: number, rng: Rng) {
     if (a.state !== 'shoot' || !a.target) continue;
     const d = sim.units.find(x => x.id === a.target);
     if (!d || !alive(d)) continue;
-    const r = RANGE[a.kind] * (onRidge(sim, a.x, a.y) ? 1.15 : 1);
+    const r = RANGE[a.kind] * (onRidge(sim, a.x, a.y) ? 1.15 : 1) * (sim.weather === 'fog' ? 0.65 : 1);   // 大雾：看不远，射程短
     const dd = dist(a, d);
     if (dd > r) continue;
     const fall = 1 - 0.4 * dd / r;
@@ -366,10 +372,10 @@ function fightAll(sim: FieldSim, dt: number, rng: Rng) {
   // 溃兵被追：沿途逃散、被俘，敌近时每秒折去千分之三，有骑兵追则千分之六
   for (const u of all) {
     if (u.state !== 'rout') continue;
-    const near = sim.units.filter(x => x.side !== u.side && active(x) && dist(u, x) < 170);
+    const near = sim.units.filter(x => x.side !== u.side && active(x) && dist(u, x) < 220);
     if (!near.length) continue;
     const cav = near.some(x => x.kind === 'cav');
-    const n = u.troops * (cav ? 0.006 : 0.003) * dt;
+    const n = u.troops * (cav ? 0.022 : 0.008) * dt;
     u.troops -= n; u.hit += n;
   }
   // 3. 火船：接敌即燃，顺风大成
@@ -377,7 +383,7 @@ function fightAll(sim: FieldSim, dt: number, rng: Rng) {
     if (f.kind !== 'fire' || f.state === 'rout') continue;
     const hitList = all.filter(d => d.side !== f.side && d.state !== 'gone' && dist(f, d) < CONTACT);
     if (!hitList.length) continue;
-    const downwind = sim.wind === 0 ? 0.9 : Math.sign(hitList[0].y - f.y) === sim.wind ? 1.6 : 0.5;
+    const downwind = sim.wind === 0 ? 0.9 : Math.sign(hitList[0].y - f.y) === sim.wind ? 1.35 : 0.7;
     for (const d of all.filter(x => x.side !== f.side && alive(x) && dist(f, x) < CONTACT + 50)) {
       const near = dist(f, d) < CONTACT;
       hurt(d, (500 + d.troops * 0.16) * downwind * (near ? 1 : 0.45) * jit(), 1.6);
@@ -491,13 +497,13 @@ export function aiField(sim: FieldSim, side: 'att' | 'def', opts: { eager?: bool
     for (const u of mine) cmds.push({ unit: u.id, side, order: { t: 'retreat' } });
     return cmds;
   }
-  // 守方：据阵而待，敌近则迎击；自觉势大则出击。攻方：压上
-  // 守方占着高地或隔河，不轻易下来
-  const terrainEdge = side === 'def' && sim.mode === 'field' && (sim.terrain === 'hills' || sim.terrain === 'river');
-  const aggressive = opts.eager || (!opts.hold && (side === 'att' || sa > sf * (terrainEdge ? 2 : 1.4) || (!terrainEdge && sim.t > 240)));
-  // 平地上守方见敌压近便迎上去，两军在战场中段接战；占地利者待敌来攻
-  const meet = terrainEdge ? 70 : 420;
+  // 守方：据阵而待，敌近则迎击；自觉势大、或久候四分钟敌不来，则出击。攻方：压上
+  // 地利（高地、河）不靠原地死守：守方照常迎击，接战之处多在岗坡、河岸，仰攻、涉水者吃亏
+  const aggressive = opts.eager || (!opts.hold && (side === 'att' || sa > sf * 1.4 || sim.t > 240));
+  const meet = 420;
   const engaged = foes.filter(f => sim.units.some(m => m.side === side && alive(m) && dist(m, f) < CONTACT));
+  // 擂鼓：两军接战、或军心见低时擂一通（冷却好了就擂），电脑与部将代打都会
+  if (engaged.length && (sim.resolve[side] < 60 || engaged.length >= 2)) drumF(sim, side);
   const nearOf = (u: FUnit, pool: FUnit[]) => pool.slice().sort((a, b) => Math.abs(a.x - u.x) * 1.4 + Math.abs(a.y - u.y) - (Math.abs(b.x - u.x) * 1.4 + Math.abs(b.y - u.y)))[0];
   for (const u of mine) {
     if (u.order.t === 'retreat') continue;

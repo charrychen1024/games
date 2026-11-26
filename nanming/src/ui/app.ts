@@ -1809,7 +1809,7 @@ export class App {
     const s = this.s!;
     const c = r.cat;
     const ctrl = r.node && s.cities[r.node] ? s.cities[r.node].controller : undefined;
-    const sk: SceneKind | null = c === '易主' ? (r.act === 'breach' || r.act === 'abandon' ? 'siege' : 'surrender') : c === '交涉' && r.from && r.to ? 'parley' : (r.act === 'battle' || r.act === 'siege') && r.from && r.to ? (r.act === 'siege' ? 'siege' : 'battle') : null;
+    const sk: SceneKind | null = c === '易主' ? (r.act === 'breach' || r.act === 'abandon' ? 'siege' : 'surrender') : c === '交涉' && r.from && r.to ? 'parley' : (r.act === 'battle' || r.act === 'siege') && r.from && r.to ? (r.act === 'siege' ? 'siege' : /水战|水师|江面/.test(r.text) ? 'naval' : 'battle') : null;
     if (sk) return { kind: sk, opts: { a: this.party(c === '易主' ? r.to ?? ctrl : r.from), b: this.party(c === '易主' ? r.from : r.to), seed, ok: r.ok !== false } };
     if (!broad) return null;
     if (c === '史事' || c === '线索') return this.eventScene(r.text.match(/【([^】]+)】/)?.[1] ?? '', r.text);

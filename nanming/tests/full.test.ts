@@ -213,7 +213,9 @@ describe('出征：宣战、行程与战斗', () => {
     let r = gen.next();
     while (!r.done) r = gen.next(r.value.type === 'choice' ? { type: 'choice', index: 0 } : undefined);
     const a = r.value.state.armies.a_shi;
-    expect(a.order.kind === 'siege' || (a.order.kind === 'move' && a.order.target === 'yanzhou')).toBe(true);
+    // 仍在开往、围攻兖州，或当月已破城驻于兖州（都说明军令未被史事改回扬州）
+    const took = r.value.state.cities.yanzhou.controller === 'hongguang' && a.location === 'yanzhou';
+    expect(took || a.order.kind === 'siege' || (a.order.kind === 'move' && a.order.target === 'yanzhou')).toBe(true);
   });
   it('未交战的势力：宣战后进攻，抵达当月即有攻城战', () => {
     let s = createGame('hongguang', 1);

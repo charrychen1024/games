@@ -233,7 +233,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
           S('siege-x4', '4×', !paused && speed === 4, () => { speed = 4; paused = false; renderUi(); }, '四倍速（4）')),
         h('div', { class: 'atiles' },
           allOrder,
-          ...(!siege ? [A('all-hold', '全军固守', 'hold', () => allCmd('hold'), false, '各营原地结阵，火器原地射击')] : []),
+          ...(!siege ? [A('all-hold', '全军固守', 'hold', () => allCmd('hold'), false, '各营原地结阵，正面来敌少伤一成半，火器原地射击；久守不动会挨炮、被各个击破')] : []),
           ...(siege && side === 'att' ? [A('siege-persuade', ssim!.flags.persuaded ? '已劝' : '劝降', 'persuade', () => {
             if (ssim!.flags.persuaded) return;
             manual = true;
@@ -444,7 +444,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     if (e.kind === 'charge') { battleSfx.advance(true); const u = units().find(x => x.id === e.unit); if (u && fview) fview.burst(u as FUnit, 'dust'); }
     if (e.kind === 'fire') { battleSfx.fire(); const u = units().find(x => x.id === e.unit) as FUnit | undefined; const t = u?.target ? units().find(x => x.id === u.target) as FUnit : undefined; if (fview && (t || u)) fview.burst((t ?? u)!, 'fire'); }
     if (e.kind === 'rout') battleSfx.rout();
-    if (e.kind === 'shaky' || e.kind === 'waver') { showBanner(e.text, mine ? 'bad' : 'good'); bark(mine ? 'me' : 'foe', mine ? 'behind' : 'ahead'); }
+    if (e.kind === 'shaky' || e.kind === 'waver') { showBanner(e.text, mine ? 'bad' : 'good'); bark('me', mine ? 'behind' : 'ahead'); }   // 总由我方主将开口：我军动摇时稳住阵脚，敌军动摇时催进
   }
   function showBanner(text: string, kind: 'good' | 'bad') {
     banner.textContent = text; banner.className = 'sbanner ' + kind;
@@ -487,7 +487,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     // 战果配一幅小画：破城、城降、野战交锋
     const pty = (f: string): Party => { const lk = lookOf(s, f); return { color: colorOf(f), mark: lk.mark, hat: lk.helmet === 'xi' ? 'shun' : lk.helmet === 'plain' ? 'plain' : lk.helmet }; };
     const oc = sim.over!.outcome as string;
-    const sk: SceneKind = ssim ? (oc === 'breach' || oc === 'abandon' ? 'siege' : oc === 'surrender' || oc === 'collapse' ? 'surrender' : 'battle') : 'battle';
+    const sk: SceneKind = ssim ? (oc === 'breach' || oc === 'abandon' ? 'siege' : oc === 'surrender' || oc === 'collapse' ? 'surrender' : 'battle') : naval ? 'naval' : 'battle';
     const scn = scene(sk, { a: pty(b0.att.faction), b: pty(b0.def.faction), seed: b0.seed });
     scn.el.classList.add('sr-scene');
     const card = h('div', { class: 'sresult ' + r.tone }, scn.el, h('b', null, r.big), h('p', null, r.text),

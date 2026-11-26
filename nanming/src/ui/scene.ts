@@ -4,7 +4,7 @@
 import { ink, tint, paper, mountains, mkRnd, puff, splatter, eave, tree, agedEdges, type Rnd } from './ink';
 import { isReduced } from './motion';
 
-export type SceneKind = 'parley' | 'siege' | 'surrender' | 'battle' | 'war' | 'court' | 'throne' | 'death' | 'disaster' | 'march' | 'econ' | 'appoint' | 'recruit' | 'prison' | 'study';
+export type SceneKind = 'parley' | 'siege' | 'surrender' | 'battle' | 'war' | 'court' | 'throne' | 'death' | 'disaster' | 'march' | 'econ' | 'appoint' | 'recruit' | 'prison' | 'study' | 'naval';
 export type Hat = 'ming' | 'qing' | 'shun' | 'plain' | 'crown';
 export interface Party { color: string; mark?: string; hat?: Hat }
 /** mode：loop 一直动（默认）；still 只画最要紧的一帧；hover 平时静止、鼠标移上（或 play()）才动 */
@@ -14,7 +14,7 @@ export interface SceneOpts { a?: Party; b?: Party; seed?: number; ok?: boolean; 
 /** 每种场景一个循环的长度（秒）与“最要紧的一刻”（减少动态时只画这一帧） */
 const LOOP: Record<SceneKind, [number, number]> = {
   parley: [7, 5.4], siege: [7.5, 4.6], surrender: [6.5, 4.5], battle: [6, 3.2], war: [3.2, 0.5], court: [6, 3.5], throne: [6, 3],
-  death: [6, 2], disaster: [6, 2], march: [6, 3], econ: [5, 2.5], appoint: [6, 3.6], recruit: [6, 3], prison: [5, 2], study: [6, 3],
+  death: [6, 2], disaster: [6, 2], march: [6, 3], econ: [5, 2.5], appoint: [6, 3.6], recruit: [6, 3], prison: [5, 2], study: [6, 3], naval: [6.5, 3.4],
 };
 
 export function scene(kind: SceneKind, o: SceneOpts = {}): { el: HTMLElement; stop(): void; play(): void; pause(): void } {
@@ -144,6 +144,30 @@ function soldier(g: CanvasRenderingContext2D, x: number, y: number, s: number, c
   g.restore();
 }
 /** 旗：杆、旗面（牙边）、字号 */
+/** 一艘帆船：船身、桅、篾帆（本方色）、桅顶旗 */
+function junk(g: CanvasRenderingContext2D, x: number, y: number, s: number, p: Required<Party>, dir: 1 | -1, T: number) {
+  g.save(); g.translate(x, y); g.scale(dir * s, s);
+  g.fillStyle = 'rgba(40,36,30,0.18)'; g.beginPath(); g.ellipse(0, 3, 30, 3.5, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#5a3e24'; g.strokeStyle = ink(0.9, 0.9); g.lineWidth = 1 / s;
+  g.beginPath(); g.moveTo(-30, -9); g.lineTo(26, -11); g.quadraticCurveTo(32, -12, 34, -16); g.lineTo(28, 0); g.lineTo(-24, 0); g.quadraticCurveTo(-30, -2, -32, -12); g.closePath(); g.fill(); g.stroke();
+  g.fillStyle = '#7a5532'; g.fillRect(-26, -12, 50, 2);
+  g.strokeStyle = ink(0.95); g.lineWidth = 1.6 / s; g.beginPath(); g.moveTo(0, -11); g.lineTo(0, -58); g.stroke();
+  const bill = Math.sin(T * 1.3) * 1.5;
+  g.fillStyle = p.color; g.globalAlpha = 0.85;
+  g.beginPath(); g.moveTo(1, -55); g.quadraticCurveTo(20 + bill, -40, 18 + bill, -16); g.lineTo(1, -16); g.closePath(); g.fill();
+  g.globalAlpha = 1; g.strokeStyle = ink(0.8, 0.6); g.lineWidth = 0.6 / s;
+  for (let k = 1; k < 5; k++) { const yy = -55 + k * 8; g.beginPath(); g.moveTo(1, yy); g.lineTo(1 + 18 * Math.min(1, (yy + 55) / 30) + bill, yy); g.stroke(); }
+  g.fillStyle = p.color; g.beginPath(); g.moveTo(0, -58); g.lineTo(-11, -55 + Math.sin(T * 4) * 1.5); g.lineTo(0, -52); g.closePath(); g.fill();
+  g.restore();
+}
+/** 一团火苗 */
+function fire(g: CanvasRenderingContext2D, x: number, y: number, h: number, T: number) {
+  for (let k = 0; k < 3; k++) {
+    const f = 0.75 + 0.25 * Math.sin(T * 9 + k * 2), w = h * (0.45 - k * 0.1);
+    g.fillStyle = ['rgba(220,90,30,0.8)', 'rgba(240,150,40,0.85)', 'rgba(255,220,120,0.9)'][k];
+    g.beginPath(); g.moveTo(x - w, y); g.quadraticCurveTo(x - w * 0.6, y - h * f * (1 - k * 0.2), x + Math.sin(T * 7 + k) * w * 0.3, y - h * f * (1.2 - k * 0.25)); g.quadraticCurveTo(x + w * 0.6, y - h * f * 0.6, x + w, y); g.closePath(); g.fill();
+  }
+}
 function flag(g: CanvasRenderingContext2D, x: number, y: number, h: number, p: Party, wave: number, dir: 1 | -1 = 1) {
   g.save(); g.lineCap = 'round';
   g.strokeStyle = ink(0.92); g.lineWidth = Math.max(1.2, h * 0.03); g.beginPath(); g.moveTo(x, y); g.lineTo(x, y - h); g.stroke();
@@ -272,6 +296,15 @@ function backdrop(kind: SceneKind, W0: number, H: number, dpr: number, seed: num
     tree(g, W * 0.82, H * 0.82, 1.1, 'bare', r, 0.9);
     tree(g, W * 0.12, H * 0.8, 0.8, 'bare', r, 0.8);
   }
+  if (kind === 'naval') {
+    // 江面：水色由远而近渐深，横向水纹
+    const wy = H * 0.56;
+    const wg = g.createLinearGradient(0, wy, 0, H);
+    wg.addColorStop(0, 'rgba(110,135,140,0.25)'); wg.addColorStop(1, 'rgba(70,95,105,0.45)');
+    g.fillStyle = wg; g.fillRect(-W, wy, W * 3, H - wy);
+    g.strokeStyle = ink(0.7, 0.22); g.lineWidth = 0.8;
+    for (let k = 0; k < 40; k++) { const y = wy + 4 + r() * (H - wy - 4), x = r() * W, w = (10 + r() * 30) * (0.5 + (y - wy) / (H - wy)); g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + w / 2, y - 2, x + w, y); g.stroke(); }
+  }
   if (kind === 'march' || kind === 'battle' || kind === 'war' || kind === 'recruit') {
     for (let k = 0; k < 5; k++) tree(g, r() * W, H * (0.52 + r() * 0.06), 0.4 + r() * 0.3, r() < 0.5 ? 'grove' : 'pine', r, 0.6);
   }
@@ -365,6 +398,21 @@ function draw(kind: SceneKind, g: CanvasRenderingContext2D, W: number, H: number
         flag(g, front + side * 96 * S, H * 0.92, 56 * S, p, T * 3 + side, side < 0 ? 1 : -1);
       }
       if (clash) { const ph = ((t - 2.6) % 0.9) / 0.9; puff(g, W / 2, H * 0.85, (18 + ph * 26) * S, '130,110,80', 0.5 * (1 - ph), Math.floor(T * 2)); if (ph < 0.3) splatter(g, W / 2 + (r() - 0.5) * 30 * S, H * 0.78, 26 * S, 0.6, Math.floor(T * 3)); }
+      break;
+    }
+    case 'naval': {
+      // 两队战船相向而来，接舷之际火起：胜方（ok）一侧完好，败方船上起火
+      const meet = seg(t, 0, 2.8), clash = t > 2.8;
+      for (const side of [-1, 1] as const) {
+        const p = side < 0 ? a : b;
+        const lose = ok ? side > 0 : side < 0;
+        for (let k = 0; k < 3; k++) {
+          const x = W / 2 + side * (W * 0.42 - meet * W * 0.3 + k * W * 0.11), y = H * (0.8 + (k % 2) * 0.1) + Math.sin(T * 2 + k + side) * 1.5 * S;
+          junk(g, x, y, (1.1 - k * 0.12) * S, p, side < 0 ? 1 : -1, T + k);
+          if (clash && lose && k < 2) { const ph = ((T * 0.7) + k * 0.4) % 1; puff(g, x, y - 40 * S - ph * 36 * S, (12 + ph * 22) * S, '70,60,52', 0.6 * (1 - ph), k + 21); fire(g, x - 4 * S, y - 10 * S, 22 * S, T + k); fire(g, x + 10 * S, y - 26 * S, 14 * S, T + k + 1); }
+        }
+      }
+      if (clash) { const ph = ((t - 2.8) % 0.8) / 0.8; if (ph < 0.25) splatter(g, W / 2 + (r() - 0.5) * 40 * S, H * 0.72, 24 * S, 0.5, Math.floor(T * 3)); }
       break;
     }
     case 'war': {
