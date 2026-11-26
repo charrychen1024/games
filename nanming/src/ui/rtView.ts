@@ -1,5 +1,6 @@
 /* 即时战斗画面的共用底层：纵深透视、小兵贴图、飘字、弹道、军心泛红。
  * 攻城（siegeView.ts）与野战、水战（fieldView.ts）都从这里派生。画面只读模拟状态，不改它。 */
+import { ink, tint, paper, mountains, mkRnd, puff, splatter, agedEdges } from './ink';
 /** 一方的样貌：旗色、头盔式样、旗号 */
 export interface SideLook { color: string; helmet: 'ming' | 'qing' | 'shun' | 'xi' | 'plain'; flag: string; mark: string }
 /** 颜色加深（k<0）或提亮（k>0） */
@@ -11,7 +12,7 @@ export function shade(hex: string, k: number): string {
 
 export interface ViewOpts { me: 'att' | 'def'; look: { att: SideLook; def: SideLook }; }
 export interface Float { x: number; y: number; text: string; t0: number; color: string; big?: boolean }
-export interface Shot { x0: number; y0: number; x1: number; y1: number; t0: number; dur: number; kind: 'ball' | 'arrow' | 'smoke' | 'flash' | 'fire' | 'dust' }
+export interface Shot { x0: number; y0: number; x1: number; y1: number; t0: number; dur: number; kind: 'ball' | 'arrow' | 'smoke' | 'flash' | 'fire' | 'dust' | 'ink'; seed?: number }
 /** 画面需要的一营的最少信息 */
 export interface VUnit { id: string; side: 'att' | 'def'; kind: string; name: string; troops: number; start: number; morale: number; x: number; y: number; state: string; hit: number; engaged: boolean }
 export interface Camera { near: number; far: number; k: number; kx: number; ky: number }
@@ -81,48 +82,95 @@ export abstract class RtView {
     return [x, y];
   }
 
-  /* ---------- 小兵贴图（预渲染） ---------- */
+  /* ---------- 小兵贴图（预渲染）：墨线勾勒、号衣淡彩 ---------- */
   sprite(side: 'att' | 'def', kind: string, facing: 'back' | 'front', frame: number): HTMLCanvasElement {
     const key = `${side}${kind}${facing}${frame}`;
     let c = this.sprites.get(key);
     if (c) return c;
     const look = this.o.look[side];
-    c = document.createElement('canvas'); c.width = 48; c.height = 64;
+    c = document.createElement('canvas'); c.width = 96; c.height = 128;
     const g = c.getContext('2d')!;
-    g.translate(24, 60);
-    const col = look.color, dark = shade(col, -0.4), skin = '#e2b98f';
-    const helmet = look.helmet === 'qing' ? '#3a3d44' : look.helmet === 'ming' ? '#8a8d93' : look.helmet === 'shun' ? '#6b5638' : look.helmet === 'xi' ? '#5a4632' : '#555';
+    g.scale(2, 2); g.translate(24, 60);
+    const col = tint(look.color, 0.22), dark = shade(col, -0.35), skin = '#ead7b4', line = ink(0.92, 0.95);
+    const helmet = look.helmet === 'qing' ? ink(0.9) : look.helmet === 'ming' ? ink(0.6) : look.helmet === 'shun' ? '#6b5638' : look.helmet === 'xi' ? '#5a4632' : ink(0.7);
     const step = frame ? 2 : -2;
-    g.lineCap = 'round';
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    const outline = (w = 1.1) => { g.strokeStyle = line; g.lineWidth = w; g.stroke(); };
+    const head = (x: number, y: number, r: number) => {
+      g.fillStyle = facing === 'front' ? skin : shade(skin, -0.25); g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); outline(0.9);
+      g.fillStyle = helmet; g.beginPath(); g.arc(x, y - r * 0.35, r * 1.08, Math.PI, Math.PI * 2); g.closePath(); g.fill();
+      if (look.helmet === 'ming') { g.strokeStyle = '#b8352a'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(x, y - r * 1.4); g.lineTo(x, y - r * 2.4); g.stroke(); }
+      if (look.helmet === 'qing') { g.strokeStyle = '#b89448'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(x, y - r * 1.4); g.lineTo(x, y - r * 2.7); g.stroke(); }
+    };
+    const spear = (x0: number, y0: number, x1: number, y1: number) => {
+      g.strokeStyle = ink(0.85, 0.9); g.lineWidth = 1.2; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+      g.fillStyle = ink(0.95); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x1 - 1.6, y1 + 5); g.lineTo(x1 + 1.6, y1 + 5); g.closePath(); g.fill();
+      g.strokeStyle = '#b8352a'; g.lineWidth = 1.4; g.beginPath(); g.moveTo(x1 - 1.5, y1 + 6.5); g.lineTo(x1 + 1.5, y1 + 6.5); g.stroke();
+    };
     if (kind === 'cav') {
-      g.fillStyle = '#5a3b22'; g.beginPath(); g.ellipse(0, -14, 9, 14, 0, 0, Math.PI * 2); g.fill();
-      g.strokeStyle = '#3a2614'; g.lineWidth = 3; g.beginPath(); g.moveTo(-4, -4); g.lineTo(-4 - step * 0.5, 0); g.moveTo(4, -4); g.lineTo(4 + step * 0.5, 0); g.stroke();
-      if (facing === 'front') { g.fillStyle = '#5a3b22'; g.beginPath(); g.ellipse(0, -26, 4, 7, 0, 0, Math.PI * 2); g.fill(); }
-      g.fillStyle = col; g.fillRect(-6, -36, 12, 13);
-      g.fillStyle = facing === 'front' ? skin : dark; g.beginPath(); g.arc(0, -40, 4.5, 0, Math.PI * 2); g.fill();
-      g.fillStyle = helmet; g.beginPath(); g.arc(0, -42, 4.8, Math.PI, Math.PI * 2); g.fill();
-      g.strokeStyle = '#6b4a2a'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(8, -24); g.lineTo(11, -58); g.stroke();
-      g.fillStyle = '#d8d8d0'; g.beginPath(); g.moveTo(11, -58); g.lineTo(9.5, -52); g.lineTo(12.5, -52); g.fill();
+      // 马：墨笔一气，腿四笔，鬃尾飞白
+      g.fillStyle = facing === 'front' ? '#6a5038' : '#5a4430';
+      g.beginPath(); g.ellipse(0, -15, 8.5, 13.5, 0, 0, Math.PI * 2); g.fill(); outline(1.2);
+      g.strokeStyle = line; g.lineWidth = 2.4;
+      g.beginPath(); g.moveTo(-4, -5); g.lineTo(-4 - step * 0.6, 0); g.moveTo(4, -5); g.lineTo(4 + step * 0.6, 0); g.stroke();
+      if (facing === 'front') { g.fillStyle = '#6a5038'; g.beginPath(); g.ellipse(0, -28, 3.8, 7, 0, 0, Math.PI * 2); g.fill(); outline(1); }
+      else { g.strokeStyle = ink(0.9, 0.7); g.lineWidth = 1.4; g.beginPath(); g.moveTo(0, -3); g.quadraticCurveTo(-3 + step, 2, -1 + step, 5); g.stroke(); }
+      g.fillStyle = col; g.beginPath(); g.moveTo(-6, -24); g.lineTo(-5, -37); g.lineTo(5, -37); g.lineTo(6, -24); g.closePath(); g.fill(); outline();
+      head(0, -40.5, 4.2);
+      spear(7, -22, 11, -60);
     } else if (kind === 'art') {
-      g.fillStyle = '#4a3420'; g.fillRect(-14, -10, 28, 5);
-      g.fillStyle = '#2f2e2b'; g.beginPath(); g.ellipse(0, facing === 'back' ? -14 : -12, 6, facing === 'back' ? 10 : 6, 0, 0, Math.PI * 2); g.fill();
-      for (const wx of [-12, 12]) { g.fillStyle = '#5a3b22'; g.beginPath(); g.ellipse(wx, -8, 3, 7, 0, 0, Math.PI * 2); g.fill(); }
-      for (const dx of [-18, 18]) { g.fillStyle = col; g.fillRect(dx - 4, -26, 8, 12); g.fillStyle = facing === 'front' ? skin : dark; g.beginPath(); g.arc(dx, -29, 3.5, 0, Math.PI * 2); g.fill(); g.fillStyle = helmet; g.beginPath(); g.arc(dx, -31, 3.8, Math.PI, Math.PI * 2); g.fill(); }
+      g.fillStyle = '#5a4430'; g.fillRect(-14, -10, 28, 4.5); g.strokeStyle = line; g.lineWidth = 1; g.strokeRect(-14, -10, 28, 4.5);
+      g.fillStyle = ink(0.95); g.beginPath(); g.ellipse(0, facing === 'back' ? -14 : -12, 6, facing === 'back' ? 10 : 6, 0, 0, Math.PI * 2); g.fill();
+      for (const wx of [-12, 12]) { g.fillStyle = '#6a5038'; g.beginPath(); g.ellipse(wx, -8, 3, 7, 0, 0, Math.PI * 2); g.fill(); outline(1); }
+      for (const dx of [-19, 19]) { g.fillStyle = col; g.beginPath(); g.moveTo(dx - 4, -14); g.lineTo(dx - 3.5, -26); g.lineTo(dx + 3.5, -26); g.lineTo(dx + 4, -14); g.closePath(); g.fill(); outline(); head(dx, -29.5, 3.4); }
     } else {
-      g.strokeStyle = dark; g.lineWidth = 3.5;
+      g.strokeStyle = line; g.lineWidth = 2.6;
       g.beginPath(); g.moveTo(-3, -14); g.lineTo(-3 - step * 0.6, 0); g.moveTo(3, -14); g.lineTo(3 + step * 0.6, 0); g.stroke();
-      g.fillStyle = col; g.beginPath(); g.moveTo(-7, -14); g.lineTo(-6, -30); g.lineTo(6, -30); g.lineTo(7, -14); g.closePath(); g.fill();
-      g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(-7, -20, 14, 2.5);
-      g.fillStyle = facing === 'front' ? skin : shade(skin, -0.35); g.beginPath(); g.arc(0, -34, 4.6, 0, Math.PI * 2); g.fill();
-      g.fillStyle = helmet; g.beginPath(); g.arc(0, -36, 5, Math.PI, Math.PI * 2); g.fill();
-      if (look.helmet === 'ming') { g.strokeStyle = '#c8352a'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(0, -41); g.lineTo(0, -46); g.stroke(); }
-      if (look.helmet === 'qing') { g.strokeStyle = '#d6b05a'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(0, -41); g.lineTo(0, -48); g.stroke(); }
-      if (kind === 'gun') { g.strokeStyle = '#3a2a1a'; g.lineWidth = 2; g.beginPath(); g.moveTo(5, -24); g.lineTo(9, -46); g.stroke(); }
-      else { g.strokeStyle = '#6b4a2a'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(7, -18); g.lineTo(9, -56); g.stroke(); g.fillStyle = '#d8d8d0'; g.beginPath(); g.moveTo(9, -56); g.lineTo(7.5, -50); g.lineTo(10.5, -50); g.fill(); }
-      if (kind === 'inf' && facing === 'front') { g.fillStyle = shade(col, -0.2); g.beginPath(); g.ellipse(-6, -22, 4, 6, 0, 0, Math.PI * 2); g.fill(); }
+      // 号衣：下摆略宽，腰间一道墨
+      g.fillStyle = col; g.beginPath(); g.moveTo(-7.5, -13); g.lineTo(-6, -30); g.lineTo(6, -30); g.lineTo(7.5, -13); g.closePath(); g.fill(); outline();
+      g.strokeStyle = dark; g.lineWidth = 1.6; g.beginPath(); g.moveTo(-6.6, -20); g.lineTo(6.6, -20); g.stroke();
+      if (facing === 'front') { g.fillStyle = 'rgba(255,248,230,0.75)'; g.beginPath(); g.arc(0, -24.5, 2.6, 0, Math.PI * 2); g.fill(); }
+      head(0, -34, 4.4);
+      if (kind === 'gun') { g.strokeStyle = ink(0.95); g.lineWidth = 2; g.beginPath(); g.moveTo(5, -22); g.lineTo(10, -46); g.stroke(); g.fillStyle = '#7a5530'; g.fillRect(4, -25, 3, 6); }
+      else spear(7, -16, 9.5, -58);
+      if (kind === 'inf' && facing === 'front') { g.fillStyle = shade(col, -0.15); g.beginPath(); g.ellipse(-6.5, -22, 3.8, 6, 0, 0, Math.PI * 2); g.fill(); outline(0.9); }
     }
     this.sprites.set(key, c);
     return c;
+  }
+
+  /** 大旗：墨杆、火焰牙边、旗心写本方字号；wave 为飘动相位 */
+  banner(g: CanvasRenderingContext2D, x: number, y: number, h: number, side: 'att' | 'def', wave = 0) {
+    const look = this.o.look[side];
+    const col = tint(look.color, 0.15), fw = h * 0.42, fh = h * 0.5, top = y - h;
+    g.save(); g.lineCap = 'round';
+    g.strokeStyle = ink(0.92); g.lineWidth = Math.max(1.2, h * 0.025);
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x, top - h * 0.06); g.stroke();
+    g.fillStyle = ink(0.95); g.beginPath(); g.moveTo(x, top - h * 0.12); g.lineTo(x - h * 0.025, top - h * 0.04); g.lineTo(x + h * 0.025, top - h * 0.04); g.closePath(); g.fill();
+    const w = (t: number) => Math.sin(wave + t * 3.2) * fh * 0.06 * t;
+    g.fillStyle = col;
+    g.beginPath(); g.moveTo(x, top);
+    for (let t = 0; t <= 1; t += 0.1) g.lineTo(x + fw * t, top + w(t));
+    for (let k = 0; k <= 6; k++) { const yy = top + fh * k / 6; g.lineTo(x + fw + w(1) + (k % 2 ? fh * 0.07 : 0), yy + w(1)); }
+    for (let t = 1; t >= 0; t -= 0.1) g.lineTo(x + fw * t, top + fh + w(t));
+    g.closePath(); g.fill();
+    g.strokeStyle = ink(0.9, 0.85); g.lineWidth = Math.max(0.7, h * 0.012); g.stroke();
+    if (look.mark && h > 26) {
+      const cx = x + fw * 0.5 + w(0.5), cy = top + fh * 0.5 + w(0.5), rr = Math.min(fw, fh) * 0.34;
+      g.fillStyle = 'rgba(245,236,214,0.92)'; g.beginPath(); g.arc(cx, cy, rr, 0, Math.PI * 2); g.fill();
+      g.fillStyle = ink(0.95); g.font = `900 ${Math.round(rr * 1.45)}px "Ma Shan Zheng","Noto Serif SC",serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(look.mark.slice(0, 1), cx, cy + rr * 0.06);
+    }
+    g.restore();
+  }
+
+  /** 一营脚下的墨影与尘：让一片人马“坐”在地上、看得出成阵 */
+  footprint(g: CanvasRenderingContext2D, cx: number, cy: number, rx: number, ry: number, moving: boolean, seed: number) {
+    const gr = g.createRadialGradient(cx, cy, 0, cx, cy, rx);
+    gr.addColorStop(0, ink(0.6, 0.22)); gr.addColorStop(0.7, ink(0.5, 0.1)); gr.addColorStop(1, ink(0.4, 0));
+    g.save(); g.translate(cx, cy); g.scale(1, ry / rx); g.translate(-cx, -cy);
+    g.fillStyle = gr; g.beginPath(); g.arc(cx, cy, rx, 0, Math.PI * 2); g.fill(); g.restore();
+    if (moving && !this.reduced) puff(g, cx, cy - ry * 0.2, rx * 0.6, '150,130,95', 0.16, seed + Math.floor(this.now / 300));
   }
 
   /** 一营头顶的读数：名、兵数、士气条；溃散时标红 */
@@ -168,8 +216,9 @@ export abstract class RtView {
     this.shots = this.shots.filter(s => now - s.t0 < s.dur);
     for (const s of this.shots) {
       const p = (now - s.t0) / s.dur;
-      if (s.kind === 'smoke') { g.fillStyle = `rgba(235,235,228,${0.6 * (1 - p)})`; g.beginPath(); g.arc(s.x0 + p * 10, s.y0 - p * (s.y0 - s.y1), 4 + p * 14, 0, Math.PI * 2); g.fill(); continue; }
-      if (s.kind === 'dust') { g.fillStyle = `rgba(170,150,110,${0.45 * (1 - p)})`; g.beginPath(); g.ellipse(s.x0 + (s.x1 - s.x0) * p, s.y0 - p * 14, 8 + p * 22, 5 + p * 10, 0, 0, Math.PI * 2); g.fill(); continue; }
+      if (s.kind === 'smoke') { puff(g, s.x0 + p * 12, s.y0 - p * (s.y0 - s.y1), 6 + p * 20, '120,116,108', 0.42 * (1 - p), s.seed ?? 3); continue; }
+      if (s.kind === 'dust') { puff(g, s.x0 + (s.x1 - s.x0) * p, s.y0 - p * 14, 10 + p * 26, '125,105,75', 0.34 * (1 - p), s.seed ?? 5); continue; }
+      if (s.kind === 'ink') { splatter(g, s.x0, s.y0, 10 + p * 18, 0.7 * (1 - p), s.seed ?? 7); continue; }
       if (s.kind === 'flash') { g.fillStyle = `rgba(255,240,200,${0.9 * (1 - p)})`; g.beginPath(); g.arc(s.x0, s.y0, 3 + p * 8, 0, Math.PI * 2); g.fill(); continue; }
       if (s.kind === 'fire') {
         for (let k = 0; k < 5; k++) { const a = (1 - p) * 0.8; g.fillStyle = k % 2 ? `rgba(255,140,40,${a})` : `rgba(255,220,90,${a})`; g.beginPath(); g.ellipse(s.x0 + (k - 2) * 9, s.y0 - p * 40 - k * 6, 10 + p * 16, 16 + p * 24, 0, 0, Math.PI * 2); g.fill(); }
@@ -178,8 +227,8 @@ export abstract class RtView {
       }
       const x = s.x0 + (s.x1 - s.x0) * p, y = s.y0 + (s.y1 - s.y0) * p - Math.sin(p * Math.PI) * (s.kind === 'ball' ? 60 : 30);
       if (s.kind === 'ball') {
-        g.fillStyle = '#1a1a1a'; g.beginPath(); g.arc(x, y, 3, 0, Math.PI * 2); g.fill();
-        if (p > 0.92) { g.fillStyle = 'rgba(255,200,120,0.8)'; g.beginPath(); g.arc(s.x1, s.y1, 10, 0, Math.PI * 2); g.fill(); this.shake = Math.max(this.shake, 3); }
+        g.fillStyle = ink(1); g.beginPath(); g.arc(x, y, 3, 0, Math.PI * 2); g.fill();
+        if (p > 0.92) { puff(g, s.x1, s.y1, 16, '90,80,70', 0.5, (s.seed ?? 1) + 9); g.fillStyle = 'rgba(230,120,50,0.75)'; g.beginPath(); g.arc(s.x1, s.y1, 6, 0, Math.PI * 2); g.fill(); this.shake = Math.max(this.shake, 3); }
         if (p < 0.12) { g.fillStyle = 'rgba(255,220,150,0.9)'; g.beginPath(); g.arc(s.x0, s.y0, 7, 0, Math.PI * 2); g.fill(); }
       } else { g.strokeStyle = 'rgba(40,30,20,0.85)'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(x, y); g.lineTo(x - (s.x1 - s.x0) * 0.04, y - 6); g.stroke(); }
     }
@@ -205,23 +254,72 @@ export abstract class RtView {
     g.fillStyle = vg; g.fillRect(0, 0, this.W, this.H);
   }
   rain(g: CanvasRenderingContext2D, now: number) {
-    g.strokeStyle = 'rgba(210,220,230,0.35)'; g.lineWidth = 1;
-    for (let k = 0; k < 90; k++) { const x = (k * 97 + now * 0.5) % this.W, y = (k * 53 + now * 0.9) % this.H; g.beginPath(); g.moveTo(x, y); g.lineTo(x - 4, y + 12); g.stroke(); }
+    g.strokeStyle = ink(0.6, 0.22); g.lineWidth = 0.9;
+    for (let k = 0; k < 110; k++) { const x = (k * 97 + now * 0.5) % this.W, y = (k * 53 + now * 0.9) % this.H; g.beginPath(); g.moveTo(x, y); g.lineTo(x - 4, y + 12); g.stroke(); }
   }
-  /** 天空、远山（背景缓存里用） */
-  skyAndHills(g: CanvasRenderingContext2D, weather: string, dusk = 0) {
-    const { W } = this, hz = this.hz;
+  /** 天空、远山（背景缓存里用）：绢纸天色、淡日、层层水墨远山没入云雾 */
+  skyAndHills(g: CanvasRenderingContext2D, weather: string, dusk = 0, seed = 7) {
+    const { W, H } = this, hz = this.hz;
     const rain = weather === 'rain', fog = weather === 'fog';
+    paper(g, W, H, rain ? '#d9d2bf' : fog ? '#e6e0cf' : '#e9ddc1');
     const sky = g.createLinearGradient(0, 0, 0, hz + 30);
-    sky.addColorStop(0, rain ? '#5d6670' : fog ? '#b9bcb4' : dusk ? '#5b6f96' : '#6f9fc9'); sky.addColorStop(1, rain ? '#a3a9a8' : fog ? '#dad8cc' : dusk ? '#e9b98a' : '#e9e0c4');
-    g.fillStyle = sky; g.fillRect(0, 0, W, hz + 40);
-    for (let k = 0; k < 3; k++) {
-      g.fillStyle = ['rgba(110,130,140,0.55)', 'rgba(90,110,105,0.6)', 'rgba(80,95,80,0.75)'][k];
-      g.beginPath(); g.moveTo(0, hz + 10);
-      for (let x = 0; x <= W; x += 30) g.lineTo(x, hz + 6 - k * 3 - Math.abs(Math.sin(x / (90 + k * 40) + k)) * (22 - k * 5));
-      g.lineTo(W, hz + 12); g.lineTo(0, hz + 12); g.fill();
+    sky.addColorStop(0, rain ? 'rgba(80,80,78,0.35)' : dusk ? 'rgba(150,90,70,0.18)' : 'rgba(150,150,140,0.10)'); sky.addColorStop(1, 'rgba(240,230,205,0)');
+    g.fillStyle = sky; g.fillRect(0, 0, W, hz + 30);
+    if (!rain && !fog) {
+      // 一轮淡日（日暮偏朱）
+      g.fillStyle = dusk ? 'rgba(196,80,50,0.55)' : 'rgba(205,110,80,0.28)';
+      g.beginPath(); g.arc(W * 0.78, hz * 0.42, Math.max(10, hz * 0.2), 0, Math.PI * 2); g.fill();
+    }
+    const r = mkRnd(seed);
+    mountains(g, W, hz + 10, Math.max(30, hz * 0.85), r, { layers: 3, dark: rain ? 0.7 : fog ? 0.3 : 0.55, mist: fog ? '236,232,220' : '233,221,193' });
+    if (fog) { const mg = g.createLinearGradient(0, hz - 20, 0, hz + H * 0.3); mg.addColorStop(0, 'rgba(236,232,220,0.2)'); mg.addColorStop(0.5, 'rgba(236,232,220,0.75)'); mg.addColorStop(1, 'rgba(236,232,220,0)'); g.fillStyle = mg; g.fillRect(0, hz - 20, W, H * 0.3 + 20); }
+  }
+  /** 大地底色：淡赭绿晕染，近浓远淡，斑驳几块 */
+  groundWash(g: CanvasRenderingContext2D, seed = 11, tone = '150,140,92') {
+    const { W, H } = this, hz = this.hz;
+    const gr = g.createLinearGradient(0, hz, 0, H);
+    gr.addColorStop(0, `rgba(${tone},0.14)`); gr.addColorStop(1, `rgba(${tone},0.42)`);
+    g.fillStyle = gr; g.fillRect(0, hz + 6, W, H);
+    const r = mkRnd(seed);
+    for (let k = 0; k < 14; k++) {
+      const y = hz + 20 + r() * (H - hz), x = r() * W, s = (y - hz) / (H - hz);
+      const rx = 60 + s * 220 * (0.5 + r()), ry = rx * 0.18;
+      const gg = g.createRadialGradient(x, y, 0, x, y, rx);
+      gg.addColorStop(0, `rgba(${r() < 0.5 ? '120,125,70' : '160,135,90'},${0.08 + r() * 0.1})`); gg.addColorStop(1, 'rgba(120,120,70,0)');
+      g.save(); g.translate(x, y); g.scale(1, ry / rx); g.translate(-x, -y); g.fillStyle = gg; g.beginPath(); g.arc(x, y, rx, 0, Math.PI * 2); g.fill(); g.restore();
     }
   }
+  /** 阡陌：一块块田，深浅不一的淡彩，田埂淡墨勾边；随透视收拢，给出地面的纵深 */
+  fields(g: CanvasRenderingContext2D, r: () => number, x0: number, x1: number, y0: number, y1: number, skip?: (x: number, y: number) => boolean) {
+    const tones = ['150,150,92', '170,150,100', '130,140,85', '185,168,120', '160,160,105'];
+    for (let y = y0; y < y1; y += 90 + r() * 60) {
+      const dh = 70 + r() * 50;
+      for (let x = x0; x < x1; x += 160 + r() * 140) {
+        const dw = 140 + r() * 120;
+        if (skip?.(x + dw / 2, y + dh / 2)) continue;
+        const pts = [this.P(x, y), this.P(x + dw, y), this.P(x + dw, y + dh), this.P(x, y + dh)];
+        const a = 0.05 + r() * 0.12;
+        g.fillStyle = `rgba(${tones[Math.floor(r() * tones.length)]},${a})`;
+        g.beginPath(); pts.forEach(([sx, sy], i) => (i ? g.lineTo(sx, sy) : g.moveTo(sx, sy))); g.closePath(); g.fill();
+        if (r() < 0.6) { g.strokeStyle = ink(0.6, 0.07 + r() * 0.06); g.lineWidth = 0.8; g.stroke(); }
+      }
+    }
+  }
+  /** 地平线上一线疏林与雾带（远景与战场之间的过渡） */
+  horizonWoods(g: CanvasRenderingContext2D, r: () => number) {
+    const { W } = this, hz = this.hz;
+    for (let x = -10; x < W + 10; x += 4 + r() * 10) {
+      const y = hz + 10 + r() * 6, h = 4 + r() * 9;
+      g.fillStyle = ink(0.6 + r() * 0.3, 0.25 + r() * 0.3);
+      g.beginPath(); g.ellipse(x, y - h * 0.5, 2 + r() * 4, h * 0.5, 0, 0, Math.PI * 2); g.fill();
+      if (r() < 0.25) { g.strokeStyle = ink(0.8, 0.35); g.lineWidth = 0.8; g.beginPath(); g.moveTo(x, y); g.lineTo(x, y - h * 1.3); g.stroke(); }
+    }
+    const mg = g.createLinearGradient(0, hz + 4, 0, hz + 40);
+    mg.addColorStop(0, 'rgba(236,226,200,0)'); mg.addColorStop(0.5, 'rgba(236,226,200,0.6)'); mg.addColorStop(1, 'rgba(236,226,200,0)');
+    g.fillStyle = mg; g.fillRect(0, hz + 4, W, 36);
+  }
+  /** 画框四周做旧（最后一层） */
+  frameAge(g: CanvasRenderingContext2D) { agedEdges(g, this.W, this.H, 0.28); }
   /** 一块四边形地面（世界坐标） */
   quad(g: CanvasRenderingContext2D, pts: [number, number][], fill: string | CanvasGradient) {
     g.fillStyle = fill; g.beginPath();

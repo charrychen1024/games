@@ -949,7 +949,10 @@ html.reduced .bh-pips i.now { animation: none; }
 /* ================= 攻城战（即时） ================= */
 #battle.siege2 #battle-stage { background: #1a140f; }
 .siege-cv { display: block; cursor: crosshair; }
-.shud { position: absolute; left: 0; right: 0; top: 0; z-index: 6; display: grid; grid-template-columns: 1fr minmax(280px, auto) 1fr; gap: 12px; padding: 10px 16px 22px; background: linear-gradient(180deg, rgba(12, 8, 5, 0.8), rgba(12, 8, 5, 0.3) 75%, transparent); pointer-events: none; }
+.shud { position: absolute; left: 0; right: 0; top: 0; z-index: 6; display: grid; grid-template-columns: 1fr minmax(280px, auto) 1fr; gap: 12px; padding: 10px 16px 22px; background: none; pointer-events: none; }
+/* 水墨战场：抬头不再整条压黑，三块各自一方深色铭牌，中间露出远山 */
+.shud .sh-side > div, .shud .sh-mid { background: linear-gradient(180deg, rgba(26, 18, 11, 0.86), rgba(26, 18, 11, 0.72)); border: 1px solid rgba(217, 173, 91, 0.35); border-radius: 10px; padding: 6px 12px 8px; box-shadow: 0 4px 14px rgba(40, 25, 10, 0.35); }
+.shud .sh-mid { justify-self: center; padding: 6px 22px 8px; }
 .sh-side { display: flex; align-items: center; gap: 10px; text-shadow: 0 1px 3px #000; }
 .sh-side.foe { justify-content: flex-end; text-align: right; }
 .sh-side > div { display: flex; flex-direction: column; gap: 1px; min-width: 170px; }
