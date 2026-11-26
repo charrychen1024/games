@@ -129,6 +129,7 @@ export class App {
     (window as any).NM = this; // 调试与自动化测试入口
     (window as any).NM_nodePt = nodePt;
     (window as any).NM_newsArt = newsArt;
+    (window as any).NM_portrait = portrait;
     (window as any).NM_presets = { createGame, yangzhouSiegeState, name: nodeName };
     (window as any).NM_audio = audioState;
     // 自动化测试：直接打一场指定的仗
