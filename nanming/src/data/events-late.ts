@@ -490,7 +490,7 @@ export const LATE_EVENTS: EventDef[] = [
     text: () => '李定国闻永历帝遇害，悲愤成疾，卒于勐腊，遗命子孙“宁死荒外，勿降也”。',
     history: '壬寅六月，李定国卒于景线（勐腊）。',
     source: SRC + '第二十五章',
-    effect: s => { s.chars.lidingguo.status = 'dead'; for (const a of Object.values(s.armies)) if (a.commander === 'lidingguo') succession(s, a.faction, '李定国病逝'); },
+    effect: s => { s.chars.lidingguo.status = 'dead'; for (const a of Object.values(s.armies)) if (a.commander === 'lidingguo') handover(s, a); },
   }),
 
   /* ---------------- 线索 ---------------- */

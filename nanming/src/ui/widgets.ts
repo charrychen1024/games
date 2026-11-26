@@ -95,9 +95,10 @@ export function stepper(id: string, value: number, opts: { step: number; min?: n
   const btn = (d: number, t: string) => {
     const b = h('button', { type: 'button', class: 'stp-b', 'aria-label': d > 0 ? '加' : '减' }, t);
     const fire = () => set(v + d * opts.step);
-    b.addEventListener('pointerdown', () => { fire(); let k = 0; hold = window.setInterval(() => { k++; set(v + d * opts.step * (k > 8 ? 5 : 1)); }, 120); });
     const stop = () => clearInterval(hold);
-    b.addEventListener('pointerup', stop); b.addEventListener('pointerleave', stop);
+    // 按住连加：弹窗被关掉（按钮离开文档）或指针被收走时一定停下
+    b.addEventListener('pointerdown', () => { stop(); fire(); let k = 0; hold = window.setInterval(() => { if (!b.isConnected) { stop(); return; } k++; set(v + d * opts.step * (k > 8 ? 5 : 1)); }, 120); });
+    for (const ev of ['pointerup', 'pointerleave', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, stop);
     return b;
   };
   out.addEventListener('change', () => set(Number(out.value.replace(/[^\d]/g, '')) || 0));

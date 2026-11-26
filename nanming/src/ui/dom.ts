@@ -6,7 +6,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs | 
     if (v === undefined || v === null || v === false) continue;
     if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
     else if (k === 'class') el.className = v;
-    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k === 'style' && typeof v === 'object') { for (const [p, val] of Object.entries(v)) if (val !== undefined && val !== null) { if (p.startsWith('--')) el.style.setProperty(p, String(val)); else (el.style as any)[p] = val; } }
     else if (k === 'html') el.innerHTML = v;
     else el.setAttribute(k, v === true ? '' : String(v));
   }

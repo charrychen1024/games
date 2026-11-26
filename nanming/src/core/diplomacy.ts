@@ -2,7 +2,7 @@
  * 来使以抉择呈给玩家：答应、讨价还价或拒绝；讨价还价有成有败，看对方虚实与主将脾性。
  * 电脑各家之间的议和、结盟写进月报，作为天下的外交动向。 */
 import type { GameState } from './types';
-import { hostile, stance, setStance, report, factionName, nodeName, citiesOf, topOf, adjustAtt, bump } from './state';
+import { hostile, stance, setStance, report, factionName, nodeName, citiesOf, topOf, adjustAtt, bump, treasuryOf } from './state';
 import { rngFor } from './rng';
 import { capture, defectFaction } from './military';
 import { courtOf } from './regime';
@@ -34,7 +34,7 @@ const MINOR = new Set(['local', 'helan']);
 const live = (s: GameState, f: string) => !!s.factions[f] && !s.factions[f].defunct && !MINOR.has(f);
 const hawkOf = (s: GameState, f: string) => s.chars[s.factions[f]?.leader]?.att.hawk ?? 0;
 const leaderName = (s: GameState, f: string) => s.chars[s.factions[f]?.leader]?.name ?? factionName(s, f);
-const capSilver = (s: GameState, f: string) => s.cities[s.factions[f]?.capital]?.silver ?? 0;
+const capSilver = (s: GameState, f: string) => s.cities[treasuryOf(s, f)]?.silver ?? 0;
 const cooled = (s: GameState, key: string, months: number) => s.turn - Number(s.flags[key] ?? -999) >= months;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -161,18 +161,24 @@ export function applyOffer(s: GameState, o: Offer, idx: number): string {
   s.flags['dip_' + F] = s.turn; s.flags.dip_last = s.turn;
   const rng = rngFor(s.seed, 'dipans', s.turn, F);
   let text = '', ok = true;
-  const cap = s.factions[P].capital;
+  const cap = treasuryOf(s, P);
+  /** 银两由 from 府库转入 to 府库：实付多少，对方就收多少 */
+  const transfer = (from: string, to: string, v: number, outText: string, inText: string, ref: string) => {
+    const paid = -bump(s, from, 'silver', -v, outText, { kind: 'diplomacy', ref });
+    if (paid > 0) bump(s, to, 'silver', paid, inText, { kind: 'diplomacy', ref });
+    return paid;
+  };
   switch (o.kind) {
     case 'truce_ask':
       if (idx === 0) {
         setStance(s, P, F, 'truce', s.turn + 12);
-        if (o.silver) { bump(s, s.factions[F].capital, 'silver', -o.silver, `向${factionName(s, P)}求和献犒`, { kind: 'diplomacy', ref: 'truce:' + F }); bump(s, cap, 'silver', o.silver, `${factionName(s, F)}求和献犒`, { kind: 'diplomacy', ref: 'truce:' + F }); }
+        if (o.silver) transfer(treasuryOf(s, F), cap, o.silver, `向${factionName(s, P)}求和献犒`, `${factionName(s, F)}求和献犒`, 'truce:' + F);
         text = `准${factionName(s, F)}求和，两家停战一年${o.silver ? `，受犒银 ${o.silver} 两` : ''}。`;
       } else if (idx === 1) {
         if (rng.next() < (o.odds ?? 0.3)) {
           setStance(s, P, F, 'truce', s.turn + 12);
           if (o.city && s.cities[o.city]?.controller === F) { capture(s, o.city, P, '归附'); text = `${factionName(s, F)}割${nodeName(o.city)}求和，两家停战一年。`; }
-          else { const v = (o.silver ?? 10000) * 2; bump(s, s.factions[F].capital, 'silver', -v, `向${factionName(s, P)}求和献犒`, { kind: 'diplomacy', ref: 'truce:' + F }); bump(s, cap, 'silver', v, `${factionName(s, F)}求和献犒`, { kind: 'diplomacy', ref: 'truce:' + F }); text = `${factionName(s, F)}加倍献犒 ${v} 两求和，两家停战一年。`; }
+          else { const v = transfer(treasuryOf(s, F), cap, (o.silver ?? 10000) * 2, `向${factionName(s, P)}求和献犒`, `${factionName(s, F)}求和献犒`, 'truce:' + F); text = `${factionName(s, F)}加倍献犒 ${v} 两求和，两家停战一年。`; }
         } else {
           ok = false;
           adjustAtt(s, s.factions[F].leader, 'hawk', 10, `${factionName(s, P)}索要过甚`);
@@ -195,7 +201,7 @@ export function applyOffer(s: GameState, o: Offer, idx: number): string {
       }
       break;
     case 'tribute_demand': {
-      const pay = (v: number) => { bump(s, cap, 'silver', -v, `${factionName(s, F)}索饷`, { kind: 'diplomacy', ref: 'tribute:' + F }); bump(s, s.factions[F].capital, 'silver', v, `${factionName(s, P)}所纳`, { kind: 'diplomacy', ref: 'tribute:' + F }); };
+      const pay = (v: number) => { transfer(cap, treasuryOf(s, F), v, `${factionName(s, F)}索饷`, `${factionName(s, P)}所纳`, 'tribute:' + F); };
       const war = () => { setStance(s, P, F, 'war'); };
       if (idx === 0 && capSilver(s, P) >= (o.silver ?? 0)) { pay(o.silver ?? 0); setStance(s, P, F, 'truce', s.turn + 12); text = `纳银 ${o.silver} 两，与${factionName(s, F)}停战一年。`; }
       else if (idx === 1 && capSilver(s, P) >= (o.silver ?? 0) / 2) {
@@ -210,7 +216,7 @@ export function applyOffer(s: GameState, o: Offer, idx: number): string {
       if (idx === 0) {
         setStance(s, P, F, 'truce', s.turn + 24);
         bump(s, cap, 'silver', 8000, `与${factionName(s, F)}互市`, { kind: 'diplomacy', ref: 'goodwill:' + F });
-        if (s.cities[s.factions[F].capital]) bump(s, s.factions[F].capital, 'silver', 8000, `与${factionName(s, P)}互市`, { kind: 'diplomacy', ref: 'goodwill:' + F });
+        bump(s, treasuryOf(s, F), 'silver', 8000, `与${factionName(s, P)}互市`, { kind: 'diplomacy', ref: 'goodwill:' + F });
         text = `与${factionName(s, F)}通好互市，两年互不相犯，得互市之利银八千两。`;
       } else { ok = false; text = `婉拒${factionName(s, F)}通好之约。`; }
       break;

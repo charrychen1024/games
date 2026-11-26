@@ -3,7 +3,7 @@
 import type { Era, Faction, GameState, Polity } from './types';
 import { POLITIES } from '../data/factions';
 import { lunarOf } from './calendar';
-import { adjustAtt, adjustLoyalty, citiesOf, friendly, hostile, nodeName, report, factionName } from './state';
+import { adjustAtt, adjustLoyalty, citiesOf, treasuryOf, friendly, hostile, nodeName, report, factionName } from './state';
 import { distanceKm, NODE } from '../data/geography';
 import { rngFor } from './rng';
 
@@ -54,7 +54,7 @@ export function successionOptions(s: GameState, f: string): SuccessionOpt[] {
   }
   if (royals[0] && old?.status === 'captured') out.push({ kind: 'regent', char: royals[0].id, label: `请${royals[0].name}监国，待迎旧君`, desc: `支持：${doves.join('、') || '持重诸臣'}。代价：名分未定，号令稍弱（服从 −8）。` });
   if (old?.status === 'captured') {
-    const cap = s.cities[fac.capital];
+    const cap = s.cities[treasuryOf(s, f)];
     const have = cap?.silver ?? 0;
     out.push({ kind: 'ransom', char: old.id, label: `遣使议赎，迎回${old.name}`, desc: `需银 15 万两（府库现有 ${Math.round(have / 10000)} 万）。对方未必肯放，成败当月即见分晓；不成则由重臣主事。`,
       disabled: have < RANSOM_SILVER ? `府库不足：尚缺 ${Math.ceil((RANSOM_SILVER - have) / 10000)} 万两` : undefined });
@@ -88,7 +88,7 @@ export function applySuccession(s: GameState, f: string, opt: SuccessionOpt): st
   const fac = s.factions[f];
   const c = s.chars[opt.char];
   // 议赎银两不足：方案不成立，继统仍待议定（不清标记，下回仍可改选）
-  if (opt.kind === 'ransom' && (s.cities[fac.capital]?.silver ?? 0) < RANSOM_SILVER) return '府库不足，议赎未成。';
+  if (opt.kind === 'ransom' && (s.cities[treasuryOf(s, f)]?.silver ?? 0) < RANSOM_SILVER) return '府库不足，议赎未成。';
   delete s.flags['need_succession_' + f];
   const vassals = Object.values(s.factions).filter(x => x.overlord === f);
   switch (opt.kind) {
@@ -112,7 +112,7 @@ export function applySuccession(s: GameState, f: string, opt: SuccessionOpt): st
       return `${c.name}监国。`;
     }
     case 'ransom': {
-      const cap = s.cities[fac.capital];
+      const cap = s.cities[treasuryOf(s, f)];
       if (!cap) return '议赎未成。';
       cap.silver -= RANSOM_SILVER;
       s.ledger.push({ turn: s.turn, node: cap.id, field: 'silver', delta: -150000, text: `议赎${c.name}`, src: { kind: 'order', ref: 'ransom:' + f } });
@@ -168,7 +168,8 @@ export function applySuccession(s: GameState, f: string, opt: SuccessionOpt): st
 /** 电脑一方的继统：有宗室则拥立，否则权臣主事 */
 export function autoSuccession(s: GameState, f: string) {
   const opts = successionOptions(s, f);
-  const pick = opts.find(o => o.kind === 'enthrone') ?? opts.find(o => o.kind === 'minister') ?? opts.find(o => o.kind === 'appointed') ?? opts.find(o => o.kind === 'summon') ?? opts.find(o => o.kind === 'join');
+  const ok = opts.filter(o => !o.disabled);
+  const pick = ok.find(o => o.kind === 'enthrone') ?? ok.find(o => o.kind === 'minister') ?? ok.find(o => o.kind === 'appointed') ?? ok.find(o => o.kind === 'summon') ?? ok.find(o => o.kind === 'join');
   if (pick) applySuccession(s, f, pick);
   else delete s.flags['need_succession_' + f];
 }

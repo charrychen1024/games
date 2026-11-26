@@ -1,6 +1,6 @@
 /* 命令：校验、执行、留痕。玩家与电脑用同一套命令。 */
 import type { ArmyOrder, City, GameState, Order } from './types';
-import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance } from './state';
+import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance, treasuryOf } from './state';
 import { setArmyOrder, capture } from './military';
 import { RECRUIT_SILVER, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
 import { rngFor } from './rng';
@@ -149,7 +149,7 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       const a = s.armies[o.army];
       if (!v || v.overlord !== f) return '不是你的下属';
       if (!a || a.faction !== o.vassal) return '军队不属该部';
-      const cap = s.cities[s.factions[f].capital];
+      const cap = s.cities[treasuryOf(s, f)];
       if (o.silver > (cap?.silver ?? 0)) return '府库不足';
       return null;
     }
@@ -177,7 +177,7 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
     case 'reward': {
       const v = s.factions[o.vassal];
       if (!v || v.overlord !== f) return '不是你的下属';
-      const cap = s.cities[s.factions[f].capital];
+      const cap = s.cities[treasuryOf(s, f)];
       if (o.silver <= 0 || o.silver > (cap?.silver ?? 0)) return '府库不足';
       return null;
     }
@@ -354,7 +354,7 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       break;
     }
     case 'reward': {
-      const cap = s.factions[f].capital;
+      const cap = treasuryOf(s, f);
       bump(s, cap, 'silver', -o.silver, `犒赏${factionName(s, o.vassal)}`, src);
       const gain = Math.min(15, Math.round(o.silver / 2500));
       const before = s.factions[o.vassal].loyalty ?? 0;
@@ -406,7 +406,7 @@ function commandVassal(s: GameState, f: string, o: Extract<Order, { kind: 'comma
   const v = s.factions[o.vassal];
   const a = s.armies[o.army];
   if (o.silver > 0) {
-    bump(s, s.factions[f].capital, 'silver', -o.silver, `犒${v.name}以促其奉命`, src);
+    bump(s, treasuryOf(s, f), 'silver', -o.silver, `犒${v.name}以促其奉命`, src);
     adjustLoyalty(s, o.vassal, Math.min(5, Math.round(o.silver / 4000)), '奉命受犒');
   }
   const ob = obedience(s, f, o);
@@ -423,10 +423,10 @@ function commandVassal(s: GameState, f: string, o: Extract<Order, { kind: 'comma
       break;
     case 'half': {
       const part = Math.round(a.troops / 2);
-      const deputy = Object.values(s.chars).find(c => c.faction === o.vassal && c.status === 'active' && c.id !== a.commander && !Object.values(s.armies).some(x => x.commander === c.id));
+      const deputy = Object.values(s.chars).find(c => c.faction === o.vassal && c.status === 'active' && c.id !== a.commander && c.id !== v.leader && !s.missions.some(m => (m.order as { char?: string }).char === c.id) && !Object.values(s.armies).some(x => x.commander === c.id));
       if (deputy && part >= 1000) {
         const id = a.id + '_' + s.nextId++;
-        s.armies[id] = { ...structuredClone(a), id, name: a.name + '分兵', troops: part, commander: deputy.id, path: [], progress: 0 };
+        s.armies[id] = { ...structuredClone(a), id, name: a.name + '分兵', troops: part, commander: deputy.id, path: [], progress: 0, arrears: 0, unpaid: 0 };
         a.troops -= part;
         setArmyOrder(s, s.armies[id], o.order);
         if (f === s.player) s.flags['commanded_' + id] = s.turn;
@@ -466,12 +466,12 @@ export function resolveMissions(s: GameState): Counter[] {
 }
 /** 玩家答复对方的条件：付银则议成 */
 export function answerCounter(s: GameState, c: Counter, pay: boolean): string {
-  const cap = s.cities[s.factions[c.faction]?.capital];
+  const cap = s.cities[treasuryOf(s, c.faction)];
   const aimText = c.aim === 'alliance' ? '结盟' : c.aim === 'truce' ? '停战' : '议和';
   let text: string, ok = false;
   if (pay && cap && cap.silver >= c.silver) {
     bump(s, cap.id, 'silver', -c.silver, `${aimText}${factionName(s, c.target)}所索之银`, { kind: 'diplomacy', ref: 'counter:' + c.target });
-    bump(s, s.factions[c.target].capital, 'silver', c.silver, `${factionName(s, c.faction)}${aimText}所付之银`, { kind: 'diplomacy', ref: 'counter:' + c.target });
+    bump(s, treasuryOf(s, c.target), 'silver', c.silver, `${factionName(s, c.faction)}${aimText}所付之银`, { kind: 'diplomacy', ref: 'counter:' + c.target });
     if (c.aim === 'alliance') setStanceExplicit(s, c.faction, c.target, 'alliance');
     else setStanceExplicit(s, c.faction, c.target, c.aim === 'truce' ? 'truce' : 'neutral', c.aim === 'truce' ? s.turn + 6 : undefined);
     adjustAtt(s, c.char, 'loyalty', 2, `出使${factionName(s, c.target)}，${aimText}成功`);

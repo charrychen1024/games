@@ -194,9 +194,7 @@ export function handlePrisoner(s: GameState, f: string, id: string, act: Prisone
       if (mine) report(s, { cat: '人事', ok: false, text: `劝降${c.name}，不从。（把握 ${Math.round(p * 100)}%；久系之后降意稍增）` });
     }
   } else if (act === 'release') {
-    const home = s.factions[old];
-    c.status = 'active'; delete c.captor;
-    c.location = home && !home.defunct ? home.capital : c.location;
+    freeCaptive(s, c, old);
     adjustAtt(s, id, 'hawk', -10, `${factionName(s, f)}以礼遣归`);
     for (const x of citiesOf(s, f)) if (x.minxin < 90) x.minxin += 1;
     report(s, { cat: '人事', node: c.location, text: `${factionName(s, f)}以礼遣归${c.name}，各城称其宽厚（民心 +1）。`, faction: mine ? undefined : f });
@@ -208,12 +206,20 @@ export function handlePrisoner(s: GameState, f: string, id: string, act: Prisone
   }
 }
 
+/** 俘虏获释：原势力尚在则回其治所；原势力已亡则隐居乡里，半年后再出，另投他方 */
+function freeCaptive(s: GameState, c: GameState['chars'][string], old: string) {
+  const home = s.factions[old];
+  delete c.captor;
+  if (home && !home.defunct) { c.status = 'active'; c.location = s.cities[home.capital]?.controller === old ? home.capital : c.location; return; }
+  c.status = 'offstage'; c.faction = ''; c.appear = s.turn + 6;
+}
+
 /** 电脑各家处置俘虏：每半年劝降一次，押满两年者遣归 */
 export function aiPrisoners(s: GameState) {
   for (const c of Object.values(s.chars)) {
     if (c.status !== 'captured' || !c.captor || c.captor === s.player) continue;
     const f = c.captor;
-    if (!s.factions[f] || s.factions[f].defunct) { c.status = 'active'; delete c.captor; continue; }
+    if (!s.factions[f] || s.factions[f].defunct) { freeCaptive(s, c, c.faction); continue; }
     const since = (c.capturedAt ?? s.turn);
     const held = s.turn - since;
     if (held > 0 && held % 6 === 0) handlePrisoner(s, f, c.id, 'recruit', 'ai' + s.turn);

@@ -199,7 +199,7 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
     distribute(defArmies, defLoss - garrisonLoss, endMorale(b.def));
     const src = { kind: 'battle' as const, ref: b.id };
     bump(s, b.node, 'garrison', -garrisonLoss, `${factionName(s, b.att.faction)}攻城，守军伤亡`, src);
-    bump(s, b.node, 'wall', Math.round(b.wall - city.wall), '攻城战损毁', src);
+    bump(s, b.node, 'wall', Math.min(0, Math.round(b.wall - city.wall)), '攻城战损毁', src);
     // 围城未解：这一战打出的缺口、撞坏的城门留到下月
     const sg = s.sieges[b.node];
     if (sg && b.segs) { sg.segs = b.segs.slice(); sg.gate = b.gate; }
@@ -329,6 +329,24 @@ export function succession(s: GameState, faction: string, why: string) {
   f.leader = next.id;
   report(s, { cat: '人事', urgent: faction === s.player, text: `${why}，${f.name}${ask ? '暂由' + next.name + '摄事，待议' + (isRuler(s, faction) ? '继统' : '主事之人') : '由' + next.name + '主事'}。` });
 }
+/** 人物一致性：死去、被俘或改投他方之人卸去主官、交出兵权；首领身故则议继。史事、分裂、委派之后都要过一遍。 */
+export function tidyPeople(s: GameState) {
+  for (const c of Object.values(s.cities)) {
+    const g = c.governor ? s.chars[c.governor] : undefined;
+    if (c.governor && (!g || g.status !== 'active' || g.faction !== c.controller)) delete c.governor;
+  }
+  for (const a of Object.values(s.armies).sort((x, y) => x.id < y.id ? -1 : 1)) {
+    if (!s.armies[a.id]) continue;
+    const c = s.chars[a.commander];
+    if (!c || c.status !== 'active' || c.faction !== a.faction) handover(s, a);
+  }
+  for (const f of Object.values(s.factions).sort((x, y) => x.id < y.id ? -1 : 1)) {
+    if (f.defunct || f.id === 'local' || f.id === 'helan' || s.flags['need_succession_' + f.id]) continue;
+    const l = s.chars[f.leader];
+    if (l && l.status === 'dead') succession(s, f.id, `${l.name}身故`);
+  }
+}
+
 export function disband(s: GameState, a: Army) {
   const near = [a.location, ...neighbors(a.location).map(n => n.to)].find(id => s.cities[id] && friendly(s, a.faction, s.cities[id].controller));
   if (near && a.troops > 0) bump(s, near, 'garrison', a.troops, `${a.name}残部并入`, { kind: 'battle', ref: a.id });

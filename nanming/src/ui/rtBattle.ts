@@ -118,7 +118,10 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     gsap.fromTo(el, { x: -20, opacity: 0 }, { x: 0, opacity: 1, duration: 0.3 });
     gsap.to(el, { opacity: 0, delay: 5, duration: 0.6, onComplete: () => el.remove() });
   }
+  /** 本场已收场：迟到的喊话定时器不再往（复用的）战场里塞气泡 */
+  let gone = false;
   function bark(who: 'me' | 'foe', when: Parameters<typeof barkLine>[1]) {
+    if (gone) return;
     const sd = who === 'me' ? side : foe;
     const el = h('div', { class: 'bbark ' + (who === 'me' ? 'l mine' : 'r') }, h('b', null, b0[sd].commanderName), h('span', null, barkLine(s.chars[b0[sd].commander], when, Math.round(sim.t))));
     stage.querySelector('.bbark.' + (who === 'me' ? 'l' : 'r'))?.remove();
@@ -506,7 +509,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   const finished = new Promise<{ result: BattleState; manual: boolean }>(r => (resolveFn = r));
   function done() {
     if (closed) return;
-    closed = true;
+    closed = true; gone = true;
     clearTimeout(exitTimer);
     cancelAnimationFrame(raf);
     window.removeEventListener('keydown', onKey);

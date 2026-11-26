@@ -1318,3 +1318,8 @@ html.reduced .cic-anim .ic, html.reduced .pdlg .pface, html.reduced .pdlg .p-lef
 .sh-info2 .sres { width: 100%; height: 15px; }
 @media (max-width: 1100px) { .shud .sh-side > div.sh-card { grid-template-columns: 68px 1fr; min-width: 210px; } .shud .sh-side.foe > div.sh-card { grid-template-columns: 1fr 68px; } .sh-face, .sh-face .bface { width: 68px !important; height: 68px !important; } .sh-l1 b { font-size: 20px; } .sh-l3 .sh-troops { font-size: 20px; } }
 .shud { align-items: start; } .shud .sh-mid { align-self: start; }
+
+/* 军情面板打开时，“开局三步”提示挪到面板右侧，不压住分类标签 */
+body:has(#report:not(.hidden)) #hint { left: 400px; }
+/* 演出“简化”：一切循环动画只走一遍（提示条的淡入淡出照旧） */
+html.reduced *:not(#toast, #toast *), html.reduced *:not(#toast, #toast *)::before, html.reduced *:not(#toast, #toast *)::after { animation-iteration-count: 1 !important; }

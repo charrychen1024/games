@@ -28,7 +28,7 @@ export function scene(kind: SceneKind, o: SceneOpts = {}): { el: HTMLElement; st
   const b: Required<Party> = { color: o.b?.color ?? '#3a5d8f', mark: o.b?.mark ?? '', hat: o.b?.hat ?? 'qing' };
   const seed = o.seed ?? 7;
   let W = 0, H = 0, dpr = 1, bg: HTMLCanvasElement | null = null, raf = 0, t0 = 0, stopped = false;
-  let ro: ResizeObserver | null = null;
+  let ro: ResizeObserver | null = null, waits = 0, nap = 0;
   const reduced = isReduced();
   const [loop, climax] = LOOP[kind];
   /** 此刻是否在动 */
@@ -47,7 +47,9 @@ export function scene(kind: SceneKind, o: SceneOpts = {}): { el: HTMLElement; st
   };
   const frame = (now: number) => {
     if (stopped) return;
-    if (!el.isConnected) { if (t0) { stop(); return; } raf = requestAnimationFrame(frame); return; }
+    if (!el.isConnected) { if (t0 || ++waits > 600) { stop(); return; } raf = requestAnimationFrame(frame); return; }
+    // 挂在收起的面板里（display:none）：不画，隔半秒看一眼是否又露出来
+    if (!el.getClientRects().length) { clearTimeout(nap); nap = window.setTimeout(() => { if (!stopped) raf = requestAnimationFrame(frame); }, 500); return; }
     if (!W && !size()) { raf = requestAnimationFrame(frame); return; }
     if (!t0) t0 = now;
     const t = !live ? climax : ((now - t0) / 1000) % loop;
@@ -63,7 +65,7 @@ export function scene(kind: SceneKind, o: SceneOpts = {}): { el: HTMLElement; st
     agedEdges(g, W, H, 0.22);
     if (live) raf = requestAnimationFrame(frame);
   };
-  const stop = () => { stopped = true; cancelAnimationFrame(raf); ro?.disconnect(); };
+  const stop = () => { stopped = true; cancelAnimationFrame(raf); clearTimeout(nap); ro?.disconnect(); };
   const play = () => { if (reduced || live || stopped) return; live = true; t0 = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(frame); };
   const pause = () => { if (!live || (o.mode ?? 'loop') === 'loop') return; live = false; cancelAnimationFrame(raf); raf = requestAnimationFrame(frame); };
   if (o.mode === 'hover') { el.addEventListener('pointerenter', play); el.addEventListener('pointerleave', pause); }

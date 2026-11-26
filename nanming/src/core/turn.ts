@@ -6,7 +6,7 @@ import type { BattleState } from './battle';
 import { autoResolve } from './battle';
 import { applyOrder, resolveMissions, orderBudget, orderCost, answerCounter } from './orders';
 import { proposalsFor, applyOffer, aiDiplomacyTalks } from './diplomacy';
-import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects } from './military';
+import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects, tidyPeople } from './military';
 import { runEconomy } from './economy';
 import { aiOrders, aiFixSupply, aiPayArmies, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy } from './ai';
 import { dueEvents, fireEvent, choiceFor, applyChoice, type EventDef, type PendingChoice } from './events';
@@ -153,14 +153,16 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   aiPrisoners(s);
 
   // 继统：君主被俘或身故的势力议定监国、另立、迎回或权臣主事
+  tidyPeople(s);
   for (const f of pendingSuccessions(s)) {
     const opts = successionOptions(s, f);
-    if (!opts.length) {
+    if (!opts.some(o => !o.disabled)) {
       delete s.flags['need_succession_' + f];
       // 无人可推、无处可投：各城自守，本方星散
       if (s.chars[s.factions[f].leader]?.status !== 'active') {
-        for (const c of Object.values(s.cities)) if (c.controller === f) c.controller = 'local';
+        for (const c of Object.values(s.cities)) if (c.controller === f) { c.controller = 'local'; delete c.governor; }
         for (const a of Object.values(s.armies)) if (a.faction === f) delete s.armies[a.id];
+        for (const sg of Object.values(s.sieges)) sg.armies = sg.armies.filter(id => s.armies[id]);
         report(s, { cat: '急报', urgent: true, text: `${s.factions[f].name}无人主事，诸城各自守土，部众星散。` });
       }
       continue;

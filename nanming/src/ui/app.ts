@@ -103,6 +103,8 @@ export class App {
   kv = browserKV();
   seq = 0;
   resolving = false;
+  /** 每次结算一个令牌：回到标题、读档、开新局时作废，旧的结算不再接着跑 */
+  runId = 0;
   reportTurn = -1;
   reportTab = '全部';
   cityTab: 'main' | 'ledger' | 'army' = 'main';
@@ -124,7 +126,9 @@ export class App {
     this.bindMap(canvas);
     window.addEventListener('keydown', e => this.onKey(e));
     try { this.hintStep = Number(localStorage.getItem(HINT_KEY) ?? 0) >= 4 ? 9 : 0; } catch { this.hintStep = 0; }
-    const loop = (t: number) => { this.map.render(t); this.placeRing(); requestAnimationFrame(loop); };
+    // 战斗画面铺满全屏时地图被挡住，不必每帧重画
+    const battle = $('#battle');
+    const loop = (t: number) => { if (battle.classList.contains('hidden')) { this.map.render(t); this.placeRing(); } else this.map.lastTime = t; requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
     this.bindTips();
     document.addEventListener('contextmenu', e => { if (!(e.target as HTMLElement).closest('input, textarea')) e.preventDefault(); });
@@ -158,6 +162,8 @@ export class App {
     clear(t);
     $('#pick')?.remove(); $('#intro')?.remove();
     this.s = null;
+    this.runId++; this.resolving = false;
+    gsap.killTweensOf('#title'); t.style.opacity = '';
     this.endTarget();
     this.map.view.state = createGame('hongguang', 1);
     this.map.view.selected = null; this.map.view.highlight = null; this.map.view.beacon = null;
@@ -269,6 +275,7 @@ export class App {
 
   start(state: GameState, fresh: boolean, focus?: string) {
     this.s = state;
+    this.runId++; this.resolving = false;
     this.orders = [];
     this.seq = 0;
     this.reportTurn = state.turn - 1;
@@ -400,6 +407,8 @@ export class App {
 
   onKey(e: KeyboardEvent) {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+    // 战斗画面自有按键；战报卡播放时的 Esc 只收起战报，不连带关掉背后的面板
+    if (!$('#battle').classList.contains('hidden') || (e.key === 'Escape' && $('#news') && !$('#news').classList.contains('hidden'))) return;
     const modalOpen = !$('#modal').classList.contains('hidden');
     if (e.key === 'Tab') {
       // 焦点困在最上层的窗口里，不落到背后的地图与城池面板
@@ -588,6 +597,7 @@ export class App {
   newOrderId() { return `o${this.s!.turn}-${++this.seq}`; }
   addOrder(o: Order) {
     const s = this.s!;
+    if (this.resolving) { this.toast('本月结算中，命令留待下月', 'hourglass', 'alert'); return false; }
     const rest = this.orders.filter(x => !(x.kind === o.kind && sameTarget(x, o)));
     // 按已排命令执行之后的局面校验：同城两笔募兵共用名额，先劝捐后募兵按劝捐后的府库
     const err = validateQueued(s, rest, o);
@@ -650,7 +660,7 @@ export class App {
     const el = h('div', { class: 'hud' + (kind ? ' ' + kind : '') }, ic(icon), text);
     $('#toast').append(el);
     gsap.from(el, { y: -16, opacity: 0, scale: 0.9, duration: 0.3, ease: 'back.out(2)' });
-    setTimeout(() => el.remove(), 3300);
+    setTimeout(() => el.remove(), kind === 'alert' ? 3700 : 3300);
   }
 
   /* ================= 顶栏 ================= */
@@ -764,7 +774,7 @@ export class App {
     if (show) {
       const row = (id: string, icon: string, label: string, sub: string, onclick: () => void) => h('button', { class: 'mrow', id, onclick: () => { click(); onclick(); } }, ic(icon), h('div', null, h('b', null, label), h('small', null, sub)));
       clear(el).append(
-        row('btn-save', 'save', '存档 · 读档', '三个栏位，可导出文件', () => { this.toggleMenu(false); this.openSaves(false); }),
+        row('btn-save', 'save', '存档 · 读档', this.resolving ? '本月结算中，稍后再来' : '三个栏位，可导出文件', () => { this.toggleMenu(false); if (this.resolving) { this.toast('本月结算中，结算完再存读档', 'hourglass', 'alert'); return; } this.openSaves(false); }),
         row('btn-legend', 'map', '图例', '色块、旗记、线路的意思', () => { this.toggleMenu(false); this.toggleLegend(); }),
         row('btn-battle', this.autoBattle ? 'auto' : 'battle', this.autoBattle ? '战斗：部将自动' : '战斗：亲自指挥', '点此切换', () => { this.autoBattle = !this.autoBattle; this.toggleMenu(true); }),
         row('btn-sound', isMuted() ? 'mute' : 'sound', isMuted() ? '声音：关' : '声音：开', '点此切换', () => { setMuted(!isMuted()); this.toggleMenu(true); }),
@@ -773,7 +783,7 @@ export class App {
             oninput: (e: Event) => setVolume(k, +(e.target as HTMLInputElement).value / 100), onchange: () => { if (k === 'sfx') click(); } }))),
         row('btn-motion', isReduced() ? 'hourglass' : 'play', isReduced() ? '演出：简化' : '演出：完整', reducedSystem ? '系统已设“减少动态效果”' : '简化：不震屏、不飞镜、翻月从速', () => { setReducedMotion(!isReduced()); this.toggleMenu(true); }),
         row('btn-help', 'help', '玩法', '一分钟上手', () => { this.toggleMenu(false); this.openAbout(); }),
-        row('btn-title', 'exit', '回到标题', '进度每月自动存档', () => { this.toggleMenu(false); this.confirmTitle(); }),
+        row('btn-title', 'exit', '回到标题', this.resolving ? '本月结算中，稍后再来' : '进度每月自动存档', () => { this.toggleMenu(false); if (this.resolving) { this.toast('本月结算中，结算完再回标题', 'hourglass', 'alert'); return; } this.confirmTitle(); }),
       );
       gsap.fromTo(el, { opacity: 0, y: -8, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.2, ease: 'power2.out' });
       gsap.from('#menu .mrow', { opacity: 0, x: 12, duration: 0.2, stagger: 0.03 });
@@ -2205,6 +2215,13 @@ export class App {
   async endTurn() {
     if (!this.s || this.resolving || this.s.ended) return;
     this.resolving = true;
+    const run = ++this.runId;
+    const live = () => run === this.runId;
+    try { await this.resolveTurn(live); } finally { if (live()) { this.resolving = false; this.renderTop(); } }
+  }
+
+  private async resolveTurn(live: () => boolean) {
+    if (!this.s) return;
     this.renderDock(null);
     endTurnSfx();
     this.hideRing();
@@ -2224,16 +2241,16 @@ export class App {
         let ans: Answer;
         if (it.type === 'battle') {
           await this.approach(before, it.battle, approached);
+          if (!live()) return;
           const res = await playBattle(before, it.battle, it.side, this.autoBattle);
           ans = { type: 'battle', result: res.result, manual: res.manual };
         } else ans = { type: 'choice', index: await this.choose(it.choice) };
+        if (!live()) return;
         r = gen.next(ans);
       }
     } catch (e) {
       console.error(e);
       this.toast('结算出错：' + (e as Error).message, 'close');
-      this.resolving = false;
-      this.renderTop();
       return;
     }
     const from: Record<string, [number, number]> = {};
@@ -2256,13 +2273,17 @@ export class App {
     this.flyHome();
     this.monthFx(before, this.s);
     await this.monthFlip(before, this.s);
+    if (!live()) return;
     await this.resultFx(before, this.s, issued);
+    if (!live()) return;
     // 顶栏关键数字：此刻才从上月滚到本月，并飘出增减
     this.holdPills = false;
     this.renderTop();
     if (!isReduced()) await new Promise(res => setTimeout(res, 900));
     await new Promise(res => setTimeout(res, isReduced() ? 150 : 500));
+    if (!live()) return;
     const wantAll = await this.showSplash();
+    if (!live() || !this.s) return;
     // 新的一月从本方一带开始
     if (!this.s.ended) this.flyHome();
     this.resolving = false;

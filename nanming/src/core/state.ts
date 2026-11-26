@@ -84,6 +84,8 @@ export function adjustLoyalty(s: GameState, faction: string, delta: number, reas
 }
 
 export const citiesOf = (s: GameState, f: FactionId): City[] => Object.values(s.cities).filter(c => c.controller === f);
+/** 本方府库所在：治所仍在本方手里才算，治所已失则为空（不得动用敌城府库） */
+export const treasuryOf = (s: GameState, f: FactionId): string => { const id = s.factions[f]?.capital; return id && s.cities[id]?.controller === f ? id : ''; };
 export const armiesOf = (s: GameState, f: FactionId): Army[] => Object.values(s.armies).filter(a => a.faction === f);
 export const armiesAt = (s: GameState, node: string): Army[] => Object.values(s.armies).filter(a => a.location === node && a.progress === 0);
 
