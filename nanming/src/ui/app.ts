@@ -12,6 +12,7 @@ import { dangerOf, eraOf } from './musicTheory';
 import { portrait } from './portrait';
 import { cardHand, cardArt, type GameCard, type Chip } from './cards';
 import { newsArt, type ArtCat } from './newsArt';
+import { scene, type SceneKind, type SceneOpts, type Party, type Hat } from './scene';
 import { traitsOf, TRAITS, govEffects, governorOf, prisonerChance, SEEK_SILVER, SEEK_COOLDOWN } from '../core/people';
 import { resolveMonth, unificationProgress, unifierRole, type Answer } from '../core/turn';
 import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
@@ -131,6 +132,7 @@ export class App {
     (window as any).NM = this; // 调试与自动化测试入口
     (window as any).NM_nodePt = nodePt;
     (window as any).NM_newsArt = newsArt;
+    (window as any).NM_scene = scene;
     (window as any).NM_portrait = portrait;
     (window as any).NM_presets = { createGame, yangzhouSiegeState, name: nodeName };
     (window as any).NM_audio = audioState;
@@ -517,6 +519,7 @@ export class App {
     if (mi.rel === 'friend' || force === 'move') { send(false); return; }
     const tgt = s.cities[node].controller, top = s.factions[tgt]?.overlord && !s.factions[s.factions[tgt].overlord!]?.defunct ? s.factions[tgt].overlord! : tgt;
     const tf = s.factions[top];
+    this.sceneNext = { kind: 'war', opts: { a: this.party(s.player), b: this.party(top), seed: s.turn } };
     this.modal('war', `向${tf.short}宣战？`, `${nodeName(node)}属${s.factions[tgt].name}，两家尚未交兵`, [
       h('div', { class: 'war-ask' }, h('div', { class: 'wa-seal', style: { background: s.factions[s.player].color } }, polityOf(s, s.factions[s.player].polity).mark || s.factions[s.player].short), h('i', null, ic('war')), h('div', { class: 'wa-seal', style: { background: tf.color } }, polityOf(s, tf.polity).mark || tf.short)),
       h('div', { class: 'note', style: { textAlign: 'center' } }, `宣战后${tf.name}全境与你为敌，军队行至${nodeName(node)}即攻城。行程 ${mi.days} 日${mi.days > 30 ? `（约 ${Math.ceil(mi.days / 30)} 个月）` : ''}。`),
@@ -1228,6 +1231,10 @@ export class App {
     const dlg = h('div', { class: 'dialog hud' + (size ? ' ' + size : ''), role: 'dialog' },
       h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic(icon)), h('div', null, h('h2', null, title), sub ? h('small', null, sub) : null)),
       h('div', { class: 'db' }, ...body));
+    // 顶部一幅会动的小画：调用前指定的（sceneNext），否则按图标配
+    const sc = this.sceneNext !== undefined ? this.sceneNext : this.s ? this.defaultScene(icon) : null;
+    this.sceneNext = undefined;
+    if (sc) dlg.prepend(scene(sc.kind, sc.opts).el);
     if (buttons.length) {
       const foot = h('div', { class: 'df' });
       for (const b of buttons) foot.append(h('button', { class: 'btn' + (b.primary ? ' primary' : ''), id: b.id, onclick: () => { if (b.onclick() !== false) this.closeModal(); } }, b.icon ? ic(b.icon) : null, b.label));
@@ -1243,6 +1250,24 @@ export class App {
   }
   modalOpener: HTMLElement | null = null;
   forcedModal = false;
+  /** 下一个弹窗顶部的小场景（null 为不画） */
+  sceneNext: { kind: SceneKind; opts?: SceneOpts } | null | undefined = undefined;
+  /** 某势力在小场景里的样子：旗色、字号、冠帽 */
+  party(fid: string | undefined): Party {
+    const s = this.s!, f = fid ? s.factions[fid] : undefined;
+    if (!f) return { color: '#7d7466', hat: 'plain' };
+    const hat: Hat = f.polity === 'qing' ? 'qing' : f.polity === 'shun' || f.polity === 'xi' ? 'shun' : f.polity === 'ming' ? 'ming' : 'plain';
+    return { color: f.color, mark: polityOf(s, f.polity).mark || f.short, hat };
+  }
+  /** 按弹窗图标配小场景：遣使劝降是两人对坐，宣战擂鼓，出兵行军，任命招贤授印，钱粮仓廪，方针朝堂 */
+  defaultScene(icon: string): { kind: SceneKind; opts?: SceneOpts } | null {
+    const MAP: Record<string, SceneKind> = { war: 'war', envoy: 'parley', persuade: 'parley', army: 'march', urgent: 'march', reinforce: 'march', appoint: 'appoint', seek: 'recruit', recruit: 'recruit',
+      trade: 'econ', loan: 'econ', transfer: 'econ', reward: 'econ', policy: 'court', emperor: 'throne', ruins: 'death', hourglass: 'court' };
+    const k = MAP[icon];
+    if (!k) return null;
+    const me = this.party(this.s!.player);
+    return { kind: k, opts: { a: me, b: k === 'appoint' ? me : { color: '#7d7466', hat: 'plain' }, seed: this.s!.turn } };
+  }
   closeModal() {
     closeSelects(); this.forcedModal = false;
     $('#modal').classList.add('hidden'); clear($('#modal'));
@@ -1510,6 +1535,7 @@ export class App {
     const head = gov && of && of.leader === gov.id && !of.admin && c0.controller !== 'local';
     const cards: GameCard[] = list.map(c => { const r = persuadeChance(s, s.player, c.id, node); const m = months(c.id); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true, badge: `约${Math.round(r.p * 20) * 5}%`,
       chips: [{ icon: 'envoy', text: `外交 ${c.ab.wai}`, tone: c.ab.wai >= 60 ? 'good' : 'plain' }, { icon: 'hourglass', text: m <= 1 ? '下月回报' : `约 ${m} 月后回报`, tone: m > 1 ? 'bad' : 'plain' }], note: r.factors.slice(0, 2).join(' · ') }; });
+    this.sceneNext = { kind: 'parley', opts: { a: this.party(s.player), b: this.party(c0.controller), seed: s.turn } };
     this.modal('persuade', '遣使劝降', `${nodeName(node)} · 右上角是大约的成算 · 使者在途不能另派，不成时约两成被扣${head ? ` · 守将是${of!.name}之主：劝成则诸将或随之整镇改奉，或只得此城` : ''}`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'persuade', char: id, node }); }, { stampText: '使' })], [this.cancelBtn()], 'wide');
   }
 
@@ -1524,12 +1550,14 @@ export class App {
       const aims: GameCard[] = [{ id: 'alliance', title: '结盟', art: cardArt('envoy', '#3f7a4a', 1), chips: [{ icon: 'city', text: '各守其城' }, { icon: 'factions', text: '互不相攻', tone: 'good' }], note: '盟友之城不算你的，统一时另计。' }];
       if (st === 'war') aims.push({ id: 'truce', title: '停战', art: cardArt('hourglass', '#8c6a35', 2), chips: [{ icon: 'hourglass', text: '六个月' }], note: '期满复归交战。' },
         { id: 'peace', title: '议和', art: cardArt('ok', '#3f6f8f', 3), chips: [{ icon: 'war', text: '罢兵', tone: 'good' }], note: '两家不再交兵。' });
+      this.sceneNext = { kind: 'parley', opts: { a: this.party(s.player), b: this.party(target), seed: s.turn } };
       this.modal('envoy', `遣使 · ${tf.short}`, `关系：${STANCE_NAME[st] ?? st} · 先定所求`, [cardHand(aims, k => { this.closeModal(); this.formEnvoy(target, k as 'alliance' | 'truce' | 'peace'); }, { stampText: '议' })], [this.cancelBtn()], 'wide');
       return;
     }
     const fc = s.factions[s.player].color, pol = s.factions[s.player].polity;
     const cards: GameCard[] = list.map(c => { const r = envoyScore(s, s.player, { id: 'x', kind: 'envoy', char: c.id, target, aim: aim0 }); const m = envoyMonths(s, c.id, tf.capital); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true,
       badge: `把握 ${Math.round(r.score)}`, chips: [{ icon: 'envoy', text: `外交 ${c.ab.wai}`, tone: c.ab.wai >= 60 ? 'good' : 'plain' }, { icon: r.score >= 55 ? 'ok' : r.score >= 45 ? 'silver' : 'close', text: r.score >= 55 ? '可望' : r.score >= 45 ? '或要开价' : '难成', tone: r.score >= 55 ? 'good' : r.score >= 45 ? 'plain' : 'bad' }, { icon: 'hourglass', text: m <= 1 ? '下月回报' : `约 ${m} 月后回报` }], note: r.factors.slice(0, 2).join(' · ') }; });
+    this.sceneNext = { kind: 'parley', opts: { a: this.party(s.player), b: this.party(target), seed: s.turn } };
     this.modal('envoy', `遣使 · ${tf.short} · ${{ alliance: '结盟', truce: '停战', peace: '议和' }[aim0]}`, `选使者 · 把握 55 以上可望议成（临事有上下十分的变数）；45—55 对方多半开价要银；交战中谈崩，使者约三成被扣`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'envoy', char: id, target, aim: aim0 }); }, { stampText: '使' })], [{ label: '换一种所求', icon: 'envoy', onclick: () => { setTimeout(() => this.formEnvoy(target), 0); } }, this.cancelBtn()], 'wide');
   }
 
@@ -1838,8 +1866,11 @@ export class App {
         // 插画：提到的人物用其像，否则按类别作画
         const who = Object.values(s.chars).filter(x => x.status !== 'offstage' && r.text.includes(x.name)).sort((a, b) => r.text.indexOf(a.name) - r.text.indexOf(b.name))[0];
         const usePt = !!who && (c === '人事' || c === '史事' || c === '交涉');
-        artFx.show({ cat: c as ArtCat, icon: CAT_ICON[c] ?? 'info', color: c === '易主' && ctrl ? ctrl.color : COL[c] ?? '#8c6a35', seed: k,
-          portrait: usePt ? portrait(who, s.factions[who.faction]?.color ?? '#6a5a48', s.factions[who.faction]?.polity ?? 'none') : undefined });
+        // 城破、献城、议和、交兵：换成会动的小画
+        const sk: SceneKind | null = c === '易主' ? (r.act === 'breach' || r.act === 'abandon' ? 'siege' : 'surrender') : c === '交涉' && r.from && r.to ? 'parley' : (r.act === 'battle' || r.act === 'siege') && r.from && r.to ? (r.act === 'siege' ? 'siege' : 'battle') : null;
+        const scn = sk ? { kind: sk, opts: { a: this.party(c === '易主' ? r.to ?? ctrl?.id : r.from), b: this.party(c === '易主' ? r.from : r.to), seed: k + s.turn, ok: r.ok !== false } } : undefined;
+        artFx.show({ cat: c as ArtCat, icon: CAT_ICON[c] ?? 'info', color: c === '易主' && ctrl ? ctrl.color : COL[c] ?? '#8c6a35', seed: k, scene: scn,
+          portrait: !scn && usePt ? portrait(who, s.factions[who.faction]?.color ?? '#6a5a48', s.factions[who.faction]?.polity ?? 'none') : undefined });
         clear(cat).append(ic(CAT_ICON[c] ?? 'info'), c);
         cat.style.background = c === '易主' && ctrl ? ctrl.color : COL[c] ?? '#8c6a35';
         count.textContent = `${k + 1} / ${top.length}`;
@@ -2199,13 +2230,37 @@ export class App {
       c.options.forEach((o, i) => opts.append(h('button', { class: 'opt' + (o.disabled ? ' off' : ''), 'data-choice': i, disabled: o.disabled ? true : undefined, onclick: () => { if (o.disabled) return; this.closeModal(); resolve(i); } },
         h('span', { class: 'num' }, String(i + 1)), h('div', null, h('b', null, o.label), h('small', null, o.desc), o.disabled ? h('small', { class: 'opt-why' }, ic('close'), o.disabled) : null))));
       if (c.tone) eventSfx(c.tone); else choiceSfx();
-      m.append(h('div', { class: 'dialog hud', role: 'dialog' },
+      const sc = this.eventScene(c.title, c.text);
+      m.append(h('div', { class: 'dialog hud', role: 'dialog' }, scene(sc.kind, sc.opts).el,
         h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic('event')), h('div', null, h('h2', null, c.title), h('small', null, `史事 · ${this.s?.factions[this.s.player]?.name ?? ''}决断`))),
         h('div', { class: 'db' }, h('div', { class: 'lead' }, c.text), opts)));
       gsap.fromTo('#modal .dialog', { scale: 0.85, opacity: 0, rotateX: 20 }, { scale: 1, opacity: 1, rotateX: 0, duration: 0.45, ease: 'back.out(1.6)' });
       gsap.from('#modal .opt', { opacity: 0, x: -30, duration: 0.35, stagger: 0.1, delay: 0.2, ease: 'power3.out' });
       requestAnimationFrame(() => ($('#modal .opt') as HTMLElement | null)?.focus({ preventScroll: true }));
     });
+  }
+
+  /** 史事配图：按标题与正文判断是议和、城破、交兵、即位、亡故、灾荒、出征还是朝议；提到的势力作对方 */
+  eventScene(title: string, text: string): { kind: SceneKind; opts: SceneOpts } {
+    const s = this.s!, all = title + text;
+    const named = Object.values(s.factions).filter(f => f.id !== s.player && !f.defunct && f.id !== 'local' && (all.includes(f.name) || all.includes(f.short + '军') || (f.short.length > 1 && all.includes(f.short))));
+    // 正文提到的人物也算：多铎在则清军，史可法在则弘光
+    for (const c of Object.values(s.chars)) if (c.name.length >= 2 && all.includes(c.name) && c.faction !== s.player && s.factions[c.faction] && !named.includes(s.factions[c.faction]) && c.faction !== 'local') named.push(s.factions[c.faction]);
+    named.sort((x, y) => (all.indexOf(x.short) < 0 ? 999 : all.indexOf(x.short)) - (all.indexOf(y.short) < 0 ? 999 : all.indexOf(y.short)));
+    const foe = named[0]?.id ?? (/清/.test(all) && s.player !== 'qing' ? 'qing' : /顺|李自成/.test(all) && s.player !== 'shun' ? 'shun' : undefined);
+    const me = this.party(s.player), other = this.party(foe);
+    const T = (re: RegExp) => re.test(title) || re.test(text.slice(0, 60));
+    const kind: SceneKind =
+      T(/议和|致书|和议|联明|联合|受封|招抚|款/) ? 'parley' :
+      T(/降|开城|献城|反正/) ? 'surrender' :
+      T(/破|陷|屠|围|城|之战|之役|入滇|渡|攻|南下|北伐|东征/) ? 'siege' :
+      T(/即位|监国|建国|亲政|登基|称帝/) ? 'throne' :
+      T(/殉|卒|死|崩|殒|蒙难|殁/) ? 'death' :
+      T(/饥|灾|疫|旱|蝗|迁界|流民|扰民|剃发/) ? 'disaster' :
+      T(/战|兵|军|镇|清君侧/) ? 'battle' : 'court';
+    const third = named[1] ? this.party(named[1].id) : me;
+    const att = kind === 'siege' || kind === 'battle' ? other : me, def = kind === 'siege' || kind === 'battle' ? third : other;
+    return { kind, opts: { a: att, b: def, seed: s.turn + title.length } };
   }
 
   showEnd() {

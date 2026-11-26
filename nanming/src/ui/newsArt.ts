@@ -6,14 +6,16 @@ import { h } from './dom';
 import { iconSvg } from './icons';
 import { cardArt } from './cards';
 import { isReduced } from './motion';
+import { scene as mkScene, type SceneKind, type SceneOpts } from './scene';
 
 export type ArtCat = '急报' | '军报' | '易主' | '交涉' | '内政' | '人事' | '史事' | '线索';
 /** 每类的动作名，写在元素上便于测试与调样式 */
+/** 每类的动作名（有场景时为 scene-场景名） */
 export const ART_MOTION: Record<ArtCat, string> = { 急报: 'alarm', 军报: 'clash', 易主: 'stamp', 交涉: 'drift', 内政: 'hammer', 人事: 'portrait', 史事: 'radiance', 线索: 'search' };
 
 export interface NewsArt {
   el: HTMLElement;
-  show(o: { cat: ArtCat; icon: string; color: string; seed: number; portrait?: string }): void;
+  show(o: { cat: ArtCat; icon: string; color: string; seed: number; portrait?: string; scene?: { kind: SceneKind; opts?: SceneOpts } }): void;
   stop(): void;
 }
 
@@ -27,9 +29,11 @@ export function newsArt(): NewsArt {
   const shine = h('div', { class: 'na-shine' });
   const el = h('div', { class: 'nw-art na' }, bg, rays, glow, ring, ico, fx, shine);
   let tl: gsap.core.Timeline | null = null;
+  let sc: { el: HTMLElement; stop(): void } | null = null;
   let loops: (gsap.core.Tween | gsap.core.Timeline)[] = [];
 
   const stop = () => {
+    sc?.stop(); sc?.el.remove(); sc = null; el.classList.remove('has-scene');
     tl?.kill(); tl = null;
     loops.forEach(x => x.kill()); loops = [];
     gsap.killTweensOf([bg, rays, glow, ring, ico, shine]);
@@ -57,6 +61,16 @@ export function newsArt(): NewsArt {
     stop();
     const reduced = isReduced();
     el.dataset.motion = ART_MOTION[o.cat];
+    // 有场景（城破、议和、交兵）：整幅换成会动的小画
+    if (o.scene) {
+      sc = mkScene(o.scene.kind, o.scene.opts);
+      sc.el.classList.add('na-scene');
+      el.classList.add('has-scene');
+      el.dataset.motion = 'scene-' + o.scene.kind;
+      el.append(sc.el);
+      if (!isReduced()) gsap.fromTo(sc.el, { opacity: 0, scale: 1.08 }, { opacity: 1, scale: 1, duration: 0.5, ease: 'power2.out' });
+      return;
+    }
     el.classList.toggle('pt', !!o.portrait);
     bg.src = o.portrait ?? cardArt(o.icon, o.color, o.seed, true);
     ico.innerHTML = o.portrait ? '' : iconSvg(o.icon);

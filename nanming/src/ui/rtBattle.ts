@@ -17,6 +17,7 @@ import { iconSvg } from './icons';
 import { setScene, setIntensity, click, gong, battleSfx } from './audio';
 import { barkLine } from './barks';
 import { isReduced } from './motion';
+import { scene, type SceneKind, type Party } from './scene';
 import gsap from 'gsap';
 
 const ic = (name: string) => { const sp = h('span', { style: { display: 'contents' } }); sp.innerHTML = iconSvg(name); return sp; };
@@ -465,7 +466,13 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     const r = resultWord();
     gong(r.win);
     bark('me', r.win ? 'win' : 'lose');
-    const card = h('div', { class: 'sresult ' + r.tone }, h('b', null, r.big), h('p', null, r.text),
+    // 战果配一幅小画：破城、城降、野战交锋
+    const pty = (f: string): Party => { const lk = lookOf(s, f); return { color: colorOf(f), mark: lk.mark, hat: lk.helmet === 'xi' ? 'shun' : lk.helmet === 'plain' ? 'plain' : lk.helmet }; };
+    const oc = sim.over!.outcome as string;
+    const sk: SceneKind = ssim ? (oc === 'breach' || oc === 'abandon' ? 'siege' : oc === 'surrender' || oc === 'collapse' ? 'surrender' : 'battle') : 'battle';
+    const scn = scene(sk, { a: pty(b0.att.faction), b: pty(b0.def.faction), seed: b0.seed });
+    scn.el.classList.add('sr-scene');
+    const card = h('div', { class: 'sresult ' + r.tone }, scn.el, h('b', null, r.big), h('p', null, r.text),
       h('small', null, `历时 ${Math.floor(sim.t / 60)} 分 ${Math.round(sim.t % 60)} 秒 · 我军伤亡 ${wan(lost(side))} · 敌军伤亡 ${wan(lost(foe))}`),
       h('i', { class: 'sr-timer' }), h('em', { class: 'sr-auto' }, '片刻后自回地图 · 点一下即走'));
     stage.append(card);

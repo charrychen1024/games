@@ -40,6 +40,7 @@ async function nextMonth(manualBattle = false, probe = null) {
         await page.mouse.click(8, 450); await wait(200);
         probe.bg = await visible('[data-choice]');
       }
+      if (probe && probe.scene === undefined) probe.scene = await page.evaluate(() => { const c = document.querySelector('#modal .dialog > .scene canvas'); return !!c && c.width > 200; });
       await page.click('[data-choice="0"]', { timeout: 1000 }).catch(() => {}); choices++; await wait(150); continue;
     }
     // 即时战斗（攻城、守城、野战、水战）：一开场即交战，守城先择大计；亲征则在战场上选一营下一道令，再由部将快进打完；打完自行收场
@@ -190,7 +191,12 @@ try {
   check('强制决断：Tab 焦点留在弹窗内', probe.focusIn === true, JSON.stringify(probe));
   check('强制决断：点背景不关闭', probe.bg === true, JSON.stringify(probe));
   check('本月战报逐条播放过', m1.newsSeen, JSON.stringify(m1));
-  check('战报插画按类别带动作', /^(alarm|clash|stamp|drift|hammer|portrait|radiance|search)$/.test(m1.newsArtMotion), m1.newsArtMotion);
+  check('史事抉择顶部有会动的小场景', probe.scene === true, JSON.stringify(probe));
+  await page.evaluate(() => NM.formEnvoy('shun')); await wait(400);
+  const envScene = await page.evaluate(() => document.querySelector('#modal .dialog > .scene')?.getAttribute('data-scene'));
+  await page.keyboard.press('Escape'); await wait(200);
+  check('遣使弹窗顶部是两人对坐议事', envScene === 'parley', String(envScene));
+  check('战报插画按类别带动作', /^(alarm|clash|stamp|drift|hammer|portrait|radiance|search|scene-[a-z]+)$/.test(m1.newsArtMotion), m1.newsArtMotion);
   // 地图图层：右下角切换，L 键轮换
   await page.click('[data-lens="war"]'); await wait(200);
   const lw = await page.evaluate(() => NM.map.view.lens);
@@ -452,6 +458,7 @@ try {
     }
     await page.evaluate(() => window.NM_siegeSkip?.()); await wait(900);
     check(`${K}打完出结果大字，没有确认按钮`, await visible('.sresult') && !(await visible('#battle-done')), await text('.sresult'));
+    check(`${K}战果配小场景`, await visible('.sresult .sr-scene canvas'));
     const t0 = Date.now();
     const res = await done;
     check(`${K}结果亮出数秒后自行收场`, Date.now() - t0 < 6000 && await page.evaluate(() => document.querySelector('#battle').classList.contains('hidden')), String(Date.now() - t0));

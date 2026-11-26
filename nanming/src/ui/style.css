@@ -1246,3 +1246,13 @@ button.rc.on::after { content: '▴'; color: var(--gold-2); }
 @keyframes tbPulse { 50% { transform: scale(1.15); } }
 @media (prefers-reduced-motion: reduce) { #targetbar > .ic { animation: none; } }
 @media (max-width: 980px) { #targetbar small { display: none; } }
+
+/* 小场景动画：弹窗、史事抉择顶部一幅会动的水墨小画；战报卡插画整幅 */
+.scene { position: relative; height: 150px; overflow: hidden; background: #e9ddc1; }
+.scene canvas { display: block; }
+.dialog > .scene { border-bottom: 2px solid rgba(217, 173, 91, 0.45); border-radius: 12px 12px 0 0; box-shadow: inset 0 -10px 18px rgba(60, 40, 20, 0.18); }
+.dialog.wide > .scene { height: 120px; }
+.nw-art.na.has-scene > :not(.na-scene) { display: none; }
+.nw-art .na-scene { position: absolute; inset: 0; height: 100%; }
+@media (max-height: 720px) { .dialog > .scene { height: 110px; } .dialog.wide > .scene { height: 90px; } }
+.sresult .sr-scene { width: 420px; max-width: 70vw; height: 128px; margin: 0 auto 6px; border-radius: 10px; border: 2px solid rgba(217, 173, 91, 0.55); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55); }
