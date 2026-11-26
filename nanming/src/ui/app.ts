@@ -604,17 +604,19 @@ export class App {
   /* ================= 顶栏 ================= */
   renderAll() { this.renderTop(); this.renderOrders(); this.refreshPanel(); this.updatePlanned(); this.renderArmyBar(); this.renderLens(); }
 
-  /** 地图图层：右下角三枚按钮，选中者上方附一行图例；L 键轮换 */
+  /** 地图图层：顶栏里三枚分段按钮，位置固定、不随右侧弹窗移动；军情、钱粮两层在按钮下方垂一条图例横签（向左展开，不压右侧弹窗）；L 键轮换 */
+  private lensBox?: HTMLElement;
+  get lensEl() { return this.lensBox ??= $('#lens'); }
   lens: LensId = (() => { try { const v = localStorage.getItem('nanming:lens'); return v === 'war' || v === 'econ' ? v : 'faction'; } catch { return 'faction'; } })();
   setLens(id: LensId, announce = true) {
     if (id === this.lens && this.map.view.lens === id) return;
     this.lens = id; this.map.view.lens = id;
     try { localStorage.setItem('nanming:lens', id); } catch { /* 偏好只在本次有效 */ }
     this.renderLens();
-    if (announce) { click(); this.toast(`图层：${LENSES.find(l => l.id === id)!.name}`, LENSES.find(l => l.id === id)!.icon); }
+    if (announce) click();   // 按钮高亮与图例横签本身就是回馈，不再另弹提示
   }
   renderLens() {
-    const el = clear($('#lens'));
+    const el = clear(this.lensEl);
     el.classList.toggle('hidden', !this.s);
     this.map.view.lens = this.lens;
     const legend = this.lens === 'war'
@@ -622,11 +624,19 @@ export class App {
       : this.lens === 'econ'
         ? (['ample', 'ok', 'low', 'crit'] as StoreTier[]).map(t => h('span', { class: 'lg-i' }, h('i', { style: { background: TIER_COLOR[t] } }), TIER_NAME[t])).concat([h('span', { class: 'lg-i' }, h('i', { class: 'sup' }), '粮台')])
         : null;
-    if (legend) el.append(h('div', { class: 'lens-lg hud' }, ...legend));
-    el.append(h('div', { class: 'lens-row hud', role: 'radiogroup', 'aria-label': '地图图层' }, ...LENSES.map(l => h('button', {
-      class: 'lens-b' + (l.id === this.lens ? ' on' : ''), 'data-lens': l.id, role: 'radio', 'aria-checked': String(l.id === this.lens), 'data-tip': l.tip,
+    el.append(h('div', { class: 'lens-row', role: 'radiogroup', 'aria-label': '地图图层' }, ...LENSES.map(l => h('button', {
+      class: 'lens-b' + (l.id === this.lens ? ' on' : ''), 'data-lens': l.id, role: 'radio', 'aria-checked': String(l.id === this.lens), 'data-tip': l.tip, 'aria-label': l.name + '图层',
       onclick: () => this.setLens(l.id),
     }, ic(l.icon), h('span', null, l.name)))));
+    if (legend) {
+      const lg = h('div', { class: 'lens-lg hud', 'data-lens': this.lens }, h('b', { class: 'lg-t' }, LENSES.find(l => l.id === this.lens)!.name), ...legend);
+      el.append(lg);
+      // 横签上的小尖角对准选中的按钮
+      requestAnimationFrame(() => {
+        const b = el.querySelector('.lens-b.on')?.getBoundingClientRect(), r = el.getBoundingClientRect();
+        if (b && r.width) lg.style.setProperty('--lg-arrow', `${Math.round(r.right - (b.left + b.width / 2) - 6)}px`);
+      });
+    }
   }
 
   /** 月末结算期间按住顶栏旧数 */
@@ -682,6 +692,7 @@ export class App {
         pill('troops', wan(troops), '兵', '直辖兵力', troops),
       ),
       h('div', { class: 'spacer' }),
+      this.lensEl,
       ib('btn-report', 'report', '军情（R）', () => this.toggleReport(), { badge: unread }),
       ib('btn-factions', 'factions', '天下', () => this.openFactions()),
       ib('btn-chars', 'chars', '人物', () => this.openChars()),

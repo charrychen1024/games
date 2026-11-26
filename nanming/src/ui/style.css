@@ -1158,21 +1158,26 @@ button.rc.on::after { content: '▴'; color: var(--gold-2); }
 .rq-row small.warn, .cfc-f span.warn { color: #ffb3a6; }
 
 /* ---------- 地图图层切换（右下角） ---------- */
-#lens { position: absolute; right: 10px; bottom: 10px; z-index: 8; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; transition: right 0.25s; }
-#panel:not(.hidden) ~ #lens { right: 378px; }
-#lens .lens-row { display: flex; gap: 4px; padding: 4px; border-radius: 14px; }
-#lens .lens-b { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; width: 54px; height: 50px; border-radius: 10px; border: 1.5px solid transparent; background: rgba(255, 240, 210, 0.04); color: var(--dim); font-weight: 900; font-size: 12px; cursor: pointer; transition: transform 0.15s, background 0.15s, color 0.15s; }
-#lens .lens-b .ic { width: 22px; height: 22px; }
-#lens .lens-b:hover { color: var(--gold-2); transform: translateY(-2px); }
-#lens .lens-b.on { color: #fff3d9; border-color: var(--gold); background: linear-gradient(180deg, #c23a2b, #6e170f); box-shadow: 0 0 14px rgba(224, 80, 63, 0.45); }
+/* 图层：顶栏里的分段按钮；图例横签从按钮下方垂下，右对齐、向左展开 */
+#lens { position: relative; flex: none; display: flex; align-items: center; margin-right: 4px; }
+#lens .lens-row { display: flex; gap: 2px; padding: 3px; border-radius: 11px; background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(217, 173, 91, 0.25); }
+#lens .lens-b { display: flex; align-items: center; gap: 4px; height: 36px; padding: 0 9px 0 7px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--dim); font-weight: 900; font-size: 13px; cursor: pointer; transition: background 0.15s, color 0.15s; }
+#lens .lens-b .ic { width: 20px; height: 20px; }
+#lens .lens-b:hover, #lens .lens-b:focus-visible { color: var(--gold-2); outline: none; background: rgba(255, 240, 210, 0.06); }
+#lens .lens-b.on { color: #fff3d9; border-color: var(--gold); background: linear-gradient(180deg, #c23a2b, #6e170f); box-shadow: 0 0 10px rgba(224, 80, 63, 0.4); }
 #lens .lens-b.on .ic { animation: lensPop 0.4s ease-out; }
 @keyframes lensPop { 0% { transform: scale(0.6) rotate(-12deg); } 70% { transform: scale(1.18) rotate(4deg); } 100% { transform: none; } }
-#lens .lens-lg { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 10px; max-width: 300px; padding: 6px 10px; border-radius: 10px; font-size: 11.5px; font-weight: 700; color: #e8d9b4; animation: lensIn 0.25s ease-out; }
-@keyframes lensIn { from { opacity: 0; transform: translateY(8px); } }
-#lens .lg-i { display: inline-flex; align-items: center; gap: 4px; }
+#lens .lens-lg { position: absolute; top: calc(100% + 14px); right: 0; display: flex; align-items: center; gap: 4px; white-space: nowrap; padding: 5px 10px 5px 5px; border-radius: 9px; font-size: 12px; font-weight: 700; color: #e8d9b4; transform-origin: 90% 0; animation: lensIn 0.25s ease-out; pointer-events: none; }
+#lens .lens-lg::before { content: ''; position: absolute; top: -6px; right: var(--lg-arrow, 60px); width: 10px; height: 10px; transform: rotate(45deg); background: inherit; border-left: 1px solid rgba(217, 173, 91, 0.45); border-top: 1px solid rgba(217, 173, 91, 0.45); }
+#lens .lg-t { padding: 2px 8px; margin-right: 4px; border-radius: 6px; background: linear-gradient(180deg, #c23a2b, #6e170f); color: #fff3d9; font-size: 12px; }
+@keyframes lensIn { from { opacity: 0; transform: translateY(-6px) scaleY(0.6); } }
+#lens .lg-i { display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; }
+#lens .lg-i + .lg-i { border-left: 1px solid rgba(217, 173, 91, 0.18); }
 #lens .lg-i i { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(255, 240, 210, 0.35); }
 #lens .lg-i i.front { height: 0; width: 16px; border: 0; border-top: 2.5px dashed #ff785a; border-radius: 0; }
 #lens .lg-i i.sup { height: 0; width: 16px; border: 0; border-top: 2px dashed #f0cf86; border-radius: 0; }
+@media (max-width: 1600px) { #lens .lens-b span { display: none; } #lens .lens-b { padding: 0 8px; } }
+@media (max-width: 980px) { #lens .lens-lg { flex-wrap: wrap; white-space: normal; width: min(360px, 80vw); } }
 @media (prefers-reduced-motion: reduce) { #lens .lens-b.on .ic, #lens .lens-lg { animation: none; } }
 
 /* ---------- 战报卡动态插画 ---------- */
@@ -1208,3 +1213,21 @@ button.rc.on::after { content: '▴'; color: var(--gold-2); }
 .rcard .pr-b:hover { background: #5a3a1f; }
 .rcard .pr-b.bad { color: #ff9a85; border-color: #8f2a1f; }
 .rcard .pr-b.on { color: #fff3d9; background: linear-gradient(180deg, #c23a2b, #6e170f); border-color: var(--gold); }
+
+/* 政令台八枚按钮：窄屏收紧，开着城池面板时居中于左侧军队栏与面板之间，不压面板 */
+@media (max-width: 1380px) {
+  #cmddock { gap: 8px; padding: 8px 10px 8px 8px; max-width: calc(100vw - 600px); }
+  #panel:not(.hidden) ~ #cmddock { left: calc((100vw - 346px + 230px) / 2); }
+  .dk-row { gap: 4px; }
+  .dk-btn { width: 60px; }
+  .dk-medal { width: 50px; height: 50px; border-radius: 14px; }
+  .dk-medal .ic { width: 28px; height: 28px; }
+  .dk-btn b { font-size: 12.5px; letter-spacing: 0.05em; }
+  .dk-seal { min-width: 66px; }
+}
+@media (max-width: 1200px) {
+  .dk-btn { width: 52px; }
+  .dk-medal { width: 44px; height: 44px; }
+  .dk-medal .ic { width: 24px; height: 24px; }
+  .dk-btn b { font-size: 12px; letter-spacing: 0; }
+}
