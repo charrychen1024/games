@@ -52,6 +52,7 @@ export class SiegeView extends RtView {
     this.groundWash(g, seed);
     // 城外田畴（避开大道与护城河）
     this.fields(g, r, -1500, 2500, 150, 1150, (x) => Math.abs(x - 500) < 90);
+    this.terrainTexture(g, r, { y0: 142, y1: 1150, paths: 1, avoid: (x, y) => Math.abs(x - 500) < 95 || y < 140 });
     if (att) this.cityBeyond(g, r); else this.horizonWoods(g, r);
     if (!att) this.cityStreets(g, r);
     // 通往城门的大道：淡赭，墨笔勾两边
@@ -86,6 +87,7 @@ export class SiegeView extends RtView {
       else if (p.k === 'tent') tent(g, sx, sy, sc * 3.4, foe, p.x);
       else tree(g, sx, sy, sc * 4.5, p.k, r, 0.85);
     }
+    if (att) this.foreground(g, r, this.visibleBottom());
     this.bg = c; this.bgKey = key;
     return c;
   }

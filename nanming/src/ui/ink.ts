@@ -273,3 +273,33 @@ export function tent(g: CanvasRenderingContext2D, x: number, y: number, s: numbe
   g.beginPath(); g.moveTo(x, y - h); g.lineTo(x, y - h - 10 * s); g.stroke();
   g.fillStyle = flag; g.beginPath(); g.moveTo(x, y - h - 10 * s); g.lineTo(x + 8 * s, y - h - 8 * s + Math.sin(wave) * s); g.lineTo(x, y - h - 5 * s); g.closePath(); g.fill();
 }
+
+/** 一块石头：不规则墨线勾边、淡赭晕染、暗面一抹 */
+export function rock(g: CanvasRenderingContext2D, x: number, y: number, s: number, r: Rnd, a = 1) {
+  const w = (10 + r() * 16) * s, h = w * (0.45 + r() * 0.35);
+  const pts: [number, number][] = [];
+  const n = 7;
+  for (let k = 0; k < n; k++) { const t = Math.PI + (k / (n - 1)) * Math.PI; pts.push([x + Math.cos(t) * w * (0.8 + r() * 0.3), y + Math.sin(t) * h * (0.7 + r() * 0.4)]); }
+  g.save(); g.globalAlpha *= a;
+  g.fillStyle = `rgba(${150 + Math.floor(r() * 30)},${138 + Math.floor(r() * 20)},${110 + Math.floor(r() * 20)},0.9)`;
+  g.beginPath(); g.moveTo(x - w, y); pts.forEach(([px, py]) => g.lineTo(px, py)); g.lineTo(x + w, y); g.closePath(); g.fill();
+  g.fillStyle = ink(0.6, 0.35); g.beginPath(); g.moveTo(x + w * 0.1, y); g.lineTo(pts[4][0], pts[4][1]); g.lineTo(pts[6][0], pts[6][1]); g.lineTo(x + w, y); g.closePath(); g.fill();
+  g.strokeStyle = ink(0.9, 0.85); g.lineWidth = Math.max(0.7, 1.3 * s); g.lineJoin = 'round';
+  g.beginPath(); g.moveTo(x - w, y); pts.forEach(([px, py]) => g.lineTo(px, py)); g.lineTo(x + w, y); g.stroke();
+  g.lineWidth = Math.max(0.5, 0.8 * s); g.beginPath(); g.moveTo(pts[2][0], pts[2][1]); g.lineTo(x - w * 0.1 + r() * w * 0.2, y - h * 0.2); g.stroke();
+  g.restore();
+}
+
+/** 一丛灌木：墨点叶团，几笔枝 */
+export function bush(g: CanvasRenderingContext2D, x: number, y: number, s: number, r: Rnd, a = 1) {
+  g.save(); g.globalAlpha *= a;
+  const w = (14 + r() * 14) * s;
+  g.strokeStyle = ink(0.85, 0.7); g.lineWidth = Math.max(0.6, 1.2 * s);
+  for (let k = 0; k < 4; k++) { g.beginPath(); g.moveTo(x + (k - 1.5) * w * 0.15, y); g.lineTo(x + (k - 1.5) * w * 0.4, y - w * (0.5 + r() * 0.4)); g.stroke(); }
+  for (let k = 0; k < 30; k++) {
+    const an = Math.PI + r() * Math.PI, d = r() * w;
+    g.fillStyle = r() < 0.5 ? ink(0.75 + r() * 0.2, 0.55 + r() * 0.3) : `rgba(${90 + Math.floor(r() * 30)},${100 + Math.floor(r() * 30)},${60 + Math.floor(r() * 20)},${0.5 + r() * 0.3})`;
+    g.beginPath(); g.ellipse(x + Math.cos(an) * d, y + Math.sin(an) * d * 0.75 - w * 0.2, (2 + r() * 2.5) * s, (1.4 + r() * 1.6) * s, r() * 3, 0, Math.PI * 2); g.fill();
+  }
+  g.restore();
+}

@@ -60,6 +60,8 @@ export class FieldView extends RtView {
       this.groundWash(g, seed);
       this.fields(g, r, -1500, 2500, -220, 1300);
       this.horizonWoods(g, r);
+      const river = this.sim.terrain === 'river';
+      this.terrainTexture(g, r, { y0: -200, y1: 1300, paths: river ? 1 : 2, avoid: (_x, y) => river && y > RIVER.y0 - 12 && y < RIVER.y1 + 12 });
       if (this.sim.terrain === 'hills') {
         // 守方阵前一道岗：淡墨晕染，岗脊焦墨一笔，坡上皴擦、岗上松
         const { x0, x1, y0, y1 } = RIDGE;
@@ -104,6 +106,7 @@ export class FieldView extends RtView {
         if (sx < -80 || sx > W + 80) continue;
         if (p.k === 'hut') hut(g, sx, sy, s * 3.2, r, 0.9); else tree(g, sx, sy, s * 4.5, p.k, r, 0.85);
       }
+      this.foreground(g, r, this.visibleBottom());
     }
     this.bg = c; this.bgKey = key;
     return c;

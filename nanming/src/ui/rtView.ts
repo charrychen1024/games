@@ -1,6 +1,6 @@
 /* 即时战斗画面的共用底层：纵深透视、小兵贴图、飘字、弹道、军心泛红。
  * 攻城（siegeView.ts）与野战、水战（fieldView.ts）都从这里派生。画面只读模拟状态，不改它。 */
-import { ink, tint, paper, mountains, mkRnd, puff, splatter, agedEdges } from './ink';
+import { ink, tint, paper, mountains, mkRnd, puff, splatter, agedEdges, grass, rock, bush } from './ink';
 /** 一方的样貌：旗色、头盔式样、旗号 */
 export interface SideLook { color: string; helmet: 'ming' | 'qing' | 'shun' | 'xi' | 'plain'; flag: string; mark: string }
 /** 颜色加深（k<0）或提亮（k>0） */
@@ -275,10 +275,10 @@ export abstract class RtView {
     if (fog) { const mg = g.createLinearGradient(0, hz - 20, 0, hz + H * 0.3); mg.addColorStop(0, 'rgba(236,232,220,0.2)'); mg.addColorStop(0.5, 'rgba(236,232,220,0.75)'); mg.addColorStop(1, 'rgba(236,232,220,0)'); g.fillStyle = mg; g.fillRect(0, hz - 20, W, H * 0.3 + 20); }
   }
   /** 大地底色：淡赭绿晕染，近浓远淡，斑驳几块 */
-  groundWash(g: CanvasRenderingContext2D, seed = 11, tone = '150,140,92') {
+  groundWash(g: CanvasRenderingContext2D, seed = 11, tone = '138,138,82') {
     const { W, H } = this, hz = this.hz;
     const gr = g.createLinearGradient(0, hz, 0, H);
-    gr.addColorStop(0, `rgba(${tone},0.14)`); gr.addColorStop(1, `rgba(${tone},0.42)`);
+    gr.addColorStop(0, `rgba(${tone},0.16)`); gr.addColorStop(1, `rgba(${tone},0.5)`);
     g.fillStyle = gr; g.fillRect(0, hz + 6, W, H);
     const r = mkRnd(seed);
     for (let k = 0; k < 14; k++) {
@@ -289,20 +289,20 @@ export abstract class RtView {
       g.save(); g.translate(x, y); g.scale(1, ry / rx); g.translate(-x, -y); g.fillStyle = gg; g.beginPath(); g.arc(x, y, rx, 0, Math.PI * 2); g.fill(); g.restore();
     }
   }
-  /** 阡陌：一块块田，深浅不一的淡彩，田埂淡墨勾边；随透视收拢，给出地面的纵深 */
+  /** 草地斑驳：软边的草色、赭色、枯黄晕染，随透视压扁（不画直边田块，免得像铺地石板） */
   fields(g: CanvasRenderingContext2D, r: () => number, x0: number, x1: number, y0: number, y1: number, skip?: (x: number, y: number) => boolean) {
-    const tones = ['150,150,92', '170,150,100', '130,140,85', '185,168,120', '160,160,105'];
-    for (let y = y0; y < y1; y += 90 + r() * 60) {
-      const dh = 70 + r() * 50;
-      for (let x = x0; x < x1; x += 160 + r() * 140) {
-        const dw = 140 + r() * 120;
-        if (skip?.(x + dw / 2, y + dh / 2)) continue;
-        const pts = [this.P(x, y), this.P(x + dw, y), this.P(x + dw, y + dh), this.P(x, y + dh)];
-        const a = 0.05 + r() * 0.12;
-        g.fillStyle = `rgba(${tones[Math.floor(r() * tones.length)]},${a})`;
-        g.beginPath(); pts.forEach(([sx, sy], i) => (i ? g.lineTo(sx, sy) : g.moveTo(sx, sy))); g.closePath(); g.fill();
-        if (r() < 0.6) { g.strokeStyle = ink(0.6, 0.07 + r() * 0.06); g.lineWidth = 0.8; g.stroke(); }
-      }
+    const tones = ['118,135,70', '150,140,85', '105,125,62', '170,150,98', '132,128,72', '95,112,58'];
+    for (let k = 0; k < 120; k++) {
+      const x = x0 + r() * (x1 - x0), y = y0 + r() * (y1 - y0);
+      if (skip?.(x, y)) continue;
+      const [sx, sy, sc] = this.P(x, y);
+      if (sy < this.hz) continue;
+      const rx = (60 + r() * 160) * sc * 3, ry = rx * (0.16 + r() * 0.1);
+      const gr = g.createRadialGradient(sx, sy, 0, sx, sy, rx);
+      const c = tones[Math.floor(r() * tones.length)], a = 0.1 + r() * 0.16;
+      gr.addColorStop(0, `rgba(${c},${a})`); gr.addColorStop(0.6, `rgba(${c},${a * 0.6})`); gr.addColorStop(1, `rgba(${c},0)`);
+      g.save(); g.translate(sx, sy); g.scale(1, ry / rx); g.translate(-sx, -sy);
+      g.fillStyle = gr; g.beginPath(); g.arc(sx, sy, rx, 0, Math.PI * 2); g.fill(); g.restore();
     }
   }
   /** 地平线上一线疏林与雾带（远景与战场之间的过渡） */
@@ -317,6 +317,82 @@ export abstract class RtView {
     const mg = g.createLinearGradient(0, hz + 4, 0, hz + 40);
     mg.addColorStop(0, 'rgba(236,226,200,0)'); mg.addColorStop(0.5, 'rgba(236,226,200,0.6)'); mg.addColorStop(1, 'rgba(236,226,200,0)');
     g.fillStyle = mg; g.fillRect(0, hz + 4, W, 36);
+  }
+  /** 地面的质感：缓坡起伏、点草苔点、踩出的土路、散石灌丛；avoid 返回 true 的世界坐标处不画（大道、河、城墙） */
+  terrainTexture(g: CanvasRenderingContext2D, r: () => number, o: { y0: number; y1: number; avoid?: (x: number, y: number) => boolean; paths?: number } ) {
+    const { W, H } = this, hz = this.hz;
+    const avoid = o.avoid ?? (() => false);
+    // 1. 缓坡：一道道低岗，岗顶受光、岗脚积墨，岗脊断续一笔
+    const swells = 7;
+    for (let k = 0; k < swells; k++) {
+      const y = o.y0 + (o.y1 - o.y0) * (k + 0.3 + r() * 0.4) / swells;
+      const x0 = -900 + r() * 600, x1 = x0 + 900 + r() * 1400, hgt = 6 + r() * 10, depth = 50 + r() * 60;
+      const crest: [number, number][] = [], base: [number, number][] = [];
+      for (let x = x0; x <= x1; x += 25) {
+        const t = (x - x0) / (x1 - x0), bump = Math.sin(t * Math.PI) * (0.8 + 0.2 * Math.sin(t * 7 + k));
+        const [cx, cy] = this.P(x, y, hgt * bump), [bx, by] = this.P(x, y + (this.o.me === 'att' ? depth : -depth), 0);
+        crest.push([cx, cy]); base.push([bx, by]);
+      }
+      const top = Math.min(...crest.map(p => p[1])), bot = Math.max(...base.map(p => p[1]));
+      if (bot < hz) continue;
+      const gr = g.createLinearGradient(0, top, 0, bot);
+      gr.addColorStop(0, 'rgba(250,240,210,0.22)'); gr.addColorStop(0.45, 'rgba(160,150,100,0.10)'); gr.addColorStop(1, 'rgba(90,85,55,0.18)');
+      g.fillStyle = gr; g.beginPath(); crest.forEach(([x, yy], i) => (i ? g.lineTo(x, yy) : g.moveTo(x, yy))); for (let i = base.length - 1; i >= 0; i--) g.lineTo(base[i][0], base[i][1]); g.closePath(); g.fill();
+      g.strokeStyle = ink(0.7, 0.16 + r() * 0.1); g.lineWidth = 1.1; g.lineCap = 'round';
+      g.beginPath(); crest.forEach(([x, yy], i) => { if (i % 7 === 6 && r() < 0.5) { g.stroke(); g.beginPath(); g.moveTo(x, yy); } else if (i) g.lineTo(x, yy); else g.moveTo(x, yy); }); g.stroke();
+    }
+    // 2. 土路：几道踩出的小路，弯弯曲曲伸向远处
+    for (let k = 0; k < (o.paths ?? 2); k++) {
+      let x = -100 + r() * 1200; const wob = 80 + r() * 160, ph = r() * 6;
+      const left: [number, number][] = [], right: [number, number][] = [];
+      for (let y = o.y1; y >= o.y0; y -= 30) {
+        const xx = x + Math.sin(y / 260 + ph) * wob;
+        if (avoid(xx, y)) break;
+        left.push(this.P(xx - 9, y).slice(0, 2) as [number, number]); right.push(this.P(xx + 9, y).slice(0, 2) as [number, number]);
+      }
+      if (left.length < 3) continue;
+      g.fillStyle = 'rgba(176,150,105,0.32)'; g.beginPath(); left.forEach(([px, py], i) => (i ? g.lineTo(px, py) : g.moveTo(px, py))); for (let i = right.length - 1; i >= 0; i--) g.lineTo(right[i][0], right[i][1]); g.closePath(); g.fill();
+      g.strokeStyle = ink(0.6, 0.18); g.lineWidth = 0.8;
+      for (const side of [left, right]) { g.beginPath(); side.forEach(([px, py], i) => { if (i % 5 === 4) { g.stroke(); g.beginPath(); g.moveTo(px, py); } else if (i) g.lineTo(px, py); else g.moveTo(px, py); }); g.stroke(); }
+      x += 0;
+    }
+    // 3. 点草苔点：近大而疏、远小而密
+    for (let k = 0; k < 5200; k++) {
+      const t = Math.pow(r(), 0.65), y = o.y0 + (o.y1 - o.y0) * (this.o.me === 'att' ? t : 1 - t), x = -600 + r() * 2200;
+      if (avoid(x, y)) continue;
+      const [sx, sy, sc] = this.P(x, y);
+      if (sx < -10 || sx > W + 10 || sy < hz || sy > H + 10) continue;
+      const kind = r();
+      if (kind < 0.55) { g.strokeStyle = ink(0.6 + r() * 0.3, 0.14 + r() * 0.16); g.lineWidth = Math.max(0.5, sc * 1.6); const l = (3 + r() * 6) * sc * 2.4; g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx + (r() - 0.5) * l * 0.6, sy - l); g.stroke(); }
+      else if (kind < 0.85) { g.fillStyle = ink(0.7 + r() * 0.25, 0.12 + r() * 0.18); g.beginPath(); g.ellipse(sx, sy, (1 + r() * 1.5) * sc * 2, (0.6 + r()) * sc * 2, 0, 0, Math.PI * 2); g.fill(); }
+      else { g.fillStyle = `rgba(${100 + Math.floor(r() * 40)},${115 + Math.floor(r() * 30)},${60 + Math.floor(r() * 25)},${0.14 + r() * 0.16})`; g.beginPath(); g.ellipse(sx, sy, (4 + r() * 8) * sc * 2, (1.5 + r() * 2) * sc * 2, 0, 0, Math.PI * 2); g.fill(); }
+    }
+    // 4. 草丛、散石、灌丛
+    for (let k = 0; k < 70; k++) {
+      const x = -500 + r() * 2000, y = o.y0 + r() * (o.y1 - o.y0);
+      if (avoid(x, y)) continue;
+      const [sx, sy, sc] = this.P(x, y);
+      if (sx < -40 || sx > W + 40 || sy < hz + 4) continue;
+      const q = r();
+      if (q < 0.5) grass(g, sx, sy, sc * 2.6, r, 0.4 + r() * 0.25);
+      else if (q < 0.78) rock(g, sx, sy, sc * 2.2, r, 0.85);
+      else bush(g, sx, sy, sc * 2.6, r, 0.8);
+    }
+  }
+  /** 画面可见的底边：下方指挥栏叠在画布上，近景要画在它之上 */
+  visibleBottom(): number {
+    const ui = document.getElementById('battle-ui')?.getBoundingClientRect(), c = this.cv.getBoundingClientRect();
+    return ui && ui.height && ui.top > c.top ? Math.min(this.H, ui.top - c.top + 6) : this.H;
+  }
+  /** 近景压角：画面下方两角一丛长草、一两块大石、灌木，给出最近的一层（不挡中路） */
+  foreground(g: CanvasRenderingContext2D, r: () => number, bottom: number) {
+    const { W } = this;
+    for (const side of [-1, 1]) {
+      const bx = side < 0 ? 0 : W;
+      for (let k = 0; k < 3; k++) rock(g, bx - side * (30 + r() * 140), bottom - r() * 20, 2.4 + r() * 1.4, r, 0.92);
+      for (let k = 0; k < 3; k++) bush(g, bx - side * (60 + r() * 160), bottom - 6 - r() * 26, 2.2 + r() * 1.2, r, 0.85);
+      for (let k = 0; k < 14; k++) grass(g, bx - side * (r() * 230), bottom - r() * 34, 2.4 + r() * 2, r, 0.5 + r() * 0.3);
+    }
   }
   /** 画框四周做旧（最后一层） */
   frameAge(g: CanvasRenderingContext2D) { agedEdges(g, this.W, this.H, 0.28); }
