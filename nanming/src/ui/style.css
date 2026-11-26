@@ -1156,3 +1156,41 @@ button.rc.on::after { content: '▴'; color: var(--gold-2); }
 .cfc-q { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; padding: 5px 8px; border-radius: 6px; background: rgba(217, 173, 91, 0.12); color: var(--gold-2); font-size: 12px; }
 .cfc-q .ic { width: 14px; height: 14px; }
 .rq-row small.warn, .cfc-f span.warn { color: #ffb3a6; }
+
+/* ---------- 地图图层切换（右下角） ---------- */
+#lens { position: absolute; right: 10px; bottom: 10px; z-index: 8; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; transition: right 0.25s; }
+#panel:not(.hidden) ~ #lens { right: 378px; }
+#lens .lens-row { display: flex; gap: 4px; padding: 4px; border-radius: 14px; }
+#lens .lens-b { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; width: 54px; height: 50px; border-radius: 10px; border: 1.5px solid transparent; background: rgba(255, 240, 210, 0.04); color: var(--dim); font-weight: 900; font-size: 12px; cursor: pointer; transition: transform 0.15s, background 0.15s, color 0.15s; }
+#lens .lens-b .ic { width: 22px; height: 22px; }
+#lens .lens-b:hover { color: var(--gold-2); transform: translateY(-2px); }
+#lens .lens-b.on { color: #fff3d9; border-color: var(--gold); background: linear-gradient(180deg, #c23a2b, #6e170f); box-shadow: 0 0 14px rgba(224, 80, 63, 0.45); }
+#lens .lens-b.on .ic { animation: lensPop 0.4s ease-out; }
+@keyframes lensPop { 0% { transform: scale(0.6) rotate(-12deg); } 70% { transform: scale(1.18) rotate(4deg); } 100% { transform: none; } }
+#lens .lens-lg { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 10px; max-width: 300px; padding: 6px 10px; border-radius: 10px; font-size: 11.5px; font-weight: 700; color: #e8d9b4; animation: lensIn 0.25s ease-out; }
+@keyframes lensIn { from { opacity: 0; transform: translateY(8px); } }
+#lens .lg-i { display: inline-flex; align-items: center; gap: 4px; }
+#lens .lg-i i { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(255, 240, 210, 0.35); }
+#lens .lg-i i.front { height: 0; width: 16px; border: 0; border-top: 2.5px dashed #ff785a; border-radius: 0; }
+#lens .lg-i i.sup { height: 0; width: 16px; border: 0; border-top: 2px dashed #f0cf86; border-radius: 0; }
+@media (prefers-reduced-motion: reduce) { #lens .lens-b.on .ic, #lens .lens-lg { animation: none; } }
+
+/* ---------- 战报卡动态插画 ---------- */
+.nw-art.na { position: relative; overflow: hidden; --na-c: #8c6a35; background: #1c1510; }
+.na > * { position: absolute; pointer-events: none; }
+.na-bg { inset: 0; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 60%; }
+.na.pt .na-bg { object-position: 50% 25%; }
+.na-rays { left: 50%; top: 46%; width: 260px; height: 260px; margin: -130px 0 0 -130px; opacity: 0; border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 238, 190, 0.38) 0deg 7deg, rgba(255, 238, 190, 0) 7deg 22deg);
+  -webkit-mask: radial-gradient(circle, #000 18%, transparent 68%); mask: radial-gradient(circle, #000 18%, transparent 68%); }
+.na-glow { left: 50%; top: 46%; width: 160px; height: 160px; margin: -80px 0 0 -80px; border-radius: 50%; opacity: 0.5;
+  background: radial-gradient(circle, rgba(255, 244, 210, 1), rgba(255, 214, 140, 0.55) 32%, rgba(255, 200, 120, 0) 66%); mix-blend-mode: screen; }
+.na.pt .na-glow { opacity: 0; }
+.na-ring { left: 50%; top: 50%; width: 90px; height: 90px; margin: -45px 0 0 -45px; border-radius: 50%; border: 3px solid rgba(255, 230, 180, 0.9); opacity: 0; }
+.na[data-motion="alarm"] .na-ring { border-color: rgba(255, 110, 90, 0.95); }
+.na[data-motion="alarm"] .na-glow { background: radial-gradient(circle, rgba(255, 150, 120, 0.9), rgba(200, 40, 30, 0.5) 45%, transparent 70%); }
+.na-ico { left: 50%; top: 46%; width: 84px; height: 84px; margin: -42px 0 0 -42px; color: #fff3d9; filter: drop-shadow(5px 7px 0 rgba(0, 0, 0, 0.42)) drop-shadow(0 0 10px rgba(255, 230, 170, 0.35)); }
+.na-ico svg { width: 100%; height: 100%; display: block; }
+.na-fx { inset: 0; }
+.na-p { position: absolute; border-radius: 50%; margin: -2px 0 0 -2px; box-shadow: 0 0 6px currentColor; }
+.na-shine { top: -20%; bottom: -20%; left: 0; width: 60%; opacity: 0; background: linear-gradient(100deg, transparent 20%, rgba(255, 246, 220, 0.5) 50%, transparent 80%); }

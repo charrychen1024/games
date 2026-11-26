@@ -11,6 +11,7 @@ import { newsSfx, eventSfx, resultSfx, marchSfx, chime, alarm, click, isMuted, s
 import { dangerOf, eraOf } from './musicTheory';
 import { portrait } from './portrait';
 import { cardHand, cardArt, type GameCard, type Chip } from './cards';
+import { newsArt, type ArtCat } from './newsArt';
 import { resolveMonth, unificationProgress, unifierRole, type Answer } from '../core/turn';
 import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
 import { POLITIES } from '../data/factions';
@@ -25,6 +26,7 @@ import { yangzhouSiegeState } from '../data/presets';
 import { createGame } from '../data/scenario1644';
 import { polityOf } from '../core/regime';
 import { canSea } from '../core/military';
+import { LENSES, TONE_COLOR, TONE_NAME, TIER_COLOR, TIER_NAME, type LensId, type Tone, type StoreTier } from '../render/lens';
 import type { PendingChoice } from '../core/events';
 
 /** 从玩家一方看对方：stance(玩家, 对方) 为 overlord 表示玩家是对方的上级，对方即“下属” */
@@ -125,6 +127,7 @@ export class App {
     this.showTitle();
     (window as any).NM = this; // 调试与自动化测试入口
     (window as any).NM_nodePt = nodePt;
+    (window as any).NM_newsArt = newsArt;
     (window as any).NM_presets = { createGame, yangzhouSiegeState, name: nodeName };
     (window as any).NM_audio = audioState;
     // 自动化测试：直接打一场指定的仗
@@ -400,6 +403,7 @@ export class App {
     if (this.forcedModal && /^[1-9]$/.test(e.key)) { ($(`#modal .opt[data-choice="${+e.key - 1}"]`) as HTMLElement | null)?.click(); return; }
     if (!this.s || this.resolving || !$('#modal').classList.contains('hidden')) return;
     if (e.key === 'r' || e.key === 'R') this.toggleReport();
+    if (e.key === 'l' || e.key === 'L') { const k = LENSES.findIndex(l => l.id === this.lens); this.setLens(LENSES[(k + 1) % LENSES.length].id); return; }
     // 政令台快捷键 1—9
     if (/^[1-9]$/.test(e.key) && !$('#cmddock').classList.contains('hidden')) { ($(`#cmddock .dk-btn[data-key="${e.key}"]`) as HTMLElement | null)?.click(); return; }
     const sel = this.map.view.selectedArmy;
@@ -596,7 +600,32 @@ export class App {
   }
 
   /* ================= 顶栏 ================= */
-  renderAll() { this.renderTop(); this.renderOrders(); this.refreshPanel(); this.updatePlanned(); this.renderArmyBar(); }
+  renderAll() { this.renderTop(); this.renderOrders(); this.refreshPanel(); this.updatePlanned(); this.renderArmyBar(); this.renderLens(); }
+
+  /** 地图图层：右下角三枚按钮，选中者上方附一行图例；L 键轮换 */
+  lens: LensId = (() => { try { const v = localStorage.getItem('nanming:lens'); return v === 'war' || v === 'econ' ? v : 'faction'; } catch { return 'faction'; } })();
+  setLens(id: LensId, announce = true) {
+    if (id === this.lens && this.map.view.lens === id) return;
+    this.lens = id; this.map.view.lens = id;
+    try { localStorage.setItem('nanming:lens', id); } catch { /* 偏好只在本次有效 */ }
+    this.renderLens();
+    if (announce) { click(); this.toast(`图层：${LENSES.find(l => l.id === id)!.name}`, LENSES.find(l => l.id === id)!.icon); }
+  }
+  renderLens() {
+    const el = clear($('#lens'));
+    el.classList.toggle('hidden', !this.s);
+    this.map.view.lens = this.lens;
+    const legend = this.lens === 'war'
+      ? (['self', 'ally', 'war', 'truce', 'neutral'] as Tone[]).map(t => h('span', { class: 'lg-i' }, h('i', { style: { background: TONE_COLOR[t] } }), TONE_NAME[t])).concat([h('span', { class: 'lg-i' }, h('i', { class: 'front' }), '前线')])
+      : this.lens === 'econ'
+        ? (['ample', 'ok', 'low', 'crit'] as StoreTier[]).map(t => h('span', { class: 'lg-i' }, h('i', { style: { background: TIER_COLOR[t] } }), TIER_NAME[t])).concat([h('span', { class: 'lg-i' }, h('i', { class: 'sup' }), '粮台')])
+        : null;
+    if (legend) el.append(h('div', { class: 'lens-lg hud' }, ...legend));
+    el.append(h('div', { class: 'lens-row hud', role: 'radiogroup', 'aria-label': '地图图层' }, ...LENSES.map(l => h('button', {
+      class: 'lens-b' + (l.id === this.lens ? ' on' : ''), 'data-lens': l.id, role: 'radio', 'aria-checked': String(l.id === this.lens), 'data-tip': l.tip,
+      onclick: () => this.setLens(l.id),
+    }, ic(l.icon), h('span', null, l.name)))));
+  }
 
   /** 月末结算期间按住顶栏旧数 */
   holdPills = false;
@@ -1652,7 +1681,8 @@ export class App {
       const COL: Record<string, string> = { 急报: '#b5342a', 军报: '#7d1a12', 史事: '#8c6a35', 线索: '#3f6f8f', 内政: '#5f8a3a', 交涉: '#2f6f8f', 人事: '#6a4a8a', 易主: '#b5342a' };
       let i = -1, timer = 0, paused = false;
       const bar = h('i');
-      const art = h('img', { class: 'nw-art', alt: '', draggable: 'false' }) as HTMLImageElement;
+      const artFx = newsArt();
+      const art = artFx.el;
       const cat = h('span', { class: 'nw-cat' }), count = h('span', { class: 'nw-count' });
       const hl = h('div', { class: 'nw-hl' }), more = h('div', { class: 'nw-more' }), seals = h('div', { class: 'nw-seals' });
       const card = h('div', { class: 'nw-card hud', onclick: () => next(), onmouseenter: () => { paused = true; }, onmouseleave: () => { paused = false; } }, art, h('div', { class: 'nw-body' }, h('div', { class: 'nw-top' }, cat, count), hl, more, seals), h('div', { class: 'nw-prog' }, bar));
@@ -1684,7 +1714,7 @@ export class App {
       let ended = false;
       const done = (all = false) => {
         if (ended) return; ended = true;
-        clearInterval(timer); cancelPend(); window.removeEventListener('keydown', onKey, true);
+        clearInterval(timer); cancelPend(); artFx.stop(); window.removeEventListener('keydown', onKey, true);
         gsap.to(el, { opacity: 0, y: 30, duration: 0.3, onComplete: () => { el.remove(); resolve(all); } });
         this.map.target = { x: home.x, y: home.y, z: home.z };
       };
@@ -1699,9 +1729,9 @@ export class App {
         const ctrl = node ? s.factions[s.cities[node].controller] : undefined;
         // 插画：提到的人物用其像，否则按类别作画
         const who = Object.values(s.chars).filter(x => x.status !== 'offstage' && r.text.includes(x.name)).sort((a, b) => r.text.indexOf(a.name) - r.text.indexOf(b.name))[0];
-        art.src = who && (c === '人事' || c === '史事' || c === '交涉') ? portrait(who, s.factions[who.faction]?.color ?? '#6a5a48', s.factions[who.faction]?.polity ?? 'none')
-          : cardArt(CAT_ICON[c] ?? 'info', c === '易主' && ctrl ? ctrl.color : COL[c] ?? '#8c6a35', k);
-        art.classList.toggle('pt', !!who && (c === '人事' || c === '史事' || c === '交涉'));
+        const usePt = !!who && (c === '人事' || c === '史事' || c === '交涉');
+        artFx.show({ cat: c as ArtCat, icon: CAT_ICON[c] ?? 'info', color: c === '易主' && ctrl ? ctrl.color : COL[c] ?? '#8c6a35', seed: k,
+          portrait: usePt ? portrait(who, s.factions[who.faction]?.color ?? '#6a5a48', s.factions[who.faction]?.polity ?? 'none') : undefined });
         clear(cat).append(ic(CAT_ICON[c] ?? 'info'), c);
         cat.style.background = c === '易主' && ctrl ? ctrl.color : COL[c] ?? '#8c6a35';
         count.textContent = `${k + 1} / ${top.length}`;
@@ -1724,7 +1754,6 @@ export class App {
         if (isReduced()) gsap.fromTo(card, { opacity: 0 }, { opacity: 1, duration: 0.15 });
         else {
           gsap.fromTo(card, { x: 60, opacity: 0, rotateY: -25 }, { x: 0, opacity: 1, rotateY: 0, duration: 0.45, ease: 'back.out(1.5)' });
-          gsap.fromTo(art, { scale: 1.25 }, { scale: 1, duration: 3.2, ease: 'none' });
         }
         // 镜头、地图动效与声音：按这条军报的事件原因与我方关系（见 newsFx.ts）
         const plan = planNews(s, r);

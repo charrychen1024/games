@@ -8,8 +8,8 @@ import { hoverPluck, stampSfx } from './audio';
 const artCache = new Map<string, string>();
 
 /** 卡面插画：主题色晕染 + 远山 + 大图标 + 云纹边框 */
-export function cardArt(icon: string, color: string, seed = 0): string {
-  const key = icon + color + seed;
+export function cardArt(icon: string, color: string, seed = 0, bare = false): string {
+  const key = icon + color + seed + (bare ? ':bare' : '');
   const hit = artCache.get(key);
   if (hit) return hit;
   const W = 150, H = 104;
@@ -29,13 +29,15 @@ export function cardArt(icon: string, color: string, seed = 0): string {
     for (let x = 0; x <= W; x += 10) g.lineTo(x, y - Math.abs(Math.sin((x + seed * 13 + k * 40) / 23)) * 16 - Math.sin((x + k * 7) / 9) * 3);
     g.lineTo(W, H); g.fill();
   }
-  // 大图标（墨色投影 + 金色）
+  // 大图标（墨色投影 + 金色）；bare 时只画底景，图标另由动画层画
+  if (!bare) {
   g.save(); g.translate(W / 2, H * 0.48);
   const p = iconPath(icon);
   g.scale(58 / 512, 58 / 512); g.translate(-256, -256);
   g.fillStyle = 'rgba(0,0,0,0.45)'; g.translate(14, 18); g.fill(p); g.translate(-14, -18);
   g.fillStyle = '#fff3d9'; g.fill(p);
   g.restore();
+  }
   // 边框
   g.strokeStyle = 'rgba(30,20,10,0.6)'; g.lineWidth = 2; g.strokeRect(1, 1, W - 2, H - 2);
   g.strokeStyle = 'rgba(240,207,134,0.6)'; g.lineWidth = 1; g.strokeRect(4, 4, W - 8, H - 8);

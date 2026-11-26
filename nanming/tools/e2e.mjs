@@ -26,7 +26,7 @@ async function nextMonth(manualBattle = false, probe = null) {
   const before = await text('#date-label');
   await page.click('#btn-next');
   const t0 = Date.now();
-  let battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false, marched = 0, siegeProbe = null;
+  let battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false, newsArtMotion = '', marched = 0, siegeProbe = null;
   while (Date.now() - t0 < 150000) {
     if (await visible('[data-choice]')) {
       if (probe && !probe.done) {
@@ -68,6 +68,7 @@ async function nextMonth(manualBattle = false, probe = null) {
     marched = Math.max(marched, await page.evaluate(() => Object.keys(NM.map.view.anim?.paths ?? {}).length).catch(() => 0));
     if (await visible('#news-skip')) {
       newsSeen = true;
+      if (!newsArtMotion) newsArtMotion = await page.evaluate(() => document.querySelector('#news .na')?.dataset.motion ?? '');
       if (probe && !probe.enter) {
         // 视听审查 4：焦点在“看全部军情”上按回车，执行的是这个按钮，不是翻到下一条
         probe.enter = true;
@@ -81,7 +82,7 @@ async function nextMonth(manualBattle = false, probe = null) {
     await wait(150);
   }
   await wait(200);
-  return { before, after: await text('#date-label'), battles, choices, battleScene, newsSeen, marched, siegeProbe };
+  return { before, after: await text('#date-label'), battles, choices, battleScene, newsSeen, newsArtMotion, marched, siegeProbe };
 }
 
 try {
@@ -189,6 +190,15 @@ try {
   check('强制决断：Tab 焦点留在弹窗内', probe.focusIn === true, JSON.stringify(probe));
   check('强制决断：点背景不关闭', probe.bg === true, JSON.stringify(probe));
   check('本月战报逐条播放过', m1.newsSeen, JSON.stringify(m1));
+  check('战报插画按类别带动作', /^(alarm|clash|stamp|drift|hammer|portrait|radiance|search)$/.test(m1.newsArtMotion), m1.newsArtMotion);
+  // 地图图层：右下角切换，L 键轮换
+  await page.click('[data-lens="war"]'); await wait(200);
+  const lw = await page.evaluate(() => NM.map.view.lens);
+  await page.keyboard.press('l'); await wait(200);
+  const le = await page.evaluate(() => NM.map.view.lens);
+  const legend = await page.locator('#lens .lens-lg .lg-i').count();
+  await page.keyboard.press('l'); await wait(200);
+  check('地图图层：点军情、按 L 换到钱粮并附图例、再按回到势力', lw === 'war' && le === 'econ' && legend >= 4 && (await page.evaluate(() => NM.map.view.lens)) === 'faction', `${lw} ${le} ${legend}`);
   check('每条战报都有配声', !!probe.cardSound, JSON.stringify(probe));
   check('月末军队沿路行进有动画', m1.marched > 0, JSON.stringify(m1));
   await wait(300);
