@@ -487,14 +487,11 @@ button:disabled { cursor: default; }
 .pick-cards { display: flex; gap: 14px; perspective: 900px; margin-top: auto; }
 .pcard { transition: transform 0.18s ease, box-shadow 0.15s, border-color 0.15s; width: 196px; padding: 16px 14px 14px; border-radius: 14px; border: 1.5px solid rgba(217, 173, 91, 0.45); background: linear-gradient(180deg, rgba(42, 32, 25, 0.96), rgba(20, 15, 11, 0.97));
   display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; position: relative; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6); }
-.pcard::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 5px; border-radius: 14px 14px 0 0; background: var(--fc); }
-.pcard:hover { transform: translateY(-10px); border-color: var(--gold); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.7), 0 0 24px color-mix(in srgb, var(--fc) 60%, transparent); }
-.pcard.on { transform: translateY(-14px) scale(1.04); border-color: var(--gold-2); box-shadow: 0 0 0 2px var(--gold-2), 0 20px 44px rgba(0, 0, 0, 0.7), 0 0 36px color-mix(in srgb, var(--fc) 70%, transparent); }
-.pseal { width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--fc) 70%, #fff), var(--fc) 55%, color-mix(in srgb, var(--fc) 60%, #000));
+.pcard:hover { transform: translateY(-10px); border-color: var(--gold); }
+.pcard.on { transform: translateY(-14px) scale(1.04); border-color: var(--gold-2); }
+.pseal { width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center; background: transparent;
   border: 3px solid #f0cf86; box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.6); }
 .pseal i { font-style: normal; font-family: var(--brush); font-size: 46px; color: #fff6e2; text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5); }
-.pcard.on .pseal { animation: sealpulse 1.4s ease-in-out infinite; }
-@keyframes sealpulse { 50% { box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.4), 0 0 26px var(--fc); } }
 .pname { font-family: var(--brush); font-size: 28px; color: var(--gold-2); line-height: 1.1; margin-top: 4px; }
 .plead { color: var(--dim); font-size: 12.5px; }
 .pstars { display: flex; gap: 3px; }

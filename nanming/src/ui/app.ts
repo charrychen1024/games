@@ -224,7 +224,8 @@ export class App {
       const leader = st.chars[f.leader];
       const n = citiesOf(st, info.id).length;
       const troops = citiesOf(st, info.id).reduce((m, c) => m + c.garrison, 0) + Object.values(st.armies).filter(a => a.faction === info.id).reduce((m, a) => m + a.troops, 0);
-      const card = h('button', { class: 'pcard', id: 'pick-' + info.id, style: { '--fc': f.color } as any,
+      // 择一方卡片：素净的墨底金边，不按势力上色（2026-11-26 玩家要求复原）
+      const card = h('button', { class: 'pcard', id: 'pick-' + info.id,
         onclick: () => { click(); chosen = info.id; cards.querySelectorAll('.pcard').forEach(c => c.classList.toggle('on', c === card)); go.disabled = false; goLabel.textContent = `以${f.short}开局`; },
         ondblclick: () => begin(info.id),
         onmouseenter: () => { hoverPluck(PICK.indexOf(info)); this.map.view.highlight = info.id; this.map.flyTo(f.capital, info.z); } },
