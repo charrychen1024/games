@@ -520,6 +520,22 @@ try {
     check(`${K}打完，记为亲征`, res.manual === true && res.result.over === true);
   }
 
+  console.log('战报里的史事卡');
+  await page.evaluate(() => NM.start(NM_presets.createGame('zheng', 3), false));
+  await wait(500);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { const s = NM.s; s.reports.push({ turn: s.turn, cat: '史事', node: 'zhenjiang', text: '【郑成功北伐南京】郑成功率舟师入长江，进围南京。' }); NM.reportTurn = s.turn; NM.showSplash(); });
+  await wait(900);
+  check('战报里的史事卡配会动的小画（不只是人物头像）', await page.evaluate(async () => {
+    const c = document.querySelector('#news canvas'); if (!c) return false;
+    const g = c.getContext('2d'); const a = g.getImageData(0, 0, c.width, c.height).data;
+    await new Promise(r => setTimeout(r, 500));
+    const d = g.getImageData(0, 0, c.width, c.height).data; for (let i = 0; i < a.length; i += 16) if (a[i] !== d[i]) return true; return false;
+  }));
+  await page.click('#news-skip').catch(() => {}); await wait(500);
+  await page.evaluate(() => NM.closePanel?.());
+  if (await visible('#report:not(.hidden)')) await page.keyboard.press('Escape');
+
   console.log('拥挤处点选');
   await page.evaluate(() => NM.start(NM_presets.createGame('hongguang', 1), false));
   await wait(500);

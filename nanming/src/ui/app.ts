@@ -1954,7 +1954,8 @@ export class App {
         const who = Object.values(s.chars).filter(x => x.status !== 'offstage' && r.text.includes(x.name)).sort((a, b) => r.text.indexOf(a.name) - r.text.indexOf(b.name))[0];
         const usePt = !!who && (c === '人事' || c === '史事' || c === '交涉');
         // 城破、献城、议和、交兵：换成会动的小画
-        const scn = this.reportScene(r, k + s.turn, false) ?? undefined;
+        // 史事、线索也配会动的小画（与抉择弹窗同一套按内容定景），不再只显示人物头像
+        const scn = this.reportScene(r, k + s.turn, c === '史事' || c === '线索') ?? undefined;
         artFx.show({ cat: c as ArtCat, icon: CAT_ICON[c] ?? 'info', color: c === '易主' && ctrl ? ctrl.color : COL[c] ?? '#8c6a35', seed: k, scene: scn,
           portrait: !scn && usePt ? portrait(who, s.factions[who.faction]?.color ?? '#6a5a48', s.factions[who.faction]?.polity ?? 'none') : undefined });
         clear(cat).append(ic(CAT_ICON[c] ?? 'info'), c);
