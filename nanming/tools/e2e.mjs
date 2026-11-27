@@ -554,6 +554,14 @@ try {
   await wait(500);
   const dense = await page.evaluate(() => ['quanzhou', 'anping', 'xiamen', 'zhangzhou'].map(id => NM.map.layout.get(id)?.tier ?? 'none'));
   check('闽南四城挤在一起：放大两倍时都画出城郭与城名，不缩成被盖住的小点', dense.every(t => t === 'full' || t === 'small'), dense.join(','));
+  {
+    const at = await page.evaluate(() => { const m = NM.map, r = m.canvas.getBoundingClientRect(), sl = m.layout.get('quanzhou'); return [r.left + sl.sx, r.top + sl.sy - sl.w * 0.4]; });
+    const shapes = async () => { const seen = new Set(); for (let k = 0; k < 14; k++) { await page.mouse.move(at[0] + (k % 2 ? 1 : -1), at[1]); await wait(50); seen.add(await page.evaluate(() => ['quanzhou', 'anping', 'xiamen', 'zhangzhou'].map(i => { const sl = NM.map.layout.get(i); return sl ? Math.round(sl.sx) + ',' + Math.round(sl.sy) : '-'; }).join('|'))); } return seen.size; };
+    check('鼠标停在挪位的城郭上轻晃：城郭不来回跳动', await shapes() === 1);
+    await page.mouse.click(at[0], at[1]); await wait(400);
+    check('点选挪位的城后，城郭仍不跳动', await shapes() === 1 && await page.evaluate(() => NM.map.view.selected) === 'quanzhou');
+    await page.evaluate(() => NM.closePanel?.());
+  }
   await page.evaluate(() => NM.closePanel?.());
 
   console.log('拥挤处点选');

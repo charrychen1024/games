@@ -598,12 +598,15 @@ export class MapRenderer {
 
   layout: Map<string, NodeSlot> = new Map();
   stacks: ArmyStack[] = [];
+  /** 各城上一帧相对原处的挪位（以城郭宽为单位），下一帧先试它，免得布局来回跳 */
+  slotOffset = new Map<string, { x: number; y: number }>();
   /** 每支军队上一帧画在何处（世界坐标）：下一段动画从这里接着走 */
   shown: Record<string, Pt> = {};
 
   nodePriority(s: GameState, id: string, focus: Set<string> | null): number {
     const n = NODE[id], c = s.cities[id];
-    if (this.view.selected === id || this.view.hover === id) return 0;
+    // 悬停只高亮、不改摆放（否则城郭挪开、指针落空、又挪回来，来回跳动）；选中的城先摆
+    if (this.view.selected === id) return 0;
     if (this.view.targeting?.path?.includes(id)) return 1;
     const cap = c && s.factions[c.controller]?.capital === id && c.controller !== 'local';
     let p = cap ? 2 : s.sieges[id] ? 2.5 : n.major ? 3 : n.kind === 'city' ? 5 : n.kind === 'region' ? 4.5 : n.kind === 'port' ? 6 : 7;
@@ -648,19 +651,25 @@ export class MapRenderer {
       const movable = must || (!!c0 && topOfSafe(s, c0.controller) === s.player) || !!s.sieges[id] || type === 'capital' || z >= 2;
       tiers: for (const tier of ['full', 'small'] as const) {
         const w = EMBLEM_PX[type] * zk * (tier === 'small' ? 0.62 : 1) * Math.max(0.72, Math.min(1.25, depthAt(this.h, sy)));
-        const anchors = [{ x: 0, y: 0 }, ...(movable && !must ? calloutOffsets(w) : [])];
+        // 先试上一帧的位置（平移缩放时不无故换位），再试原处与旁边各处
+        const prev = this.slotOffset.get(id);
+        const home = { x: 0, y: 0 };
+        const anchors = [...(prev && movable ? [{ x: prev.x * w, y: prev.y * w }] : []), home, ...(movable ? calloutOffsets(w) : []), ...(must ? [home] : [])];
         for (const o of anchors) {
           const ex = sx + o.x, ey = sy + o.y;
           if (o.x || o.y) { if (ex < 20 || ex > this.w - 20 || ey < 60 || ey > this.h - 20) continue; }
           const em: Rect = [ex - w * 0.42, ey - w * 0.85, w * 0.84, w * 0.95];
           // 城名：先放在城下，放不下试右、左
           const cands: Rect[] = [[ex - lw / 2, ey + w * 0.12, lw, lh], [ex + w * 0.42 + 2, ey - w * 0.4 - lh / 2, lw, lh], [ex - w * 0.42 - 2 - lw, ey - w * 0.4 - lh / 2, lw, lh]];
-          if (!must && hit(em)) continue;
+          // 选中之城：旁边各处都摆不下时才压在原处
+          const last = o === anchors[anchors.length - 1];
+          if (hit(em) && !(must && last)) continue;
           const lab = cands.find(r => !hit(r)) ?? (must || pr <= 2.5 ? cands[0] : null);
-          if (!lab && (tier === 'full' || o.x || o.y)) continue;
+          if (!lab && (tier === 'full' || o.x || o.y) && !(must && last)) continue;
           placed.push(em);
           if (lab) placed.push(lab);
           slot = { id, sx: ex, sy: ey, w, tier, label: lab, fsize, big, sub, ...(o.x || o.y ? { ax: sx, ay: sy } : {}) };
+          this.slotOffset.set(id, { x: o.x / w, y: o.y / w });
           break tiers;
         }
       }
