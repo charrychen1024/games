@@ -19,7 +19,7 @@ page.on('console', m => { if (m.type() === 'error' && !m.text().includes('fonts.
 const wait = ms => page.waitForTimeout(ms);
 const visible = sel => page.locator(sel).first().isVisible().catch(() => false);
 const text = sel => page.locator(sel).first().innerText().catch(() => '');
-const armyXY = id => page.evaluate(id => { const m = NM.map; const h = m.armyHits.find(x => x.id === id); if (!h) return null; return [(h.x - m.cam.x) * m.cam.z + m.w / 2, (h.y - m.cam.y) * m.cam.z + m.h / 2]; }, id);
+const armyXY = id => page.evaluate(id => { const m = NM.map; const h = m.armyHits.find(x => x.id === id); if (!h) return null; return m.toScreen(h.x, h.y); }, id);
 
 /** 推进一个月：遇到史事抉择选第一项，遇到战斗交给部将自动打完 */
 async function nextMonth(manualBattle = false, probe = null) {
@@ -112,7 +112,7 @@ try {
   const au = await page.evaluate(() => NM_audio());
   check('声音已启动，地图配乐在排', au.running && au.scene === 'map' && au.scheduled > 0, JSON.stringify(au));
   // 直接用页面里暴露的投影：点南京
-  const nj = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('nanjing'); return [r.left + (p[0] - m.cam.x) * m.cam.z + m.w / 2, r.top + (p[1] - m.cam.y) * m.cam.z + m.h / 2]; });
+  const nj = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('nanjing'); return (q => [r.left + q[0], r.top + q[1]])(m.toScreen(p[0], p[1])); });
   await page.mouse.click(nj[0], nj[1]);
   await wait(300);
   check('点南京打开城池详情', (await text('#city-name')).includes('南京'), await text('#city-name'));
@@ -151,7 +151,7 @@ try {
     await wait(250);
     check('点军旗打开军队详情', (await text('#army-name')).includes('督师标营'));
     await page.click('#act-move');
-    const t = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('taiping'); return [r.left + (p[0] - m.cam.x) * m.cam.z + m.w / 2, r.top + (p[1] - m.cam.y) * m.cam.z + m.h / 2]; });
+    const t = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('taiping'); return (q => [r.left + q[0], r.top + q[1]])(m.toScreen(p[0], p[1])); });
     await page.mouse.move(t[0], t[1]);
     await wait(100);
     await page.mouse.click(t[0], t[1]);
@@ -162,7 +162,7 @@ try {
     await wait(200);
     check('己方军队有“粮台”按钮', await visible('#act-supply'));
     await page.click('#act-supply');
-    const zj = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('zhenjiang'); return [r.left + (p[0] - m.cam.x) * m.cam.z + m.w / 2, r.top + (p[1] - m.cam.y) * m.cam.z + m.h / 2]; });
+    const zj = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('zhenjiang'); return (q => [r.left + q[0], r.top + q[1]])(m.toScreen(p[0], p[1])); });
     await page.mouse.move(zj[0], zj[1]);
     await wait(100);
     await page.mouse.click(zj[0], zj[1]);
@@ -174,7 +174,7 @@ try {
   await wait(200);
   check('下属军镇显示号令按钮', await visible('#act-command-move'));
   await page.click('#act-command-move');
-  const cz = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('hezhou'); return [r.left + (p[0] - m.cam.x) * m.cam.z + m.w / 2, r.top + (p[1] - m.cam.y) * m.cam.z + m.h / 2]; });
+  const cz = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('hezhou'); return (q => [r.left + q[0], r.top + q[1]])(m.toScreen(p[0], p[1])); });
   await page.mouse.click(cz[0], cz[1]);
   await wait(250);
   check('号令弹窗显示服从估计与原因', (await text('#cmd-est')).includes('服从度'));
@@ -355,7 +355,7 @@ try {
   await page.click('#ring-march');
   await page.evaluate(() => NM.map.focus('xuzhou', 1.3));
   await wait(300);
-  const bd = await page.evaluate(() => { const m = NM.map; const p = NM_nodePt('baoding'); return [(p[0] - m.cam.x) * m.cam.z + m.w / 2, (p[1] - m.cam.y) * m.cam.z + m.h / 2]; });
+  const bd = await page.evaluate(() => { const m = NM.map; const p = NM_nodePt('baoding'); return m.toScreen(p[0], p[1]); });
   await page.mouse.move(bd[0], bd[1]);
   await wait(300);
   check('瞄准时显示行程日数与月数', /\d+\s*日/.test(await text('#tooltip')) && (await text('#tooltip')).includes('个月'), await text('#tooltip'));
@@ -369,7 +369,7 @@ try {
   // 右键直接出征
   await page.click('#armybar .achip[data-army="a_shi"]');
   await wait(300);
-  const yzp = await page.evaluate(() => { const m = NM.map; NM.map.focus('nanjing', 2); const p = NM_nodePt('yangzhou'); return [(p[0] - m.cam.x) * m.cam.z + m.w / 2, (p[1] - m.cam.y) * m.cam.z + m.h / 2]; });
+  const yzp = await page.evaluate(() => { const m = NM.map; NM.map.focus('nanjing', 2); const p = NM_nodePt('yangzhou'); return m.toScreen(p[0], p[1]); });
   await wait(200);
   const under = await page.evaluate(([x, y]) => { const p = NM.map.pick(x, y); return p?.kind === 'node' ? NM_presets.name(p.id) : ''; }, yzp);
   await page.mouse.click(yzp[0], yzp[1], { button: 'right' });

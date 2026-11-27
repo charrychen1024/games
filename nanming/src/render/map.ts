@@ -8,7 +8,7 @@ import type { Route } from '../core/types';
 import { loadRelief, paintRelief, grainTile, snapRiver, type Relief } from './relief';
 import reliefUrl from '../assets/relief.png?url';
 import { POLITIES } from '../data/factions';
-import { project, WORLD_W, WORLD_H, worldToScreen, screenToWorld, type Camera } from './projection';
+import { project, WORLD_W, WORLD_H, worldToScreen, screenToWorld, flatV, flatW, flatZ, depthAt, type Camera } from './projection';
 import { makeRng } from '../core/rng';
 import { friendly } from '../core/state';
 import { routeBetween, neighbors } from '../data/geography';
@@ -104,6 +104,9 @@ export class MapRenderer {
   w = 0;
   h = 0;
   relief: Relief | null = null;
+  flats: HTMLCanvasElement[] | null = null;
+  /** 世界坐标 → 屏幕坐标（含 2.5D 倾斜） */
+  toScreen(x: number, y: number): [number, number] { return worldToScreen(this.cam, this.w, this.h, x, y); }
   reliefReady = false;
   /** 入谷后的河道（世界坐标） */
   riverPaths: { width: number; pts: Pt[] }[] = [];
@@ -268,26 +271,49 @@ export class MapRenderer {
     }
     const { ctx: g, cam } = this;
     const s = this.view.state;
+    // 2.5D：平面先画到两张平面画布（远处一张分辨率低些；每张都在浏览器 GPU 加速的面积上限之内），
+    // 再逐行条带贴上屏幕（远小近大）
+    const vTop = flatV(this.h, 0), vBot = flatV(this.h, this.h), vMid = flatV(this.h, this.h * 0.45);
+    const Z = flatZ(cam);
+    const tiles = [{ v0: vTop, v1: vMid, wMax: flatW(this.h, vTop), fd: this.dpr / flatW(this.h, vMid) }, { v0: vMid, v1: vBot, wMax: flatW(this.h, vMid), fd: this.dpr }];
+    this.flats ??= [document.createElement('canvas'), document.createElement('canvas')];
+    const made = tiles.map((t, i) => {
+      const TW = Math.ceil(this.w * t.wMax) + 4, TH = Math.ceil(t.v1 - t.v0) + 4;
+      const c = this.flats![i];
+      const pw = Math.round(TW * t.fd), ph = Math.round(TH * t.fd);
+      if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
+      const f = c.getContext('2d')!;
+      f.setTransform(t.fd, 0, 0, t.fd, 0, 0);
+      f.fillStyle = SEA; f.fillRect(0, 0, TW, TH);
+      f.save();
+      f.translate(TW / 2, 2 - t.v0);
+      f.scale(Z, Z);
+      f.translate(-cam.x, -cam.y);
+      f.imageSmoothingQuality = 'high';
+      f.drawImage(this.base, 0, 0, WORLD_W, WORLD_H);
+      if (s) this.drawTerritory(f, s);
+      this.drawWater(f);
+      if (s) this.drawRoutes(f, s, time);
+      if (s && this.lens === 'econ') this.drawSupply(f, s, time);
+      this.drawCloudShadows(f, time);
+      f.restore();
+      return { ...t, c, TW };
+    });
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'low';
+    const Hd = this.canvas.height, Wd = this.canvas.width, band = 2;
+    for (let y0 = 0; y0 < Hd; y0 += band) {
+      const y1 = Math.min(Hd, y0 + band);
+      const v0 = flatV(this.h, y0 / this.dpr), v1 = flatV(this.h, y1 / this.dpr);
+      const t = (v0 + v1) / 2 < vMid ? made[0] : made[1];
+      const sw = this.w * flatW(this.h, (v0 + v1) / 2) * t.fd;
+      g.drawImage(t.c, (t.TW * t.fd - sw) / 2, (v0 - t.v0 + 2) * t.fd, sw, (v1 - v0) * t.fd, 0, y0, Wd, y1 - y0);
+    }
+    // 远处薄雾：越往上越淡入天色
+    const haze = g.createLinearGradient(0, 0, 0, Hd * 0.32);
+    haze.addColorStop(0, 'rgba(226,218,196,0.42)'); haze.addColorStop(0.5, 'rgba(226,218,196,0.14)'); haze.addColorStop(1, 'rgba(226,218,196,0)');
+    g.fillStyle = haze; g.fillRect(0, 0, Wd, Hd * 0.32);
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    g.save();
-    g.translate(this.w / 2, this.h / 2);
-    g.scale(cam.z, cam.z);
-    g.translate(-cam.x, -cam.y);
-    g.fillStyle = SEA;
-    g.fillRect(cam.x - this.w / cam.z, cam.y - this.h / cam.z, this.w * 2 / cam.z, this.h * 2 / cam.z);
-    g.restore();
-    g.save();
-    g.translate(this.w / 2, this.h / 2);
-    g.scale(cam.z, cam.z);
-    g.translate(-cam.x, -cam.y);
-    g.imageSmoothingQuality = 'high';
-    g.drawImage(this.base, 0, 0, WORLD_W, WORLD_H);
-    if (s) this.drawTerritory(g, s);
-    this.drawWater(g);
-    if (s) this.drawRoutes(g, s, time);
-    if (s && this.lens === 'econ') this.drawSupply(g, s, time);
-    this.drawCloudShadows(g, time);
-    g.restore();
     if (s) this.drawScreen(g, s, time);
   }
 
@@ -613,7 +639,7 @@ export class MapRenderer {
       const lh = fsize + 7 + (sub ? 15 : 0);
       let slot: NodeSlot | null = null;
       for (const tier of ['full', 'small'] as const) {
-        const w = EMBLEM_PX[type] * zk * (tier === 'small' ? 0.62 : 1);
+        const w = EMBLEM_PX[type] * zk * (tier === 'small' ? 0.62 : 1) * Math.max(0.72, Math.min(1.25, depthAt(this.h, sy)));
         const em: Rect = [sx - w * 0.42, sy - w * 0.85, w * 0.84, w * 0.95];
         // 城名：先放在城下，放不下试右、左
         const cands: Rect[] = [[sx - lw / 2, sy + w * 0.12, lw, lh], [sx + w * 0.42 + 2, sy - w * 0.4 - lh / 2, lw, lh], [sx - w * 0.42 - 2 - lw, sy - w * 0.4 - lh / 2, lw, lh]];
@@ -711,6 +737,11 @@ export class MapRenderer {
         if (isSel || isHover) { g.strokeStyle = 'rgba(255,214,120,0.95)'; g.lineWidth = 2; g.beginPath(); g.arc(sl.sx, sl.sy, 8 + (isSel ? Math.sin(time / 260) * 1.5 : 0), 0, Math.PI * 2); g.stroke(); }
       } else {
         const w = sl.w, type = emblemTypeOf(s, sl.id);
+        // 投影：日在左上，影落右下（显出城郭的高）
+        const sh = g.createRadialGradient(sl.sx + w * 0.22, sl.sy + w * 0.02, 0, sl.sx + w * 0.22, sl.sy + w * 0.02, w * 0.62);
+        sh.addColorStop(0, 'rgba(10,6,2,0.38)'); sh.addColorStop(1, 'rgba(10,6,2,0)');
+        g.save(); g.translate(sl.sx + w * 0.22, sl.sy + w * 0.02); g.scale(1, 0.3); g.translate(-(sl.sx + w * 0.22), -(sl.sy + w * 0.02));
+        g.fillStyle = sh; g.beginPath(); g.arc(sl.sx + w * 0.22, sl.sy + w * 0.02, w * 0.62, 0, Math.PI * 2); g.fill(); g.restore();
         // 落地色盘
         g.beginPath(); g.ellipse(sl.sx, sl.sy, w * 0.5, w * 0.16, 0, 0, Math.PI * 2);
         g.fillStyle = col; g.globalAlpha *= 0.9; g.fill(); g.globalAlpha = dim ? 0.45 : 1;
@@ -792,6 +823,10 @@ export class MapRenderer {
       if (st.march) this.drawColumn(g, st, f?.color ?? '#888', s.armies[st.armies[0]]);
       g.translate(st.sx, st.sy);
       if (st.moving) g.translate(0, Math.sin(this.lastTime / 180 + st.sx) * 1.2);
+      const dk = Math.max(0.78, Math.min(1.2, depthAt(this.h, st.sy)));
+      g.scale(dk, dk);
+      // 落地之影
+      g.fillStyle = 'rgba(10,6,2,0.3)'; g.beginPath(); g.ellipse(5, 13, 12, 3.6, 0, 0, Math.PI * 2); g.fill();
       if (sel) { g.fillStyle = 'rgba(255,214,120,0.5)'; g.beginPath(); g.arc(0, 0, 16, 0, Math.PI * 2); g.fill(); }
       // 叠放的后几面
       for (let k = Math.min(2, st.armies.length - 1); k >= 1; k--) {
@@ -1196,12 +1231,13 @@ export class MapRenderer {
     this.clamp();
   }
   pan(dx: number, dy: number) { this.target = null; this.cam.x -= dx / this.cam.z; this.cam.y -= dy / this.cam.z; this.clamp(); }
-  minZoom() { return Math.max(this.w / WORLD_W, this.h / WORLD_H, 0.5); }
+  minZoom() { const k = flatZ({ x: 0, y: 0, z: 1 }); return Math.max(this.w / WORLD_W, (flatV(this.h, this.h) - flatV(this.h, 0)) / k / WORLD_H, 0.5); }
   clamp() {
     this.cam.z = Math.max(this.minZoom(), this.cam.z);
-    const hw = this.w / 2 / this.cam.z, hh = this.h / 2 / this.cam.z;
-    this.cam.x = Math.max(hw, Math.min(WORLD_W - hw, this.cam.x));
-    this.cam.y = Math.max(hh, Math.min(WORLD_H - hh, this.cam.y));
+    const Z = flatZ(this.cam);
+    const hw = this.w / 2 / Z * flatW(this.h, 0), up = -flatV(this.h, 0) / Z, down = flatV(this.h, this.h) / Z;
+    this.cam.x = Math.max(Math.min(hw, WORLD_W / 2), Math.min(WORLD_W - Math.min(hw, WORLD_W / 2), this.cam.x));
+    this.cam.y = Math.max(up, Math.min(WORLD_H - down, this.cam.y));
   }
   /** 平滑飞到某城 */
   flyTo(id: string, z?: number) {

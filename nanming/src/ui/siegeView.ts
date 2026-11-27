@@ -19,6 +19,12 @@ export class SiegeView extends RtView {
     this.sim = sim;
     this.flipDef = false;
   }
+  /** 2.5D 俯角：攻城时墙后之物（马道、女墙、城中屋宇）按离墙远近抬高，像从高处望去，墙顶与城中露出来 */
+  static OB = 0.9;
+  P(x: number, y: number, z = 0): [number, number, number] {
+    if (this.o.me === 'att' && y < WALL_Y) z += (WALL_Y - y) * SiegeView.OB;
+    return super.P(x, y, z);
+  }
   cam(): Camera { return this.o.me === 'att' ? { near: 1340, far: 0, k: 0.25, kx: 1.2, ky: 1 } : { near: 0, far: 400, k: 0.2, kx: 1.05, ky: 1.05 }; }
 
   /** 一营画在哪里：攻方入城、登城之后，画在缺口、城头上，不再被城墙挡住；巷战时城中守军也现出来 */
@@ -172,8 +178,17 @@ export class SiegeView extends RtView {
       // 墙顶马道
       this.polyW(g, [[x0, Y, WALL_H], [x1, Y, WALL_H], [x1, Yi, WALL_H], [x0, Yi, WALL_H]], 'rgba(196,186,160,0.97)', ink(0.8, 0.5), 0.8);
       if (att) {
-        // 内侧女墙（矮墙）
-        this.polyW(g, [[x0, Yi, WALL_H], [x1, Yi, WALL_H], [x1, Yi, WALL_H + 4], [x0, Yi, WALL_H + 4]], 'rgba(150,142,124,0.9)');
+        // 马道铺石：两道纵缝、错缝横线（俯角下看得见墙顶）
+        g.strokeStyle = ink(0.6, 0.16); g.lineWidth = 0.6;
+        for (const yy of [Y - WALK / 3, Y - WALK * 2 / 3]) { const [a1, b1] = this.P(x0, yy, WALL_H), [a2, b2] = this.P(x1, yy, WALL_H); g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b2); g.stroke(); }
+        for (let xx = x0 + 12; xx < x1; xx += 24) { const [a1, b1] = this.P(xx, Y, WALL_H), [a2, b2] = this.P(xx + 4, Yi, WALL_H); g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b2); g.stroke(); }
+        // 内侧女墙（矮墙）：顶面与朝外的一面
+        this.polyW(g, [[x0, Yi, WALL_H + 6], [x1, Yi, WALL_H + 6], [x1, Yi - 3, WALL_H + 6], [x0, Yi - 3, WALL_H + 6]], 'rgba(176,168,148,0.95)');
+        this.polyW(g, [[x0, Yi, WALL_H], [x1, Yi, WALL_H], [x1, Yi, WALL_H + 6], [x0, Yi, WALL_H + 6]], 'rgba(132,124,108,0.95)', ink(0.8, 0.4), 0.6);
+        // 墙影：日在城后偏左，墙根外落一道影
+        const sh = g.createLinearGradient(0, this.P(mid, Y, 0)[1], 0, this.P(mid, Y + 26, 0)[1]);
+        sh.addColorStop(0, 'rgba(30,24,16,0.30)'); sh.addColorStop(1, 'rgba(30,24,16,0)');
+        if (!breach) this.polyW(g, [[x0, Y, 0], [x1, Y, 0], [x1 + 10, Y + 26, 0], [x0 + 10, Y + 26, 0]], sh);
       }
       // 墙面
       this.polyW(g, [[x0, faceY, 0], [x1, faceY, 0], [x1, faceY, WALL_H], [x0, faceY, WALL_H]], face, ink(0.85, 0.6), 1);
@@ -256,8 +271,11 @@ export class SiegeView extends RtView {
   drawBastion(g: CanvasRenderingContext2D, x: number) {
     const hw = 22, Y = WALL_Y, Yo = WALL_Y + BASTION, H = WALL_H + 2;
     const side = x < 500 ? x + hw : x - hw;     // 朝画面中央的一侧看得见
-    this.polyW(g, [[side, Y, 0], [side, Yo, 0], [side, Yo, H], [side, Y, H]], '#857e6c', ink(0.85, 0.6), 0.9);
-    this.polyW(g, [[x - hw, Yo, H], [x + hw, Yo, H], [x + hw, Y, H], [x - hw, Y, H]], 'rgba(196,186,160,0.97)', ink(0.8, 0.5), 0.8);
+    // 投影：墩台右侧落在墙面上，墙根外再落一块
+    this.polyW(g, [[x + hw, Y, 0], [x + hw + 16, Y, 0], [x + hw + 16, Y, H - 18], [x + hw, Y, H]], 'rgba(30,24,16,0.22)');
+    this.polyW(g, [[x - hw, Yo, 0], [x + hw, Yo, 0], [x + hw + 12, Yo + 20, 0], [x - hw + 12, Yo + 20, 0]], 'rgba(30,24,16,0.2)');
+    this.polyW(g, [[side, Y, 0], [side, Yo, 0], [side, Yo, H], [side, Y, H]], side > x ? '#6f695a' : '#958e7b', ink(0.85, 0.6), 0.9);
+    this.polyW(g, [[x - hw, Yo, H], [x + hw, Yo, H], [x + hw, Y - WALK, H], [x - hw, Y - WALK, H]], 'rgba(204,194,168,0.97)', ink(0.8, 0.5), 0.8);
     const fg = g.createLinearGradient(0, this.P(x, Yo, H)[1], 0, this.P(x, Yo, 0)[1]);
     fg.addColorStop(0, '#aaa390'); fg.addColorStop(1, '#827b6a');
     this.polyW(g, [[x - hw, Yo, 0], [x + hw, Yo, 0], [x + hw, Yo, H], [x - hw, Yo, H]], fg, ink(0.85, 0.65), 1);
