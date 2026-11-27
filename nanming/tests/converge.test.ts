@@ -25,21 +25,26 @@ describe('多路合攻', () => {
 });
 
 describe('进攻途中被敌城挡住', () => {
-  it('先攻挡路的临清，记住原定目标大名；拿下临清后接着开往大名', () => {
+  it('先攻挡路的临清，记住原定目标东昌；拿下临清后接着开往东昌', () => {
+    // 北京往东昌须经临清（绕路太远）：到临清城下即停，先攻临清
     let s = createGame('qing', 1);
-    const { s: s1, battles } = month(s, ['a_duoduo', 'a_ajige'].map((id, i) => ({ id: 'o' + i, kind: 'army' as const, army: id, order: { kind: 'move' as const, target: 'daming', attack: true } })));
+    const { s: s1, battles } = month(s, ['a_duoduo', 'a_ajige'].map((id, i) => ({ id: 'o' + i, kind: 'army' as const, army: id, order: { kind: 'move' as const, target: 'dongchang', attack: true } })));
     expect(battles.some(b => b.node === 'linqing')).toBe(true);
     const a = s1.armies.a_duoduo;
     if (s1.cities.linqing.controller === 'qing') {
-      // 已拿下临清：军令应已改回开往大名
-      expect(a.order.kind === 'move' ? a.order.target : a.order.kind === 'siege' ? a.order.target : '').toBe('daming');
+      expect(a.order.kind === 'move' ? a.order.target : a.order.kind === 'siege' ? a.order.target : '').toBe('dongchang');
     } else {
-      expect(a.order).toMatchObject({ kind: 'siege', target: 'linqing', then: 'daming' });
+      expect(a.order).toMatchObject({ kind: 'siege', target: 'linqing', then: 'dongchang' });
     }
-    expect(s1.reports.some(r => r.text.includes('临清') && r.text.includes('大名') && /阻|挡/.test(r.text))).toBe(true);
+    expect(s1.reports.some(r => r.text.includes('临清') && r.text.includes('东昌') && /阻|挡/.test(r.text))).toBe(true);
     s = s1;
-    for (let i = 0; i < 4 && s.cities.daming.controller !== 'qing'; i++) s = runMonthAuto(s, []);
-    expect(['qing'].includes(s.cities.daming.controller) || s.armies.a_duoduo?.location === 'daming' || s.sieges.daming).toBeTruthy();
+    for (let i = 0; i < 4 && s.cities.dongchang.controller !== 'qing'; i++) s = runMonthAuto(s, []);
+    expect(['qing'].includes(s.cities.dongchang.controller) || s.armies.a_duoduo?.location === 'dongchang' || s.sieges.dongchang).toBeTruthy();
+  });
+  it('能绕开的敌城就绕开：北京往大名有直路，不再去临清城下停住', () => {
+    const s = createGame('qing', 1);
+    const { s: s1 } = month(s, [{ id: 'o0', kind: 'army' as const, army: 'a_duoduo', order: { kind: 'move' as const, target: 'daming', attack: true } }]);
+    expect(s1.sieges.linqing?.armies.includes('a_duoduo') ?? false).toBe(false);
   });
 });
 

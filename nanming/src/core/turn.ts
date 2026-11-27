@@ -7,7 +7,7 @@ import { autoResolve } from './battle';
 import { applyOrder, resolveMissions, orderBudget, orderCost, answerCounter } from './orders';
 import { proposalsFor, applyOffer, aiDiplomacyTalks } from './diplomacy';
 import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects, tidyPeople, unrest } from './military';
-import { runEconomy } from './economy';
+import { runEconomy, arriveConvoys } from './economy';
 import { aiOrders, aiFixSupply, aiPayArmies, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy } from './ai';
 import { dueEvents, fireEvent, choiceFor, applyChoice, type EventDef, type PendingChoice } from './events';
 import { EVENTS } from '../data/events';
@@ -78,6 +78,8 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   aiFixSupply(s);
   aiPayArmies(s);
   for (const f of Object.keys(s.factions).sort()) if (f !== s.player) for (const o of aiOrders(s, f)) applyOrder(s, f, o);
+  // 在途钱粮到期送达
+  arriveConvoys(s);
 
   // 二、交涉：使者回报（对方开条件由玩家定夺）→ 各家来使（求和、议盟、招抚）→ 各家之间的外交动向
   for (const c of resolveMissions(s)) {

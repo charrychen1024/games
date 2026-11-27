@@ -142,6 +142,7 @@ try {
   await page.locator('.gsel-list .gsel-opt[data-value="zhenjiang"]').click();
   await wait(150);
   check('选中镇江', (await text('#tr-to')).includes('镇江'));
+  check('调拨写明路程、何时运到与途耗', /路程 \d+ 日，本月送到/.test(await text('#tr-status')) && /途耗/.test(await text('#tr-status')), await text('#tr-status'));
   await page.click('#tr-ok');
   await wait(200);
   check('调拨加入本月命令', (await text('#orders')).includes('镇江'), await text('#orders'));
@@ -153,6 +154,7 @@ try {
     await page.mouse.click(sxy[0], sxy[1]);
     await wait(250);
     check('点军旗打开军队详情', (await text('#army-name')).includes('督师标营'));
+    check('驻在粮台的军队不写粮道一行', !(await visible('#army-supplyline')));
     check('军队面板主将头像在右上角', await page.evaluate(() => { const g = document.querySelector('#panel .banner #army-cmd img'); const b = document.querySelector('#panel .banner'); if (!g || !b) return false; const r = g.getBoundingClientRect(), q = b.getBoundingClientRect(); return r.left > q.left + q.width / 2 && r.top < q.top + 40; }), await text('#army-cmd'));
     await page.click('#act-move');
     const t = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('taiping'); return (q => [r.left + q[0], r.top + q[1]])(m.toScreen(p[0], p[1])); });

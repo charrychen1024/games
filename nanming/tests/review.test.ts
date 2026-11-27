@@ -1,4 +1,5 @@
 /* 《十二回合试玩独立审查》（2026-11-23）所列问题的回归测试。编号对应审查文档。 */
+import { supplyRoute } from '../src/core/route';
 import { describe, it, expect } from 'vitest';
 import { createState1644 } from '../src/data/scenario1644';
 import { yangzhouSiegeState } from '../src/data/presets';
@@ -134,7 +135,9 @@ describe('06 被围之城，城外钱粮送不进去', () => {
     clearYangzhouSiege(s);
     expect(validateOrder(s, 'hongguang', o)).toBeNull();
     applyOrder(s, 'hongguang', o);
-    expect(s.cities.yangzhou.grain).toBe(g + 10000);
+    // 沿粮道运到，扣途耗（南京到扬州路近，耗得少）
+    expect(s.cities.yangzhou.grain).toBe(g + Math.round(10000 * supplyRoute(s, 'hongguang', 'nanjing', 'yangzhou').keep));
+    expect(s.cities.yangzhou.grain - g).toBeGreaterThan(9500);
   });
   it('被围之城也调不出去', () => {
     const s = yangzhouSiegeState();

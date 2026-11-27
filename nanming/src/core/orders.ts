@@ -1,4 +1,5 @@
 /* 命令：校验、执行、留痕。玩家与电脑用同一套命令。 */
+import { supplyRoute, armyRoute, noRouteReason } from './route';
 import type { ArmyOrder, City, GameState, Order } from './types';
 import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance, treasuryOf } from './state';
 import { setArmyOrder, capture } from './military';
@@ -115,7 +116,7 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
     case 'army': {
       const a = s.armies[o.army];
       if (!a || a.faction !== f) return '不是你的军队';
-      if (o.order.kind !== 'hold' && shortestPath(a.location, o.order.target, a.mix.navy >= 0.3) === null) return '无路可达';
+      if (o.order.kind !== 'hold') { const st = a.progress > 0 && a.path.length ? a.path[0] : a.location; if (armyRoute(s, a.faction, st, o.order.target, a.mix.navy >= 0.3) === null) return noRouteReason(s, a.faction, st, o.order.target, a.mix.navy >= 0.3); }
       return null;
     }
     case 'supply': {
@@ -258,11 +259,25 @@ export function applyOrder(s: GameState, f: string, o: Order) {
     }
     case 'transfer': {
       const txt = describeOrder(s, o);
-      if (o.grain) { bump(s, o.from, 'grain', -o.grain, `调粮往${nodeName(o.to)}`, src); bump(s, o.to, 'grain', o.grain, `自${nodeName(o.from)}调来粮`, src); }
-      if (o.silver) { bump(s, o.from, 'silver', -o.silver, `调银往${nodeName(o.to)}`, src); bump(s, o.to, 'silver', o.silver, `自${nodeName(o.from)}调来银`, src); }
+      // 沿实际可走的粮道运送：粮按路程折耗（银不耗）；三十日内当月送到，路远的在途若干月
+      const leg = supplyRoute(s, f, o.from, o.to);
+      if (leg.reason) { if (isPlayer) report(s, { cat: '内政', node: o.from, text: `${txt}未能起运：${leg.reason}。`, src }); break; }
+      const grain = Math.min(o.grain, s.cities[o.from].grain), silver = Math.min(o.silver, s.cities[o.from].silver);
+      const arrive = Math.round(grain * leg.keep), lost = grain - arrive;
+      const months = Math.max(1, Math.ceil(leg.days / 30));
+      const loss = lost ? `，途耗 ${lost} 石` : '';
+      if (grain) bump(s, o.from, 'grain', -grain, `调粮往${nodeName(o.to)}${months > 1 ? `（在途约 ${months} 月）` : ''}`, src);
+      if (silver) bump(s, o.from, 'silver', -silver, `调银往${nodeName(o.to)}`, src);
+      if (months > 1) {
+        (s.convoys ??= []).push({ id: o.id, faction: f, from: o.from, to: o.to, grain: arrive, silver, sent: s.turn, arrive: s.turn + months - 1, days: leg.days, path: leg.path });
+        if (isPlayer) report(s, { cat: '内政', node: o.from, text: `${txt}，路程 ${leg.days} 日，约 ${months} 个月后运到${loss}。`, src });
+        break;
+      }
+      if (arrive) bump(s, o.to, 'grain', arrive, `自${nodeName(o.from)}调来粮${loss ? `（${loss.slice(1)}）` : ''}`, src);
+      if (silver) bump(s, o.to, 'silver', silver, `自${nodeName(o.from)}调来银`, src);
       const to = s.cities[o.to];
       if (to.controller !== f && s.factions[to.controller]?.overlord === f) adjustLoyalty(s, to.controller, Math.min(8, Math.round((o.grain / 4 + o.silver) / 4000)), '朝廷拨给钱粮');
-      if (isPlayer) report(s, { cat: '内政', node: o.to, text: `${txt}。`, src });
+      if (isPlayer) report(s, { cat: '内政', node: o.to, text: `${txt}${leg.days ? `，路程 ${leg.days} 日` : ''}${loss}。`, src });
       break;
     }
     case 'trade': {

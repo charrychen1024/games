@@ -12,7 +12,8 @@ import { project, WORLD_W, WORLD_H, worldToScreen, screenToWorld, flatV, flatW, 
 import { makeRng } from '../core/rng';
 import { spreadApart, fanSlots, nearestHit, calloutOffsets } from './declutter';
 import { friendly } from '../core/state';
-import { routeBetween, neighbors } from '../data/geography';
+import { routeBetween, neighbors, shortestPath } from '../data/geography';
+import { supplyRoute } from '../core/route';
 import land from '../data/geo-land.json';
 import { ICONS } from '../ui/icons';
 import { emblem, flagAnchor, drawWavingFlag, type EmblemType } from './emblems';
@@ -300,6 +301,11 @@ export class MapRenderer {
       this.drawWater(f);
       if (s) this.drawRoutes(f, s, time);
       if (s && this.lens === 'econ') this.drawSupply(f, s, time);
+      else if (s && this.view.selectedArmy) {
+        // 选中本方（或下属）军队：画出它的粮道，断在哪里一目了然
+        const a = s.armies[this.view.selectedArmy];
+        if (a && topOfSafe(s, a.faction) === s.player && a.supply && s.cities[a.supply] && !(a.location === a.supply && !a.progress)) this.supplyLine(f, s, a, time);
+      }
       this.drawCloudShadows(f, time);
       f.restore();
       return { ...t, c, TW };
@@ -423,17 +429,38 @@ export class MapRenderer {
       g.setLineDash([]); g.lineDashOffset = 0;
     }
   }
+  /** 一支军队的粮道：沿实际运粮路线从粮台画到军中（金色流动虚线）；粮道断了，按地理最短路画到断点并标红叉 */
+  supplyLine(g: CanvasRenderingContext2D, s: GameState, a: Army, time: number) {
+    const z = this.cam.z;
+    const leg = supplyRoute(s, a.faction, a.supply, a.location);
+    const tail: Pt[] = a.progress > 0 && a.path.length ? [armyPt(a)] : [];
+    let pts: Pt[], broken: Pt | null = null;
+    if (!leg.reason) pts = [...roadPts(a.supply, leg.path), ...tail];
+    else {
+      const geo = shortestPath(a.supply, a.location, true) ?? shortestPath(a.supply, a.location, false) ?? [];
+      const k = leg.at ? geo.indexOf(leg.at) : -1;
+      pts = roadPts(a.supply, k >= 0 ? geo.slice(0, k + 1) : geo);
+      broken = leg.at ? nodePt(leg.at) : pts[pts.length - 1];
+    }
+    if (pts.length < 2) return;
+    g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+    g.strokeStyle = 'rgba(30,20,10,0.55)'; g.lineWidth = 4 / z; g.stroke();
+    g.strokeStyle = broken ? 'rgba(220,90,70,0.9)' : '#f0cf86'; g.lineWidth = 2 / z; g.setLineDash([6 / z, 5 / z]); g.lineDashOffset = -time / 40 / z; g.stroke();
+    g.setLineDash([]); g.lineDashOffset = 0;
+    if (broken) {
+      const [bx, by] = broken, r = 7 / z;
+      g.strokeStyle = '#e0503c'; g.lineWidth = 3 / z;
+      g.beginPath(); g.moveTo(bx - r, by - r); g.lineTo(bx + r, by + r); g.moveTo(bx + r, by - r); g.lineTo(bx - r, by + r); g.stroke();
+    }
+  }
   /** 钱粮图层：本方各军到粮台的金色虚线（流动方向从粮台往军中） */
   drawSupply(g: CanvasRenderingContext2D, s: GameState, time: number) {
     const z = this.cam.z;
     for (const a of Object.values(s.armies)) {
       if (a.faction !== s.player || !a.supply || !s.cities[a.supply]) continue;
-      const [ax, ay] = armyPt(a), [dx, dy] = nodePt(a.supply);
-      if (Math.hypot(ax - dx, ay - dy) < 2) continue;
-      g.beginPath(); g.moveTo(dx, dy); g.lineTo(ax, ay);
-      g.strokeStyle = 'rgba(30,20,10,0.55)'; g.lineWidth = 4 / z; g.stroke();
-      g.strokeStyle = '#f0cf86'; g.lineWidth = 2 / z; g.setLineDash([6 / z, 5 / z]); g.lineDashOffset = -time / 40 / z; g.stroke();
-      g.setLineDash([]); g.lineDashOffset = 0;
+      const [dx, dy] = nodePt(a.supply);
+      if (a.location === a.supply && !a.progress) continue;
+      this.supplyLine(g, s, a, time);
       g.beginPath(); g.arc(dx, dy, 5 / z, 0, Math.PI * 2); g.fillStyle = '#f0cf86'; g.fill();
     }
   }
@@ -519,51 +546,52 @@ export class MapRenderer {
     // 行军路线
     const dash = -(time / 60) % 12;
     const drawPath = (a: Army, path: string[], planned: boolean) => {
-      const pts: Pt[] = [armyPt(a), ...path.map(nodePt)];
-      if (pts.length < 2) return;
+      if (!path.length) return;
       const mine = topOfSafe(s, a.faction) === s.player;
       const col = planned ? 'rgba(181,52,42,0.95)' : mine ? 'rgba(181,52,42,0.75)' : 'rgba(30,25,20,0.6)';
       const zz = this.cam.z;
-      // 每一段的天数，用来找“每月走到哪里”
-      const days: number[] = [];
+      // 每一段沿驿路弧线画（与路网同一条曲线），第一段从军队所在处截起；每段的天数用来找“每月走到哪里”
+      const segs: { q: number[]; days: number }[] = [];
       let prev = a.location;
-      path.forEach((p, i) => { const r = routeBetween(prev, p); days.push((r?.days ?? 1) - (i === 0 ? a.progress : 0)); prev = p; });
-      const at = (d: number): Pt | null => {
+      path.forEach((p, i) => {
+        const r = routeBetween(prev, p);
+        const full = legCurve(prev, p) ?? [...nodePt(prev), ...nodePt(prev), ...nodePt(p)];
+        const t0 = i === 0 && a.progress > 0 ? legFrac(a) : 0;
+        segs.push({ q: t0 ? subQuad(full, t0, 1) : full, days: Math.max(0, (r?.days ?? 1) - (i === 0 ? a.progress : 0)) });
+        prev = p;
+      });
+      const locate = (d: number): [number, number] | null => {
         let acc = 0;
-        for (let i = 0; i < days.length; i++) {
-          if (acc + days[i] >= d) { const f = Math.max(0, Math.min(1, (d - acc) / Math.max(1, days[i]))); const [x1, y1] = pts[i], [x2, y2] = pts[i + 1]; return [x1 + (x2 - x1) * f, y1 + (y2 - y1) * f]; }
-          acc += days[i];
-        }
+        for (let i = 0; i < segs.length; i++) { if (acc + segs[i].days >= d) return [i, Math.max(0, Math.min(1, (d - acc) / Math.max(1, segs[i].days)))]; acc += segs[i].days; }
         return null;
       };
-      const total = days.reduce((m, x) => m + x, 0);
-      const cut = at(30);
+      const at = (d: number): Pt | null => { const l = locate(d); return l ? quadAt(segs[l[0]].q, l[1]) : null; };
+      const curve = (q: number[], first: boolean) => { if (first) g.moveTo(q[0], q[1]); g.quadraticCurveTo(q[2], q[3], q[4], q[5]); };
+      const total = segs.reduce((m, x) => m + x.days, 0);
       g.strokeStyle = col;
       g.lineWidth = (planned ? 3.4 : 2.4) / zz;
       if (mine || planned) {
         // 本月可达：实线；以后：虚线
-        let acc = 0, done = false;
-        g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
-        for (let i = 0; i < days.length && !done; i++) {
-          if (acc + days[i] >= 30 && cut) { g.lineTo(cut[0], cut[1]); done = true; } else g.lineTo(pts[i + 1][0], pts[i + 1][1]);
-          acc += days[i];
-        }
+        const cut = total > 30 ? locate(30) : null;
+        g.beginPath();
+        segs.forEach((sg, i) => { if (cut && i > cut[0]) return; curve(cut && i === cut[0] ? subQuad(sg.q, 0, cut[1]) : sg.q, i === 0); });
         g.stroke();
-        if (cut && total > 30) {
+        if (cut) {
           g.setLineDash([9 / zz, 6 / zz]); g.lineDashOffset = dash / zz;
-          g.beginPath(); g.moveTo(cut[0], cut[1]);
-          acc = 0; for (let i = 0; i < days.length; i++) { acc += days[i]; if (acc > 30) g.lineTo(pts[i + 1][0], pts[i + 1][1]); }
+          g.beginPath();
+          segs.forEach((sg, i) => { if (i < cut[0]) return; curve(i === cut[0] ? subQuad(sg.q, cut[1], 1) : sg.q, i === cut[0]); });
           g.stroke(); g.setLineDash([]);
         }
         for (let m = 1; m * 30 < total; m++) { const p = at(m * 30); if (p) this.monthMarks.push([p[0], p[1], m]); }
-        if (planned || mine) this.etaMarks.push([pts[pts.length - 1][0], pts[pts.length - 1][1], total]);
+        const end = segs[segs.length - 1].q;
+        this.etaMarks.push([end[4], end[5], total]);
       } else {
         g.setLineDash([9 / zz, 6 / zz]); g.lineDashOffset = dash / zz;
-        g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke();
+        g.beginPath(); segs.forEach((sg, i) => curve(sg.q, i === 0)); g.stroke();
         g.setLineDash([]);
       }
-      const [x1, y1] = pts[pts.length - 2], [x2, y2] = pts[pts.length - 1];
-      arrowHead(g, x1, y1, x2, y2, col, 13 / zz);
+      const q = segs[segs.length - 1].q;
+      arrowHead(g, q[2], q[3], q[4], q[5], col, 13 / zz);
     };
     for (const a of Object.values(s.armies)) if (a.path.length && (visibleArmy(s, a))) drawPath(a, a.path, false);
     for (const p of this.view.planned) { const a = s.armies[p.army]; if (a) drawPath(a, p.path, true); }
@@ -1051,11 +1079,9 @@ export class MapRenderer {
       const [sx, sy] = sl ? [sl.sx, sl.sy - sl.w * 0.4] : worldToScreen(this.cam, this.w, this.h, wx, wy);
       if (f.kind === 'envoy' && f.path && f.path.length > 1) {
         // 使者：一骑持节沿路而去，身后扬起尘土
-        const pts = f.path.map(id => { const sl2 = this.layout.get(id); return sl2 ? [sl2.sx, sl2.sy] as Pt : worldToScreen(this.cam, this.w, this.h, ...nodePt(id)); });
-        const seg = Math.min(pts.length - 2, Math.floor(p * (pts.length - 1)));
-        const q = p * (pts.length - 1) - seg;
-        const x = pts[seg][0] + (pts[seg + 1][0] - pts[seg][0]) * q, y = pts[seg][1] + (pts[seg + 1][1] - pts[seg][1]) * q;
-        const dir = pts[seg + 1][0] >= pts[seg][0] ? 1 : -1;
+        const pts = roadPts(f.path[0], f.path.slice(1)).map(([wx, wy]) => worldToScreen(this.cam, this.w, this.h, wx, wy) as Pt);
+        const [[x, y], [ddx]] = along(pts, p);
+        const dir = ddx >= 0 ? 1 : -1;
         g.save();
         g.globalAlpha = p > 0.9 ? (1 - p) / 0.1 : 1;
         g.strokeStyle = 'rgba(240,207,134,0.45)'; g.lineWidth = 1.5; g.setLineDash([2, 5]);
@@ -1074,10 +1100,8 @@ export class MapRenderer {
       }
       if (f.kind === 'convoy' && f.path && f.path.length > 1) {
         // 粮车沿驿路而行
-        const pts = f.path.map(id => { const sl2 = this.layout.get(id); return sl2 ? [sl2.sx, sl2.sy] as Pt : worldToScreen(this.cam, this.w, this.h, ...nodePt(id)); });
-        const seg = Math.min(pts.length - 2, Math.floor(p * (pts.length - 1)));
-        const q = p * (pts.length - 1) - seg;
-        const x = pts[seg][0] + (pts[seg + 1][0] - pts[seg][0]) * q, y = pts[seg][1] + (pts[seg + 1][1] - pts[seg][1]) * q;
+        const pts = roadPts(f.path[0], f.path.slice(1)).map(([wx, wy]) => worldToScreen(this.cam, this.w, this.h, wx, wy) as Pt);
+        const [[x, y]] = along(pts, p);
         g.save();
         g.globalAlpha = p > 0.85 ? (1 - p) / 0.15 : 1;
         g.strokeStyle = 'rgba(240,207,134,0.6)'; g.lineWidth = 2; g.setLineDash([4, 4]);
@@ -1339,8 +1363,9 @@ export function emblemTypeOf(s: GameState, id: string): EmblemType {
 export function nodePt(id: string): Pt { const n = NODE[id]; return P(n.lon, n.lat); }
 export function armyPt(a: Army): Pt {
   if (a.progress > 0 && a.path.length) {
-    const r = routeBetween(a.location, a.path[0]);
-    const f = r ? Math.min(0.95, a.progress / r.days) : 0;
+    const q = legCurve(a.location, a.path[0]);
+    const f = legFrac(a);
+    if (q) return quadAt(q, f);
     const [ax, ay] = nodePt(a.location), [bx, by] = nodePt(a.path[0]);
     return [ax + (bx - ax) * f, ay + (by - ay) * f];
   }
@@ -1394,6 +1419,42 @@ function routeCurve(r: Route): number[] {
     curveCache.set(r, q);
   }
   return q;
+}
+/** 从 from 走到 to 的那段驿路弧线（按行进方向排好端点） */
+export function legCurve(from: string, to: string): number[] | null {
+  const r = routeBetween(from, to);
+  if (!r) return null;
+  const q = routeCurve(r);
+  return r.a === from ? q : [q[4], q[5], q[2], q[3], q[0], q[1]];
+}
+export function quadAt(q: number[], t: number): Pt {
+  const u = 1 - t;
+  return [u * u * q[0] + 2 * u * t * q[2] + t * t * q[4], u * u * q[1] + 2 * u * t * q[3] + t * t * q[5]];
+}
+/** 截取弧线 t0..t1 一段，仍是二次曲线 */
+export function subQuad(q: number[], t0: number, t1: number): number[] {
+  const p0 = quadAt(q, t0), p2 = quadAt(q, t1);
+  const d = (t: number): Pt => [2 * (1 - t) * (q[2] - q[0]) + 2 * t * (q[4] - q[2]), 2 * (1 - t) * (q[3] - q[1]) + 2 * t * (q[5] - q[3])];
+  const d0 = d(t0), h = (t1 - t0) / 2;
+  return [p0[0], p0[1], p0[0] + d0[0] * h, p0[1] + d0[1] * h, p2[0], p2[1]];
+}
+/** 行军中所在：沿弧线走过的比例（画面上最多走到九成五，免得像已入城） */
+export function legFrac(a: { location: string; progress: number; path: string[] }): number {
+  const r = a.progress > 0 && a.path.length ? routeBetween(a.location, a.path[0]) : undefined;
+  return r ? Math.min(0.95, a.progress / r.days) : 0;
+}
+/** 沿驿路的取样点：from 出发（t0 起），逐站走过 nodes。动画与粮车沿此而行 */
+export function roadPts(from: string, nodes: string[], t0 = 0, per = 10): Pt[] {
+  const out: Pt[] = [];
+  let c = from;
+  nodes.forEach((n, i) => {
+    const q = legCurve(c, n);
+    const a = i === 0 ? t0 : 0;
+    if (!q) { if (!out.length) out.push(nodePt(c)); out.push(nodePt(n)); c = n; return; }
+    for (let k = out.length ? 1 : 0; k <= per; k++) out.push(quadAt(q, a + (1 - a) * k / per));
+    c = n;
+  });
+  return out.length ? out : [nodePt(from)];
 }
 function smoothPts(pts: Pt[]): Pt[] {
   const out: Pt[] = [];

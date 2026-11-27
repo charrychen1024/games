@@ -1,6 +1,6 @@
 /* 界面主控：游戏式 HUD。图标 + 大数字 + 短标签，细节点开才看。 */
 import type { GameState, Order, NodeId, ArmyOrder, Policy, ReportEntry, LedgerEntry, Character, ReportCat } from '../core/types';
-import { MapRenderer, nodePt, armyPt } from '../render/map';
+import { MapRenderer, nodePt, armyPt, roadPts, legFrac } from '../render/map';
 import { h, $, clear, fmt, wan, signed } from './dom';
 import { iconSvg } from './icons';
 import { gameSelect, stepper, closeSelects, type SelOpt } from './widgets';
@@ -23,13 +23,14 @@ import { isReduced, setReducedMotion, reducedSystem } from './motion';
 import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
-import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
-import { projectOrders, validateQueued, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
+import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, supplyLegOf, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
+import { projectOrders, validateQueued, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { yangzhouSiegeState } from '../data/presets';
 import { createGame } from '../data/scenario1644';
 import { polityOf } from '../core/regime';
 import { canSea, siegeAwe } from '../core/military';
+import { armyRoute, routeNotes, noRouteReason, supplyRoute } from '../core/route';
 import { LENSES, TONE_COLOR, TONE_NAME, TIER_COLOR, TIER_NAME, type LensId, type Tone, type StoreTier } from '../render/lens';
 import type { PendingChoice } from '../core/events';
 
@@ -348,7 +349,7 @@ export class App {
       if (this.map.view.targeting && p?.kind === 'node') {
         const a = this.s.armies[this.map.view.targeting.army];
         const start = a.progress > 0 && a.path.length ? a.path[0] : a.location;
-        const path = shortestPath(start, p.id, canSea(a));
+        const path = armyRoute(this.s, a.faction, start, p.id, canSea(a));
         this.map.view.targeting.path = path ? (a.progress > 0 && a.path.length ? [a.path[0], ...path] : path) : null;
       }
       this.showTip(p, e.clientX, e.clientY);
@@ -479,12 +480,14 @@ export class App {
         const a = s.armies[this.map.view.targeting.army];
         const err = supplyChoiceError(s, a, p.id);
         const k = 1 - forageShare(s, a.faction);
-        const g = Math.round(a.troops * GRAIN_PER_SOLDIER * k), v = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * k);
+        const leg = err ? null : supplyLegOf(s, { faction: a.faction, location: a.location, supply: p.id });
+        const g = Math.round(a.troops * GRAIN_PER_SOLDIER * k / (leg?.keep || 1)), v = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * k);
         tip.className = 'hud march';
         clear(tip).append(h('div', { class: 'tt-h' }, h('span', { style: { width: '12px', height: '12px', borderRadius: '50%', background: f.color, display: 'inline-block', border: '1.5px solid #fff' } }), n.name, h('small', null, c.controller === a.faction ? '本方' : f.short)));
         if (err) tip.append(h('div', { class: 'mc-warn' }, ic('close'), err));
         else {
           tip.append(h('div', { class: 'tt-r' }, ic('grain'), h('b', null, `每月支粮 ${wan(g)} 石`)), h('div', { class: 'tt-r' }, ic('silver'), h('b', null, `饷银 ${wan(v)} 两`)));
+          if (leg?.days) tip.append(h('div', { class: 'tt-r' }, ic('transfer'), `转运 ${leg.days} 日到军中，途耗约 ${Math.round((1 - leg.keep) * 100)}%（已算在支粮内）`));
           tip.append(h('div', { class: c.controller === a.faction ? 'tt-r' : 'mc-warn' }, ic('factions'), c.controller === a.faction ? `出自本方${n.name}府库（现存粮 ${wan(c.grain)} 石、银 ${wan(c.silver)} 两）` : `出自${f.name}府库：驻在此城才由其就地支应`));
           tip.append(h('div', { class: 'mc-act' }, p.id === a.supply ? '现为粮台' : '左键：设为粮台'));
         }
@@ -492,7 +495,7 @@ export class App {
         const mi = this.marchInfo(this.map.view.targeting.army, p.id);
         tip.className = 'hud march';
         clear(tip).append(h('div', { class: 'tt-h' }, h('span', { style: { width: '12px', height: '12px', borderRadius: '50%', background: f.color, display: 'inline-block', border: '1.5px solid #fff' } }), n.name, h('small', null, `${f.short}${mi.rel === 'war' ? ' · 敌' : mi.rel === 'friend' ? ' · 友' : ' · 未交战'}`)));
-        if (!mi.path) tip.append(h('div', { class: 'mc-warn' }, ic('close'), '无路可达'));
+        if (!mi.path) tip.append(h('div', { class: 'mc-warn' }, ic('close'), mi.why ?? '无路可达'));
         else {
           if (mi.blocked.length) {
             // 途中有敌城挡路：行军到第一座敌城即停，先写这一程
@@ -505,6 +508,7 @@ export class App {
             tip.append(h('div', { class: 'mc-days' }, h('b', null, String(mi.days)), ' 日', h('span', null, mi.days > 30 ? `约 ${Math.ceil(mi.days / 30)} 个月` : '本月可到')));
             if (mi.days > 30 && mi.reach) tip.append(h('div', { class: 'tt-r' }, ic('calendar'), h('b', null, `本月行至${nodeName(mi.reach)}`)));
           }
+          if (mi.via.length) tip.append(h('div', { class: 'mc-warn' }, ic('factions'), `借道${mi.via.map(v => `${nodeName(v)}（${s.factions[s.cities[v].controller]?.short ?? ''}）`).join('、')}：未交战之地，过境不停`));
           if (mi.land) tip.append(h('div', { class: 'mc-warn' }, ic('navy'), `须在${nodeName(mi.land)}舍舟登岸，水师改为步卒`));
           if (mi.rel === 'neutral') tip.append(h('div', { class: 'mc-warn' }, ic('war'), `与${s.factions[c.controller].short}未交战，进攻须宣战`));
           tip.append(h('div', { class: 'mc-act' }, mi.rel === 'war' ? '左键：进攻' : mi.rel === 'friend' ? '左键：开赴' : '左键：宣战或开赴'));
@@ -527,21 +531,22 @@ export class App {
   hideTip() { $('#tooltip').classList.add('hidden'); }
 
   /** 行军估算：天数、本月走到哪、途经敌城、与目标的关系 */
-  marchInfo(armyId: string, node: string): { path: string[] | null; days: number; reach: string | null; blocked: string[]; rel: 'war' | 'friend' | 'neutral'; land?: string | null } {
+  marchInfo(armyId: string, node: string): { path: string[] | null; days: number; reach: string | null; blocked: string[]; via: string[]; why?: string; rel: 'war' | 'friend' | 'neutral'; land?: string | null } {
     const s = this.s!, a = s.armies[armyId];
     const start = a.progress > 0 && a.path.length ? a.path[0] : a.location;
-    const p0 = shortestPath(start, node, canSea(a));
+    const p0 = armyRoute(s, a.faction, start, node, canSea(a));
     const path = p0 ? (a.progress > 0 && a.path.length ? [a.path[0], ...p0] : p0) : null;
     const ctrl = s.cities[node].controller;
     const rel = hostile(s, a.faction, ctrl) ? 'war' : friendly(s, a.faction, ctrl) ? 'friend' : 'neutral';
-    if (!path) return { path, days: 0, reach: null, blocked: [], rel };
+    if (!path) return { path, days: 0, reach: null, blocked: [], via: [], rel, why: noRouteReason(s, a.faction, start, node, canSea(a)) };
     const plan = marchPlan(a.location, path, a.progress);
     const reach = [...plan].reverse().find(x => x.day <= 30)?.node ?? null;
-    const blocked = path.slice(0, -1).filter(id => hostile(s, a.faction, s.cities[id]?.controller ?? '') && s.cities[id].garrison > 0);
+    // 途经敌城：到城下即停（与月结同一规矩）；中立之城借道
+    const { stops: blocked, via } = routeNotes(s, a.faction, path);
     // 水师途经陆路：要舍舟登岸
     let land: string | null = null;
     if (a.mix.navy > 0) { let c = a.location; for (const p of path) { if (routeBetween(c, p)?.kind === 'land') { land = c; break; } c = p; } }
-    return { path, days: plan.length ? plan[plan.length - 1].day : 0, reach, blocked, rel, land };
+    return { path, days: plan.length ? plan[plan.length - 1].day : 0, reach, blocked, via, rel, land };
   }
   /** 出征：敌城即进攻，友城即开赴，未交战则问是否宣战 */
   issueMarch(armyId: string, node: string, force?: 'move' | 'attack') {
@@ -549,7 +554,7 @@ export class App {
     if (!a) return;
     const vassal = a.faction !== s.player;
     const mi = this.marchInfo(armyId, node);
-    if (!mi.path) { this.toast('无路可达', 'close'); return; }
+    if (!mi.path) { this.toast(mi.why ?? '无路可达', 'close'); return; }
     if (node === a.location && mi.rel !== 'war') { this.addOrder({ id: this.newOrderId(), kind: 'army', army: armyId, order: { kind: 'hold' } }); return; }
     const send = (attack: boolean) => {
       const order = node === a.location && attack ? { kind: 'siege' as const, target: node, assault: true } : { kind: 'move' as const, target: node, attack };
@@ -657,7 +662,7 @@ export class App {
       case 'policy': m.addFx({ kind: 'card', node: o.node, img: cardArt(POLICY_ICON[o.policy], '#8c6a35', 0), text: POLICY_NAME[o.policy], dur: 2000 }); stamp(o.node, '政'); break;
       case 'recruit': m.addFx({ kind: 'march', node: o.node, color: fac.color, dur: 1800 }); m.addFx({ kind: 'float', node: o.node, text: `+${o.troops} 兵`, color: '#bfe6b7', dur: 1500, delay: 500 }); break;
       case 'appoint': { const c = s.chars[o.char]; m.addFx({ kind: 'card', node: o.node, img: portrait(c, fac.color, fac.polity), text: c.name, dur: 2000 }); stamp(o.node, '任'); break; }
-      case 'transfer': { const p = shortestPath(o.from, o.to, false); if (p) m.addFx({ kind: 'convoy', node: o.from, path: [o.from, ...p], text: o.grain ? 'grain' : 'silver', dur: 1600 }); stamp(o.from, '调'); break; }
+      case 'transfer': { const leg = supplyRoute(s, s.player, o.from, o.to); if (!leg.reason) m.addFx({ kind: 'convoy', node: o.from, path: [o.from, ...leg.path], text: o.grain ? 'grain' : 'silver', dur: 1600 + Math.min(1600, leg.path.length * 150) }); stamp(o.from, '调'); break; }
       case 'army': case 'command': {
         const a = s.armies[o.army];
         stamp(a?.location, o.kind === 'command' ? '令' : '军');
@@ -839,8 +844,9 @@ export class App {
       const id = o.kind === 'army' || o.kind === 'command' ? o.army : null;
       if (!ord || !id || ord.kind === 'hold') continue;
       const a = s.armies[id];
-      const p = shortestPath(a.location, ord.target, canSea(a));
-      if (p) planned.push({ army: id, path: p });
+      const st = a.progress > 0 && a.path.length ? a.path[0] : a.location;
+      const p = armyRoute(s, a.faction, st, ord.target, canSea(a));
+      if (p) planned.push({ army: id, path: a.progress > 0 && a.path.length ? [a.path[0], ...p] : p });
     }
     this.map.view.planned = planned;
   }
@@ -929,8 +935,9 @@ export class App {
     const wasHidden = panel.classList.contains('hidden');
     requestAnimationFrame(() => {
       if (wasHidden) { paper(); gsap.fromTo('#panel', { x: 50, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: 'power3.out' }); }
-      gsap.from('#panel .banner h2', { opacity: 0, x: -14, duration: 0.3, ease: 'power2.out' });
-      gsap.from('#panel .tile, #panel .act, #panel .unit, #panel .row', { opacity: 0, y: 8, duration: 0.25, stagger: 0.012, ease: 'power2.out' });
+      // 同一帧里重画两次时，两段入场动画会叠在一起：用 fromTo 写明终值，免得停在半透明
+      gsap.fromTo('#panel .banner h2', { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.3, ease: 'power2.out', clearProps: 'opacity,transform' });
+      gsap.fromTo('#panel .tile, #panel .act, #panel .unit, #panel .row', { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.25, stagger: 0.012, ease: 'power2.out', clearProps: 'opacity,transform' });
     });
     panel.className = 'hud';
     panel.append(h('div', { class: 'banner', style: { background: `linear-gradient(135deg, ${color}, ${shade(color, -0.5)})` } },
@@ -1259,6 +1266,13 @@ export class App {
       h('div', { class: 'row' }, ic('target'), h('span', { class: 't' }, visible && a.progress > 0 && a.path.length ? `${nodeName(a.location)} → ${nodeName(a.path[0])}` : nodeName(a.location)), h('b', null, '所在')),
       // 敌军的军令与日程不得而知
       h('div', { class: 'row' }, ic('move'), h('span', { class: 't' }, visible ? armyOrderText(a.order) : a.progress > 0 ? '行军中，去向不明' : '驻扎'), h('b', null, visible && a.path.length ? `${pathDays(a.location, a.path) - a.progress} 日` : '')),
+      // 粮道：粮台不在军中时，写转运天数与途耗；断了直说断在哪里
+      visible && a.location !== a.supply && s.cities[a.supply] ? (() => {
+        const leg = supplyRoute(s, a.faction, a.supply, a.location);
+        return h('div', { class: 'row' + (leg.reason ? ' mine' : ''), id: 'army-supplyline', 'data-tip': leg.reason ? '粮台运不到军中：改设粮台、打通粮道，或移军就粮' : '粮台到军中的转运：陆运最耗，水运省；途耗已算在粮台每月支粮里' },
+          ic('transfer'), h('span', { class: 't' }, leg.reason ? `粮道断：${leg.at ? nodeName(leg.at) + '不通' : leg.reason}` : `粮道 ${nodeName(a.supply)}→军中 · ${leg.days} 日`),
+          h('b', { class: leg.reason ? 'down' : '' }, leg.reason ? '断' : `途耗 ${Math.round((1 - leg.keep) * 100)}%`));
+      })() : null,
       a.hunger ? h('div', { class: 'row mine' }, ic('grain'), h('span', { class: 't' }, '断粮'), h('b', { class: 'down' }, `${a.hunger} 月`)) : null,
       visible && a.unpaid ? h('div', { class: 'row mine', id: 'army-arrears' }, ic('silver'), h('span', { class: 't' }, `欠饷 ${a.unpaid} 月 · 积欠 ${wan(a.arrears ?? 0)} 两${a.unpaid >= 4 ? ' · 士卒逃散' : ''}`), h('b', { class: 'down' }, `士气上限 −${Math.min(24, a.unpaid * 3)}`)) : null));
     for (const pend of this.orders.filter(o => (o.kind === 'army' || o.kind === 'command' || o.kind === 'supply') && o.army === id))
@@ -1505,26 +1519,30 @@ export class App {
   formTransfer(from: string, to?: string) {
     const s = this.s!;
     const own = Object.values(s.cities).filter(c => c.controller === s.player);
+    // 路程按实际可走的粮道算（绕开敌城、敌军、被围与停战之城），与月结同一条路
     const targetsOf = (f: string) => Object.values(s.cities).filter(c => c.id !== f && friendly(s, s.player, c.controller))
-      .map(c => ({ c, p: shortestPath(f, c.id, false) }))
-      .sort((a, b) => (a.p ? pathDays(f, a.p) : 999) - (b.p ? pathDays(f, b.p) : 999));
+      .map(c => ({ c, leg: supplyRoute(s, s.player, f, c.id) }))
+      .sort((a, b) => (a.leg.reason ? 999 : a.leg.days) - (b.leg.reason ? 999 : b.leg.days));
     const avail = (id: string, k: 'grain' | 'silver') => Math.max(0, s.cities[id][k] - this.pendingSpend(id, k));
-    const toOpts = (f: string): SelOpt[] => targetsOf(f).map(({ c, p }) => ({ value: c.id, label: nodeName(c.id), color: s.factions[c.controller].color,
-      sub: s.factions[c.controller].short + (p ? ` · ${pathDays(f, p)} 日` : ''), tag: s.sieges[c.id] ? '被围' : undefined }));
+    const toOpts = (f: string): SelOpt[] => targetsOf(f).map(({ c, leg }) => ({ value: c.id, label: nodeName(c.id), color: s.factions[c.controller].color,
+      sub: s.factions[c.controller].short + (leg.reason ? ' · 不通' : ` · ${leg.days} 日`), tag: s.sieges[c.id] ? '被围' : undefined }));
     const status = h('div', { class: 'route-status', id: 'tr-status' });
-    const grain = stepper('tr-grain', 10000, { step: 1000, max: avail(from, 'grain'), unit: '石', presets: [0, 5000, 10000, 50000] });
+    const grain = stepper('tr-grain', 10000, { step: 1000, max: avail(from, 'grain'), unit: '石', presets: [0, 5000, 10000, 50000], onChange: () => updStatus() });
     const silver = stepper('tr-silver', 0, { step: 1000, max: avail(from, 'silver'), unit: '两', presets: [0, 5000, 10000, 50000] });
     const toSel = gameSelect('tr-to', toOpts(from), to ?? '', () => updStatus());
     const fromSel = gameSelect('tr-from', own.map(c => ({ value: c.id, label: nodeName(c.id), sub: `粮 ${wan(c.grain)} · 银 ${wan(c.silver)}`, color: s.factions[c.controller].color })), from, v => {
       toSel.setOptions(toOpts(v)); grain.setMax(avail(v, 'grain')); silver.setMax(avail(v, 'silver')); updStatus();
     });
     const updStatus = () => {
-      const why = supplyBlock(s, s.player, fromSel.value, toSel.value);
-      clear(status).append(ic(why ? 'close' : 'ok'), why ?? '粮道畅通，本月送达');
-      status.className = 'route-status ' + (why ? 'bad' : 'good');
+      const leg = supplyRoute(s, s.player, fromSel.value, toSel.value);
+      const months = Math.max(1, Math.ceil(leg.days / 30));
+      const g = grain.value, lost = g - Math.round(g * leg.keep);
+      const when = months > 1 ? `约 ${months} 个月后运到` : '本月送到';
+      clear(status).append(ic(leg.reason ? 'close' : 'ok'), leg.reason ?? `路程 ${leg.days} 日，${when}${lost > 0 ? `；途耗粮约 ${fmt(lost)} 石（实到 ${fmt(g - lost)} 石），银不耗` : ''}`);
+      status.className = 'route-status ' + (leg.reason ? 'bad' : 'good');
     };
     updStatus();
-    this.modal('transfer', '调拨钱粮', '沿驿路运送 · 被围之城送不进', [
+    this.modal('transfer', '调拨钱粮', '沿粮道运送 · 陆运最耗，水运省 · 路远的在途数月', [
       h('div', { class: 'tr-route' }, fromSel, h('div', { class: 'tr-arrow' }, ic('transfer')), toSel), status,
       h('div', { class: 'tr-amt' }, h('div', null, h('label', null, ic('grain'), '粮'), grain), h('div', null, h('label', null, ic('silver'), '银'), silver)),
     ], [this.cancelBtn(), { label: '调拨', icon: 'ok', primary: true, id: 'tr-ok', onclick: () => {
@@ -2146,11 +2164,16 @@ export class App {
       if (!b) continue;
       const start = this.map.shown[a.id] ?? armyPt(b), end = armyPt(a);
       if (Math.hypot(start[0] - end[0], start[1] - end[1]) < 1) continue;
-      const pts: [number, number][] = [start];
+      // 沿驿路弧线逐站走（与地图上画的路同一条）；最后一段走到路途中所在之处
+      let pts: [number, number][] = [start];
       if (!approached.has(a.id)) {
         const i = b.path.indexOf(a.location);
         const via = i >= 0 ? b.path.slice(0, i + 1) : [];
-        for (const n of via) pts.push(nodePt(n));
+        if (via.length) pts = [start, ...roadPts(b.location, via, legFrac(b)).slice(1)];
+        if (a.progress > 0 && a.path.length && (via.length || a.location === b.location)) {
+          const t0 = via.length ? 0 : legFrac(b), t1 = legFrac(a);
+          pts.push(...roadPts(a.location, [a.path[0]]).filter((_, k, l) => k / (l.length - 1) > t0 && k / (l.length - 1) < t1));
+        }
       }
       pts.push(end);
       out[a.id] = pts;
@@ -2168,9 +2191,9 @@ export class App {
       const start = this.map.shown[id] ?? armyPt(a), end = nodePt(b.node);
       if (Math.hypot(start[0] - end[0], start[1] - end[1]) < 1) continue;
       const i = a.path.indexOf(b.node);
-      const via = i >= 0 ? a.path.slice(0, i + 1).map(nodePt) : [end];
+      const via = i >= 0 ? roadPts(a.location, a.path.slice(0, i + 1), legFrac(a)).slice(1) : [end];
       paths[id] = [start, ...via];
-      hops = Math.max(hops, via.length);
+      hops = Math.max(hops, i >= 0 ? i + 1 : 1);
       approached.add(id);
     }
     const fast = isReduced();

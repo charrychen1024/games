@@ -1,6 +1,7 @@
 /* 内政与钱粮。每座城自己收支，所有变动记入因果账。
  * 收入：赋税（人口 × 商业 × 吏治）、田粮（人口 × 农业 × 民心，秋收加成）、海贸。
  * 支出：驻军粮饷、以本城为粮台的军队粮饷、方针开销、起运上缴。 */
+import { supplyRoute } from './route';
 import type { City, GameState, LedgerEntry, Policy } from './types';
 import { bump, report, nodeName, topOf, troopsText, charName, hostile, friendly } from './state';
 import { neighbors, NODE, shortestPath, pathDays } from '../data/geography';
@@ -67,7 +68,7 @@ export function monthlyIncome(s: GameState, c: City): { silver: number; grain: n
 
 export function upkeepOf(s: GameState, c: City): { grain: number; silver: number } {
   let grain = c.garrison * GRAIN_PER_SOLDIER, silver = c.garrison * SILVER_PER_SOLDIER;
-  for (const a of Object.values(s.armies)) if (a.supply === c.id) { const k = 1 - forageShare(s, a.faction); grain += a.troops * GRAIN_PER_SOLDIER * k; silver += a.troops * SILVER_PER_FIELD_SOLDIER * k; }
+  for (const a of Object.values(s.armies)) if (a.supply === c.id) { const k = 1 - forageShare(s, a.faction); const keep = supplyLegOf(s, a).keep || 1; grain += a.troops * GRAIN_PER_SOLDIER * k / keep; silver += a.troops * SILVER_PER_FIELD_SOLDIER * k; }
   if (s.sieges[c.id]) grain += c.garrison * GRAIN_PER_SOLDIER * 0.5;
   return { grain: Math.round(grain), silver: Math.round(silver) };
 }
@@ -117,9 +118,11 @@ export function cityForecast(s: GameState, c: City): CityForecast {
     const mine = c.controller === a.faction || topOf(s, c.controller) === topOf(s, a.faction);
     if (!mine || (a.location !== c.id && supplyBlock(s, a.faction, c.id, a.location))) continue;
     const fs = forageShare(s, a.faction);
-    const g = Math.round(a.troops * GRAIN_PER_SOLDIER * (1 - fs)), sv = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * (1 - fs));
+    const leg = supplyLegOf(s, a);
+    const g = Math.round(a.troops * GRAIN_PER_SOLDIER * (1 - fs) / (leg.keep || 1)), sv = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * (1 - fs));
     const note = fs >= 0.5 ? `（${Math.round(fs * 100)}% 就粮于地方）` : '';
-    if (g) G.push({ label: `${a.name} ${troopsText(a.troops)} 人支粮${note}`, v: -g, kind: 'army' });
+    const haul = leg.days ? `（转运 ${leg.days} 日，途耗 ${Math.round((1 - leg.keep) * 100)}%）` : '';
+    if (g) G.push({ label: `${a.name} ${troopsText(a.troops)} 人支粮${note}${haul}`, v: -g, kind: 'army' });
     if (sv) S.push({ label: `${a.name}关饷${note}`, v: -sv, kind: 'army' });
     if (a.arrears) S.push({ label: `补发${a.name}旧欠（府库一半为限）`, v: -Math.min(a.arrears, Math.floor(Math.max(0, c.silver) * 0.5)), kind: 'army' });
   }
@@ -291,8 +294,12 @@ export function runEconomy(s: GameState) {
     const sup = s.cities[a.supply];
     const cut = sup && a.location !== a.supply ? supplyBlock(s, a.faction, a.supply, a.location) : null;
     if (sup && mine(a.supply) && !cut) {
-      got = Math.min(sup.grain, needG);
-      bump(s, sup.id, 'grain', -got, `${a.name} ${troopsText(a.troops)} 人支粮${got < needG ? '（不足）' : ''}`, { kind: 'upkeep', ref: a.id });
+      // 粮台不在军中：转运途中有耗，粮台须多发；运到的才算军中所得
+      const leg = supplyLegOf(s, a);
+      const keep = leg.keep || 1;
+      const send = Math.min(sup.grain, Math.round(needG / keep));
+      got = Math.round(send * keep);
+      bump(s, sup.id, 'grain', -send, `${a.name} ${troopsText(a.troops)} 人支粮${leg.days ? `（转运 ${leg.days} 日，途耗 ${send - got} 石）` : ''}${got < needG ? '（不足）' : ''}`, { kind: 'upkeep', ref: a.id });
       paid = Math.max(0, Math.min(sup.silver, needS));
       if (paid) bump(s, sup.id, 'silver', -paid, `${a.name}关饷${paid < needS ? '（不足）' : ''}`, { kind: 'upkeep', ref: a.id });
     }
@@ -456,23 +463,14 @@ export function governorText(s: GameState, c: City): string { return charName(s,
 
 /** 粮道：手动调拨、粮台支给、起运解饷共用。被围之城运不进也运不出，敌城阻隔。返回不通的原因，通则 null。 */
 export function supplyBlock(s: GameState, f: string, from: string, to: string): string | null {
-  // 被围的是守方：运不进、运不出。围城一方的营寨在城外，只要后路未断，照常受粮
-  if (s.sieges[to] && !friendly(s, f, s.sieges[to].attacker)) return `${nodeName(to)}被围，粮道不通`;
-  if (s.sieges[from] && !friendly(s, f, s.sieges[from].attacker)) return `${nodeName(from)}被围，运不出城`;
-  const seen = new Set([from]);
-  const queue = [from];
-  while (queue.length) {
-    const u = queue.shift()!;
-    for (const { to: v } of neighbors(u)) {
-      if (seen.has(v)) continue;
-      if (v === to) return null;
-      seen.add(v);
-      const c = s.cities[v];
-      if (!c || s.sieges[v] || hostile(s, f, c.controller)) continue;
-      queue.push(v);
-    }
-  }
-  return `去${nodeName(to)}的路被敌方隔断`;
+  return supplyRoute(s, f, from, to).reason ?? null;
+}
+
+/** 粮台到军中的转运：到达比例（扣途耗）与天数。驻在粮台则无耗；粮道断了 keep 为 0 */
+export function supplyLegOf(s: GameState, a: { faction: string; location: string; supply: string }): { keep: number; days: number } {
+  if (a.location === a.supply) return { keep: 1, days: 0 };
+  const leg = supplyRoute(s, a.faction, a.supply, a.location);
+  return leg.reason ? { keep: 0, days: 0 } : { keep: leg.keep, days: leg.days };
 }
 
 /** 粮台可否改设于某城：己方或同阵营之城、未被敌围、粮道可通到军队所在。玩家与电脑同一条件 */
@@ -517,4 +515,28 @@ export function storeOf(s: GameState, f: string): { silver: number; grain: numbe
   let silver = 0, grain = 0, cities = 0;
   for (const c of Object.values(s.cities)) if (c.controller === f) { silver += c.silver; grain += c.grain; cities++; }
   return { silver, grain, cities };
+}
+
+/** 在途钱粮到期送达。目的地已非本阵营或被围：折回起运之城（起运之城也失了，则散失） */
+export function arriveConvoys(s: GameState) {
+  if (!s.convoys?.length) return;
+  const keep: NonNullable<GameState['convoys']> = [];
+  for (const v of s.convoys) {
+    if (v.arrive > s.turn) { keep.push(v); continue; }
+    const to = s.cities[v.to], from = s.cities[v.from];
+    const src = { kind: 'order' as const, ref: v.id, turn: v.sent };
+    const what = [v.grain ? `粮 ${v.grain} 石` : '', v.silver ? `银 ${v.silver} 两` : ''].filter(Boolean).join('、');
+    const ok = to && friendly(s, v.faction, to.controller) && !(s.sieges[v.to] && !friendly(s, v.faction, s.sieges[v.to].attacker));
+    const mine = topOf(s, v.faction) === s.player;
+    if (ok) {
+      if (v.grain) bump(s, v.to, 'grain', v.grain, `自${nodeName(v.from)}运到粮（在途 ${v.days} 日）`, src);
+      if (v.silver) bump(s, v.to, 'silver', v.silver, `自${nodeName(v.from)}运到银`, src);
+      if (mine) report(s, { cat: '内政', node: v.to, text: `自${nodeName(v.from)}起运的${what}，在途 ${v.days} 日，运到${nodeName(v.to)}。`, src });
+    } else if (from && from.controller === v.faction) {
+      if (v.grain) bump(s, v.from, 'grain', v.grain, `运往${nodeName(v.to)}之粮折回`, src);
+      if (v.silver) bump(s, v.from, 'silver', v.silver, `运往${nodeName(v.to)}之银折回`, src);
+      if (mine) report(s, { cat: '急报', node: v.from, text: `运往${nodeName(v.to)}的${what}，因${nodeName(v.to)}${to && friendly(s, v.faction, to.controller) ? '被围' : '已失'}，折回${nodeName(v.from)}。`, src });
+    } else if (mine) report(s, { cat: '急报', node: v.to, text: `运往${nodeName(v.to)}的${what}，前后两城俱失，在途散失。`, src });
+  }
+  s.convoys = keep;
 }

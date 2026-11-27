@@ -1,6 +1,7 @@
 /* 军事：行军（逐日推进）、遭遇、野战与攻城的战局构造、战后处置、易主。
  * 规则：野战失利只让城市失去屏障，只有陷城、献城、正式归附才改变控制权。 */
 import { isRuler } from './regime';
+import { armyRoute } from './route';
 import type { Army, ArmyOrder, GameState, NodeId } from './types';
 import { NODE, routeBetween, shortestPath, neighbors } from '../data/geography';
 import { armiesAt, friendly, hostile, report, nodeName, factionName, charName, troopsText, bump, newId, topOf, adjustAtt, sideAndCommander } from './state';
@@ -14,7 +15,7 @@ export const canSea = (a: Army) => a.mix.navy >= 0.3;
 export function setArmyOrder(s: GameState, a: Army, order: ArmyOrder): boolean {
   if (order.kind === 'hold') { a.order = order; if (a.progress === 0) a.path = []; else a.path = a.path.slice(0, 1); return true; }
   const start = a.progress > 0 && a.path.length ? a.path[0] : a.location;
-  const p = shortestPath(start, order.target, canSea(a));
+  const p = armyRoute(s, a.faction, start, order.target, canSea(a));
   if (p === null) return false;
   a.path = a.progress > 0 && a.path.length ? [a.path[0], ...p] : p;
   if (a.progress > 0 && a.path.length === 0) a.path = [start];
@@ -39,7 +40,7 @@ export function moveArmies(s: GameState): Contact[] {
       // 已无船可乘：不能沿先前算好的海路走，就地改走陆路（与在此重新下令同一路线）
       if (a.progress === 0 && r.kind === 'sea' && !canSea(a)) {
         const tgt = a.order.kind !== 'hold' ? a.order.target : a.path[a.path.length - 1];
-        const p = shortestPath(a.location, tgt, false);
+        const p = armyRoute(s, a.faction, a.location, tgt, false);
         a.path = p ?? [];
         continue;
       }
@@ -52,7 +53,22 @@ export function moveArmies(s: GameState): Contact[] {
         a.morale = Math.max(10, a.morale - 4);
         if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}行至${nodeName(a.location)}舍舟登岸，船只留泊，水师改为步卒。`, src: { kind: 'order', ref: a.id } });
         // 余程按步卒重算：此后不再走海路
-        if (a.order.kind !== 'hold') { const rest = shortestPath(next, a.order.target, false); a.path = rest ? [next, ...rest] : [next]; }
+        if (a.order.kind !== 'hold') { const rest = armyRoute(s, a.faction, next, a.order.target, false); a.path = rest ? [next, ...rest] : [next]; }
+      }
+      // 同一条路上相向而行的敌军：两军走到一处即在路上相遇。就近落在离相遇处较近的一端交战，不会互相穿过
+      const facing = armies.find(b => b.id !== a.id && s.armies[b.id] && !stopped.has(b.id) && b.progress > 0 && b.location === next && b.path[0] === a.location && hostile(s, a.faction, b.faction) && a.progress + b.progress >= r.days);
+      if (facing) {
+        const at = a.progress >= facing.progress ? next : a.location;
+        for (const x of [a, facing]) {
+          if (x.location !== at) { x.location = at; x.path.shift(); }
+          x.path = []; x.progress = 0; stopped.add(x.id); arrivedDay[x.id] = day;
+          const ch = s.chars[x.commander]; if (ch && ch.status === 'active') ch.location = at;
+        }
+        const c = contacts.get(at) ?? { node: at, arrivals: {} };
+        c.arrivals[a.id] = day; c.arrivals[facing.id] = day;
+        contacts.set(at, c);
+        if ([a, facing].some(x => topOf(s, x.faction) === s.player)) report(s, { cat: '军报', act: 'march', node: at, text: `${a.name}与${facing.name}相向而行，在${nodeName(at)}一带路上相遇。`, src: { kind: 'order', ref: a.id } });
+        continue;
       }
       if (a.progress < r.days) continue;
       a.location = next; a.path.shift(); a.progress = 0;
@@ -72,6 +88,8 @@ export function moveArmies(s: GameState): Contact[] {
         // 敌城挡路：必须停下（攻城或绕行由下月命令决定）
         a.path = [];
         stopped.add(a.id);
+      } else if (city && a.path.length && topOf(s, a.faction) === s.player && !friendly(s, a.faction, city.controller) && !hostile(s, a.faction, city.controller)) {
+        report(s, { cat: '军报', act: 'march', from: a.faction, node: next, text: `${a.name}借道${nodeName(next)}（${factionName(s, city.controller)}），过境而去。`, src: { kind: 'order', ref: a.id } });
       }
     }
   }

@@ -277,6 +277,9 @@ export interface BattleRecord {
   manual: boolean;
 }
 
+/* ---------- 在途钱粮 ---------- */
+export interface Convoy { id: string; faction: FactionId; from: NodeId; to: NodeId; grain: number; silver: number; sent: number; arrive: number; days: number; path: NodeId[] }
+
 /* ---------- 局势 ---------- */
 export interface GameState {
   version: number;
@@ -294,6 +297,8 @@ export interface GameState {
   missions: Mission[];
   /** 上个月提交、尚未执行完的下属号令（拖延） */
   delayed: Order[];
+  /** 在途钱粮：路远一月送不到的调拨，arrive 那月送达（粮已扣途耗）。旧档无此项 */
+  convoys?: Convoy[];
   ledger: LedgerEntry[];
   reports: ReportEntry[];
   events: EventRecord[];
