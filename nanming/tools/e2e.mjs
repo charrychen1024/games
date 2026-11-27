@@ -153,6 +153,7 @@ try {
     await page.mouse.click(sxy[0], sxy[1]);
     await wait(250);
     check('点军旗打开军队详情', (await text('#army-name')).includes('督师标营'));
+    check('军队面板主将头像在右上角', await page.evaluate(() => { const g = document.querySelector('#panel .banner #army-cmd img'); const b = document.querySelector('#panel .banner'); if (!g || !b) return false; const r = g.getBoundingClientRect(), q = b.getBoundingClientRect(); return r.left > q.left + q.width / 2 && r.top < q.top + 40; }), await text('#army-cmd'));
     await page.click('#act-move');
     const t = await page.evaluate(() => { const m = NM.map; const r = m.canvas.getBoundingClientRect(); const p = window.NM_nodePt('taiping'); return (q => [r.left + q[0], r.top + q[1]])(m.toScreen(p[0], p[1])); });
     await page.mouse.move(t[0], t[1]);

@@ -1239,14 +1239,15 @@ export class App {
     const vassal = f.overlord === s.player;
     const visible = mine || vassal || friendly(s, s.player, a.faction);
     this.renderDock(null);
-    const panel = this.panelShell(f.color, a.name, f.name, 'army', 'army-name');
+    const panel = this.panelShell(f.color, a.name, f.name, cmd ? '' : 'army', 'army-name');
+    // 主将放在右上角：头像、职分、姓名（与城池面板的主官同式）
+    if (cmd) panel.querySelector('.banner')!.classList.add('city-banner');
+    if (cmd) panel.querySelector('.banner')!.append(h('div', { class: 'gov-top named', id: 'army-cmd', onclick: () => this.openChar(cmd.id), 'data-tip': `${cmd.name} · ${cmd.title} · 统 ${cmd.ab.tong} · 谋 ${cmd.ab.mou} · 点看人物档案` },
+      h('img', { src: portrait(cmd, f.color, f.polity), alt: cmd.name }),
+      h('small', null, '主将'), h('b', null, cmd.name)));
     panel.classList.remove('hidden');
     const sec = h('div', { class: 'sec' });
     panel.append(sec);
-    if (cmd) sec.append(h('div', { class: 'unit', style: { marginTop: '12px' }, onclick: () => this.openChar(cmd.id) },
-      face(s, cmd.id, 52, 'face round'),
-      h('div', { class: 'nm' }, h('b', null, cmd.name), h('small', null, cmd.title)),
-      h('span', { class: 'chipnum' }, `统 ${cmd.ab.tong} · 谋 ${cmd.ab.mou}`)));
     sec.append(h('div', { class: 'tiles', style: { marginTop: '8px' } },
       this.tile('troops', '兵力', visible ? wan(a.troops) : roughTroops(a.troops)),
       this.tile('morale', '士气', visible ? String(Math.round(a.morale)) : '不详', { meter: visible ? a.morale : undefined }),
