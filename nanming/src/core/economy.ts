@@ -149,9 +149,16 @@ export function yearOutlook(s: GameState, c: City, months = 12): Outlook {
   let grain = c.grain, silver = c.silver;
   let minGrain = grain, minSilver = silver, shortGrain: number | null = null, shortSilver: number | null = null;
   let feedG = Infinity, feedS = Infinity, cumG = 0, cumS = 0;
+  // 以本城为粮台的各军旧欠：补发了就销账，不在以后各月重复扣
+  let armies = s.armies;
   for (let k = 1; k <= months; k++) {
-    const t: GameState = { ...s, turn: s.turn + k - 1, cities: { ...s.cities, [c.id]: { ...c, grain, silver } } };
+    const t: GameState = { ...s, turn: s.turn + k - 1, armies, cities: { ...s.cities, [c.id]: { ...c, grain, silver } } };
     const f = cityForecast(t, t.cities[c.id]);
+    const owing = Object.values(armies).filter(a => a.supply === c.id && a.arrears);
+    if (owing.length) {
+      armies = { ...armies };
+      for (const a of owing) armies[a.id] = { ...a, arrears: Math.max(0, a.arrears! - Math.min(a.arrears!, Math.floor(Math.max(0, silver) * 0.5))) };
+    }
     cumG += f.grain.net; cumS += f.silver.net;
     grain = Math.max(0, grain + f.grain.net); silver = Math.max(0, silver + f.silver.net);
     minGrain = Math.min(minGrain, grain); minSilver = Math.min(minSilver, silver);

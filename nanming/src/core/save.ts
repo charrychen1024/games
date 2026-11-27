@@ -57,7 +57,8 @@ export function deserialize(text: string): SaveFile {
   return f;
 }
 
-export const SLOTS = ['auto', '1', '2', '3'] as const;
+/** sample：样稿、试玩的续档，与正篇的自动存档分开，免得试一场守城就丢了长期战役的进度 */
+export const SLOTS = ['auto', '1', '2', '3', 'sample'] as const;
 export type Slot = typeof SLOTS[number];
 
 /** 写入失败返回 false；浏览器存储写入是原子的，失败时旧档原样保留 */

@@ -176,7 +176,7 @@ export const LATE_EVENTS: EventDef[] = [
   ev({
     id: 'ss_zhilong', kind: 'shishi', title: '郑芝龙降清', from: T(1646, 8), to: T(1646, 12), node: 'anping',
     prelude: () => '清廷遣使招郑芝龙北上，许以高官。郑成功苦谏其父勿往。',
-    cond: s => alive(s, 'zhengzhilong') && !s.factions.zheng?.defunct && s.factions.zheng.leader === 'zhengzhilong' && topOf(s, 'zheng') !== 'qing'
+    cond: s => alive(s, 'zhengzhilong') && alive(s, 'zhengsen') && !s.factions.zheng?.defunct && s.factions.zheng.leader === 'zhengzhilong' && topOf(s, 'zheng') !== 'qing'
       && (['fuzhou', 'jianning', 'yanping', 'xianxia', 'quzhou'].some(n => qingHolds(s, n)) || Object.values(s.armies).some(a => topOf(s, a.faction) === 'qing' && NODE[a.location]?.area === '福建')),
     text: () => '清军入闽，博洛许郑芝龙以闽粤总督之位。郑芝龙不顾郑成功苦谏，北上降清，随即被挟往北京。郑成功哭别其父，率部入海。',
     history: '丙戌十一月郑芝龙降清，被博洛挟往北京；郑成功拒不从降，在南澳募兵，后据厦门、金门抗清。',
@@ -502,6 +502,7 @@ export const LATE_EVENTS: EventDef[] = [
   /* ---------------- 线索 ---------------- */
   ev({
     id: 'xs_huangdaozhou', kind: 'xiansuo', title: '黄道周出关', from: T(1645, 9), to: T(1645, 9), node: 'fuzhou',
+    cond: s => courtLeader(s) === 'zhuyujian' && alive(s, 'huangdaozhou') && alive(s, 'zhengzhilong'),
     text: () => '隆武朝大学士黄道周不满郑氏拥兵不出，自募书生、乡兵数千出仙霞关，北图徽州。',
     history: '乙酉九月黄道周自募兵出关，十二月兵败婺源被执，次年三月在南京就义。',
     source: SRC + '第七章',
@@ -509,6 +510,7 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'xs_kuidong', kind: 'xiansuo', title: '夔东十三家', from: T(1650, 6), to: T(1650, 6), node: 'kuizhou',
+    cond: s => (!!s.factions.shun?.defunct || !s.factions.shun || ctrl(s, 'xian') !== 'shun') && ['lilaiheng', 'liuticun', 'haoyaoqi', 'yuanzongdi'].some(id => !s.chars[id] || alive(s, id)),
     text: () => '大顺余部李来亨、刘体纯、郝摇旗、袁宗第等转入川鄂交界的夔东山区，屯田自守，号“夔东十三家”，坚持抗清。',
     history: '夔东十三家坚持到康熙三年（1664）茅麓山失陷。',
     source: SRC + '第二十六章',
@@ -516,13 +518,15 @@ export const LATE_EVENTS: EventDef[] = [
   }),
   ev({
     id: 'xs_kongde_guilin', kind: 'xiansuo', title: '三王南下', from: T(1649, 5), to: T(1649, 5), node: 'beijing',
+    cond: s => alive(s, 'kongyoude') && !s.factions.qing?.defunct && ['guilin', 'guangzhou'].some(n => !qingHolds(s, n)),
     text: () => '清廷改封孔有德为定南王、耿仲明为靖南王、尚可喜为平南王，令率旧部南征广西、广东。',
     history: '顺治六年五月，清廷命三王南征两广。',
     source: '《清史稿·孔有德传》',
-    effect: s => { for (const id of ['kongyoude', 'gengzhongming', 'shangkexi']) adjustAtt(s, id, 'hawk', 8, '受命南征'); },
+    effect: s => { for (const id of ['kongyoude', 'gengzhongming', 'shangkexi']) adjustAtt(s, id, 'hawk', 8, '受命南征'); for (const [id, ti] of [['kongyoude', '定南王'], ['gengzhongming', '靖南王'], ['shangkexi', '平南王']]) if (s.chars[id]) s.chars[id].title = ti; },
   }),
   ev({
     id: 'xs_shunzhi_rule', kind: 'xiansuo', title: '顺治亲政', from: T(1651, 2), to: T(1651, 2), node: 'beijing',
+    cond: s => alive(s, 'fulin') && !s.factions.qing?.defunct,
     involves: ['qing'],
     text: () => '顺治帝亲政，重用汉官，整顿吏治，蠲免钱粮，北方渐趋安定。',
     history: '顺治八年正月，福临亲政。',

@@ -125,6 +125,8 @@ export class App {
     this.map.resize();
     window.addEventListener('resize', () => { this.map.resize(); this.map.clamp(); });
     this.bindMap(canvas);
+    // 钱粮图层与城池账页同看排令之后的预计数
+    this.map.econSource = () => (this.s && this.orders.length && !this.resolving ? this.proj() : null);
     window.addEventListener('keydown', e => this.onKey(e));
     try { this.hintStep = Number(localStorage.getItem(HINT_KEY) ?? 0) >= 4 ? 9 : 0; } catch { this.hintStep = 0; }
     // 战斗画面铺满全屏时地图被挡住，不必每帧重画
@@ -180,6 +182,7 @@ export class App {
     this.map.flyTo(tour[0], 1.5);
     this.titleTimer = window.setInterval(() => { if (this.s) { clearInterval(this.titleTimer); return; } ti = (ti + 1) % tour.length; this.map.flyTo(tour[ti], 1.3 + (ti % 3) * 0.25); }, 4200);
     const auto = loadFrom(this.kv, 'auto');
+    const sample = loadFrom(this.kv, 'sample');
     const embers = h('div', { class: 'embers' });
     for (let k = 0; k < 28; k++) embers.append(h('i', { style: { left: (Math.random() * 100) + '%', animationDelay: (Math.random() * 8) + 's', animationDuration: (6 + Math.random() * 6) + 's', transform: `scale(${0.5 + Math.random()})` } }));
     const round = (id: string, icon: string, tip: string, onclick: () => void) => h('button', { class: 'tbtn', id, 'data-tip': tip, 'aria-label': tip, onclick: () => { click(); onclick(); } }, ic(icon));
@@ -188,6 +191,7 @@ export class App {
       h('div', { class: 'title-actions' },
         h('button', { class: 'big-start', id: 'btn-new', onclick: () => { click(); this.showPick(); } }, h('span', { class: 'glow' }), h('b', null, '开 始')),
         auto ? h('button', { class: 'cont', id: 'btn-continue', onclick: () => { click(); this.start(auto.state, false); } }, ic('play'), h('div', null, h('b', null, '继续'), h('small', null, auto.label))) : null,
+        sample ? h('button', { class: 'linkish', id: 'btn-continue-sample', onclick: () => { click(); this.start(sample.state, false); } }, `继续样稿 · ${sample.label}`) : null,
         h('div', { class: 'title-icons' },
           round('btn-load', 'load', '读档', () => this.openSaves(true)),
           round('btn-about', 'help', '玩法', () => this.openAbout()),
@@ -1182,7 +1186,8 @@ export class App {
     const mine = this.isMineOrVassal(a.faction);
     return h('div', { class: 'unit', 'data-army': id, onclick: () => this.selectArmy(id) },
       face(s, a.commander, 36, 'face round'),
-      h('div', { class: 'nm' }, h('b', null, a.name), h('small', null, `${f.short} · ${armyOrderText(a.order)}`)),
+      // 他方之军只见其在、不见其令（与军队详情同一可见范围）
+      h('div', { class: 'nm' }, h('b', null, a.name), h('small', null, `${f.short} · ${mine || friendly(s, a.faction, s.player) ? armyOrderText(a.order) : a.progress > 0 ? '行军中' : '驻扎'}`)),
       h('span', { class: 'chipnum' }, mine ? wan(a.troops) : roughTroops(a.troops)));
   }
 
@@ -1738,6 +1743,7 @@ export class App {
           f?.leader === c.id ? h('span', { class: 'tag' }, ic('crown'), '主君') : null,
           post ? h('span', { class: 'tag' }, ic('appoint'), `主官 · ${nodeName(post)}`) : null,
           leads ? h('span', { class: 'tag' }, ic('army'), `统 ${leads.name}`) : null),
+        c.gen ? h('div', { class: 'p-gen' }, ic('info'), '本局生成之人（非史籍人物），履历为本局所拟') : null,
         h('div', { class: 'p-bio' }, '“', c.bio, '”'),
         this.traitChips(c),
         h('div', { class: 'p-mid' }, radar(c.ab), h('div', { class: 'p-abil' }, ...([['统军', c.ab.tong, 'army'], ['政务', c.ab.zheng, 'admin'], ['谋略', c.ab.mou, 'event'], ['外交', c.ab.wai, 'envoy'], ['威望', c.ab.wang, 'crown']] as const)
@@ -1820,7 +1826,7 @@ export class App {
     const sk: SceneKind | null = c === '易主' ? (r.act === 'breach' || r.act === 'abandon' ? 'siege' : 'surrender') : c === '交涉' && r.from && r.to ? 'parley' : (r.act === 'battle' || r.act === 'siege') && r.from && r.to ? (r.act === 'siege' ? 'siege' : /水战|水师|江面/.test(r.text) ? 'naval' : 'battle') : null;
     if (sk) return { kind: sk, opts: { a: this.party(c === '易主' ? r.to ?? ctrl : r.from), b: this.party(c === '易主' ? r.from : r.to), seed, ok: r.ok !== false } };
     if (!broad) return null;
-    if (c === '史事' || c === '线索') return this.eventScene(r.text.match(/【([^】]+)】/)?.[1] ?? '', r.text);
+    if (c === '史事' || c === '线索' || r.src?.ref?.startsWith('inc:')) return this.eventScene(r.text.match(/【([^】]+)】/)?.[1] ?? '', r.text);
     const me = this.party(s.player), other = this.party(r.from ?? r.to ?? ctrl);
     const k: SceneKind = r.urgent || c === '急报' ? 'war' : c === '军报' ? 'march' : c === '内政' ? 'econ' : c === '人事' ? 'appoint' : c === '交涉' ? 'parley' : 'court';
     return { kind: k, opts: { a: k === 'march' || k === 'war' ? other : me, b: other, seed, ok: r.ok !== false } };
@@ -2321,7 +2327,7 @@ export class App {
       if (c.tone) eventSfx(c.tone); else choiceSfx();
       const sc = this.eventScene(c.title, c.text);
       m.append(h('div', { class: 'dialog hud', role: 'dialog' }, scene(sc.kind, sc.opts).el,
-        h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic('event')), h('div', null, h('h2', null, c.title), h('small', null, `史事 · ${this.s?.factions[this.s.player]?.name ?? ''}决断`))),
+        h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic('event')), h('div', null, h('h2', null, c.title), h('small', null, `${c.eventId.startsWith('inc:') ? '时事' : c.eventId === 'succession' ? '继统' : '史事'} · ${this.s?.factions[this.s.player]?.name ?? ''}决断`))),
         h('div', { class: 'db' }, h('div', { class: 'lead' }, c.text), opts)));
       gsap.fromTo('#modal .dialog', { scale: 0.85, opacity: 0, rotateX: 20 }, { scale: 1, opacity: 1, rotateX: 0, duration: 0.45, ease: 'back.out(1.6)' });
       gsap.killTweensOf('#modal .opt');
@@ -2340,13 +2346,25 @@ export class App {
     const foe = named[0]?.id ?? (/清/.test(all) && s.player !== 'qing' ? 'qing' : /顺|李自成/.test(all) && s.player !== 'shun' ? 'shun' : undefined);
     const me = this.party(s.player), other = this.party(foe);
     const T = (re: RegExp) => re.test(title) || re.test(text.slice(0, 60));
+    // 先看标题：时事（灾异、索饷、来投……）与死丧按标题定景，免得正文里的“城”“渡河”把丧事画成攻城
+    const H = (re: RegExp) => re.test(title);
     const kind: SceneKind =
+      H(/殉|卒|死|崩|殒|蒙难|殁/) ? 'death' :
+      H(/水患|旱灾|蝗灾|时疫|人心涣散|大火|疫病|灾/) ? 'disaster' :
+      H(/秋稔|商舶|捐输|屯田|丰/) ? 'econ' :
+      H(/乡勇|工匠|逃兵/) ? 'recruit' :
+      H(/来投|投效|贤士/) ? 'appoint' :
+      H(/贪墨/) ? 'prison' :
+      H(/索饷|哗|盗起/) ? 'war' :
+      H(/谍报|集兵|内讧/) ? 'march' :
+      H(/失和|流言|掌权|三案/) ? 'court' :
       T(/议和|致书|和议|联明|联合|受封|招抚|款/) ? 'parley' :
       T(/降|开城|献城|反正/) ? 'surrender' :
       T(/破|陷|屠|围|城|之战|之役|入滇|渡|攻|南下|北伐|东征/) ? 'siege' :
       T(/即位|监国|建国|亲政|登基|称帝/) ? 'throne' :
       T(/殉|卒|死|崩|殒|蒙难|殁/) ? 'death' :
-      T(/饥|灾|疫|旱|蝗|迁界|流民|扰民|剃发/) ? 'disaster' :
+      T(/饥|灾|疫|旱|蝗|迁界|流民|扰民/) ? 'disaster' :
+      T(/剃发/) ? 'court' :
       T(/战|兵|军|镇|清君侧/) ? 'battle' : 'court';
     const third = named[1] ? this.party(named[1].id) : me;
     const att = kind === 'siege' || kind === 'battle' ? other : me, def = kind === 'siege' || kind === 'battle' ? third : other;
@@ -2414,17 +2432,19 @@ export class App {
   saveLabel(s: GameState) { return `${s.factions[s.player].short} · ${dateLabel(POLITIES[s.factions[s.player].polity], s.turn)}`; }
   openSaves(fromTitle: boolean) {
     const rows: HTMLElement[] = [];
-    for (const slot of SLOTS) {
+    for (const slot of SLOTS.filter(x => x !== 'sample' || loadFrom(this.kv, 'sample'))) {
       const f = loadFrom(this.kv, slot);
-      rows.push(h('div', { class: 'slot' }, ic(slot === 'auto' ? 'auto' : 'save'), h('div', { class: 'nm' }, h('b', null, slot === 'auto' ? '自动存档' : `存档 ${slot}`), h('small', null, f ? `${f.label} · ${new Date(f.savedAt).toLocaleString('zh-CN')}` : '空')),
-        !fromTitle && slot !== 'auto' && this.s ? h('button', { class: 'mini', 'data-save': slot, onclick: () => this.saveSlot(slot as Slot) }, ic('save'), '存入') : null,
+      rows.push(h('div', { class: 'slot' }, ic(slot === 'auto' ? 'auto' : 'save'), h('div', { class: 'nm' }, h('b', null, slot === 'auto' ? '自动存档' : slot === 'sample' ? '样稿续档' : `存档 ${slot}`), h('small', null, f ? `${f.label} · ${new Date(f.savedAt).toLocaleString('zh-CN')}` : '空')),
+        !fromTitle && slot !== 'auto' && slot !== 'sample' && this.s ? h('button', { class: 'mini', 'data-save': slot, onclick: () => this.saveSlot(slot as Slot) }, ic('save'), '存入') : null,
         f ? h('button', { class: 'mini', 'data-load': slot, onclick: () => { this.closeModal(); this.start(f.state, false); this.toast('已读取：' + f.label, 'load'); } }, ic('load'), '读取') : null));
     }
     const file = h('input', { type: 'file', accept: '.json,application/json', style: { display: 'none' }, onchange: async (e: Event) => {
       const fl = (e.target as HTMLInputElement).files?.[0]; if (!fl) return;
       try { const f = deserialize(await fl.text()); this.closeModal(); this.start(f.state, false); this.toast('已导入：' + f.label, 'load'); } catch (err) { this.toast('导入失败：' + (err as Error).message, 'close'); }
     } }) as HTMLInputElement;
-    this.modal('save', '存档', '月与月之间存档 · 跨月行动照常保存', [...rows, file], [
+    // 本月已排而未执行的命令不随档保存：存入、导出之前就说清
+    const pending = !fromTitle && this.s && this.orders.length ? h('div', { class: 'save-note warn' }, ic('info'), `本月已排 ${this.orders.length} 道命令尚未执行，存档只记月初局势；读回时需重下。`) : null;
+    this.modal('save', '存档', '月与月之间存档 · 跨月行动照常保存', [...(pending ? [pending] : []), ...rows, file], [
       ...(this.s && !fromTitle ? [{ label: '导出', icon: 'transfer', onclick: () => { this.exportSave(); return false; } }] : []),
       { label: '导入', icon: 'load', onclick: () => { file.click(); return false; } },
       { label: '关闭', icon: 'close', onclick: () => {} },
@@ -2441,7 +2461,9 @@ export class App {
   }
   autoSave() {
     if (!this.s) return;
-    if (!saveTo(this.kv, 'auto', this.s, this.saveLabel(this.s))) this.saveFailed('自动存档');
+    // 样稿、试玩另存一档，不覆盖正篇的自动存档
+    const slot: Slot = this.s.scenario === 'full' ? 'auto' : 'sample';
+    if (!saveTo(this.kv, slot, this.s, this.saveLabel(this.s))) this.saveFailed('自动存档');
     else if (this.kv.volatile && !this.warnedVolatile) this.volatileWarn();
   }
   warnedVolatile = false;
@@ -2482,9 +2504,9 @@ export class App {
       step('policy', '下命令', '方针 · 募兵 · 调拨 · 任命 · 劝降'),
       step('army', '点军旗', '行军、进攻、攻城；下属要“号令”'),
       step('next', '结束本月', '各方同时行动，生成军情'),
-      step('war', '战斗', '三路下令，可用计策，也可交给部将'),
+      step('war', '战斗', '点选一营，再点敌营、城段或地面下令；可擂鼓、劝降，也可交部将代打。敌军崩溃、破城或日暮即止'),
       step('why', '钱粮来由', '每笔变化都有出处，红框是你的命令'),
-      step('event', '史事 · 线索', '合乎史实时触发，影响人物态度'),
+      step('event', '史事 · 时事', '史事合乎史实时触发；时事按本局局势而生（灾异、民心、索饷、来投、丰收……），常要你决断'),
     ), h('div', { class: 'note' }, '一尾小石斑 作。图标 game-icons.net（CC BY 3.0）；底图 Natural Earth（公有领域）；地形高程 AWS Terrain Tiles（SRTM、ETOPO1、GEBCO 等公开数据）；字体 Noto Serif SC、Ma Shan Zheng（OFL）。')],
     [{ label: '开始', icon: 'ok', primary: true, onclick: () => {} }]);
   }

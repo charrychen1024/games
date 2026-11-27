@@ -285,7 +285,8 @@ export interface GameState {
   seed: number;
   player: FactionId;
   factions: Record<FactionId, Faction>;
-  relations: Record<string, { stance: Stance; until?: number }>;
+  /** after：停战期满后回到的关系（缺省为交战；与中立之家互市通好，期满仍回中立） */
+  relations: Record<string, { stance: Stance; until?: number; after?: Stance }>;
   chars: Record<CharId, Character>;
   cities: Record<NodeId, City>;
   armies: Record<ArmyId, Army>;

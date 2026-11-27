@@ -1325,3 +1325,7 @@ html.reduced .cic-anim .ic, html.reduced .pdlg .pface, html.reduced .pdlg .p-lef
 body:has(#report:not(.hidden)) #hint { left: 400px; }
 /* 演出“简化”：一切循环动画只走一遍（提示条的淡入淡出照旧） */
 html.reduced *:not(#toast, #toast *), html.reduced *:not(#toast, #toast *)::before, html.reduced *:not(#toast, #toast *)::after { animation-iteration-count: 1 !important; }
+.p-gen { display: inline-flex; align-items: center; gap: 4px; margin: 2px 0 4px; padding: 1px 8px; border-radius: 10px; font-size: 12px; color: var(--faint); border: 1px dashed rgba(217, 173, 91, 0.45); }
+.p-gen .ic { width: 13px; height: 13px; }
+.save-note { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; padding: 6px 10px; border-radius: 8px; font-size: 13px; color: #f0cf86; background: rgba(178, 60, 40, 0.18); border: 1px solid rgba(217, 120, 80, 0.4); }
+.save-note .ic { width: 16px; height: 16px; flex: none; }

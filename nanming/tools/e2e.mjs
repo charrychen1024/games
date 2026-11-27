@@ -558,8 +558,8 @@ try {
   const endTurn = await page.evaluate(() => NM.s.turn);
   await page.reload();
   await wait(900);
-  check('结局时刷新，标题页有“继续”', await visible('#btn-continue'));
-  await page.click('#btn-continue');
+  check('结局时刷新，标题页有“继续样稿”（样稿另存，不覆盖正篇续档）', await visible('#btn-continue-sample'));
+  await page.click('#btn-continue-sample');
   await wait(600);
   check('继续后重新打开试玩结局', (await text('#modal')).includes('试玩结束'), (await text('#modal')).slice(0, 60));
   check('结局面板可“继续推进”', await visible('#end-continue'));

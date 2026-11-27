@@ -351,7 +351,10 @@ export class MapRenderer {
   get lens(): LensId { return this.view.lens ?? 'faction'; }
   /** 钱粮图层每城的粮银月数：半秒内同一局面只算一次 */
   storesMemo: { s: GameState | null; t: number; m: Map<string, Stores> } = { s: null, t: -1e9, m: new Map() };
-  stores(s: GameState, id: string): Stores {
+  /** 钱粮图层的取数：界面给出“排令之后”的预计局势（与城池账页、确认窗同一份），没有则用月初实况 */
+  econSource: (() => GameState | null) | null = null;
+  stores(s0: GameState, id: string): Stores {
+    const s = this.econSource?.() ?? s0;
     const mm = this.storesMemo;
     if (mm.s !== s || this.lastTime - mm.t > 500) { mm.s = s; mm.t = this.lastTime; mm.m = new Map(); }
     let v = mm.m.get(id);

@@ -36,7 +36,10 @@ export function friendly(s: GameState, a: FactionId, b: FactionId): boolean {
 }
 
 export function setStance(s: GameState, a: FactionId, b: FactionId, st: Stance, until?: number) {
-  s.relations[relKey(a, b)] = until === undefined ? { stance: st } : { stance: st, until };
+  const prev = s.relations[relKey(a, b)];
+  // 有期限的停战：原本不在交战（中立、通好）者，期满回到原来的关系，而不是凭空开战
+  const after = st === 'truce' && until !== undefined && prev ? (prev.stance === 'truce' ? prev.after : prev.stance === 'war' ? undefined : prev.stance) : undefined;
+  s.relations[relKey(a, b)] = until === undefined ? { stance: st } : after ? { stance: st, until, after } : { stance: st, until };
 }
 
 export function newId(s: GameState, prefix: string): string {

@@ -15,6 +15,7 @@ import { pruneLedger, topOf, report, citiesOf, armiesOf } from './state';
 import { TOTAL_TURNS, dateLabel } from './calendar';
 import { VICTORY_AREAS, NODE } from '../data/geography';
 import { runTalent } from './talent';
+import { incidentDue, pickIncident, markTale, worldOmen } from './incidents';
 import { governorDrift, aiAppoint, aiSeek, aiPrisoners } from './people';
 import { pendingSuccessions, successionOptions, applySuccession, autoSuccession, courtOf, transferCourt, polityOf } from './regime';
 
@@ -50,11 +51,12 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
 
   // 停战到期
   for (const [k, r] of Object.entries(s.relations)) if (r.stance === 'truce' && r.until !== undefined && r.until <= s.turn) {
-    s.relations[k] = { stance: 'war' };
+    const back = r.after ?? 'war';
+    s.relations[k] = { stance: back };
     const [a, b] = k.split('|');
     if (s.factions[a] && s.factions[b] && !s.factions[a].defunct && !s.factions[b].defunct) {
       const mine = a === s.player || b === s.player;
-      report(s, { cat: '交涉', urgent: mine, node: s.factions[mine ? (a === s.player ? b : a) : b]?.capital, text: `${mine ? '' : '【动向】'}${s.factions[a].name}与${s.factions[b].name}停战期满，复为交战。` });
+      report(s, { cat: '交涉', urgent: mine && back === 'war', node: s.factions[mine ? (a === s.player ? b : a) : b]?.capital, text: `${mine ? '' : '【动向】'}${s.factions[a].name}与${s.factions[b].name}${back === 'war' ? '停战期满，复为交战' : back === 'alliance' ? '约期已满，仍为盟好' : '约期已满，仍各守疆界、互不相犯（中立）'}。` });
     }
   }
 
@@ -134,6 +136,7 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   // 七、史事与线索
   for (const { def, variant } of dueEvents(s, events)) {
     fireEvent(s, def, variant);
+    markTale(s);
     if (variant === 'player') continue;
     const ch = choiceFor(s, def, variant);
     if (ch) {
@@ -144,6 +147,23 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
       // 电脑一方按第一项处置
       const list = def.choices(s, variant);
       if (list[0] && def.chooser?.length) list[0].apply(s);
+    }
+  }
+
+  // 七之二、时事：按本局局势生成的事（灾异、人心、索饷、来投、丰收、谍报……），本方两月无事必出一件
+  worldOmen(s);
+  if (incidentDue(s)) {
+    const inc = pickIncident(s);
+    if (inc) {
+      markTale(s);
+      let result = '', picked = '';
+      if (inc.choices?.length) {
+        const ans = yield { type: 'choice', choice: { eventId: 'inc:' + inc.kind, tone: inc.tone, title: inc.title, text: inc.text, options: inc.choices.map(c => ({ label: c.label, desc: c.desc })) } };
+        const idx = ans?.type === 'choice' ? Math.max(0, Math.min(inc.choices.length - 1, ans.index)) : 0;
+        picked = inc.choices[idx].label;
+        result = inc.choices[idx].apply(s);
+      } else result = inc.apply?.(s) ?? '';
+      report(s, { cat: inc.cat, tone: inc.tone, urgent: inc.cat === '急报', node: inc.node, text: `【${inc.title}】${inc.text}${picked ? `决断：${picked}。` : ''}${result}`, src: { kind: 'event', ref: 'inc:' + inc.kind } });
     }
   }
 

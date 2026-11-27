@@ -459,6 +459,13 @@ export function resolveMissions(s: GameState): Counter[] {
   const counters: Counter[] = [];
   for (const m of due) {
     const o = m.order;
+    // 回报之前复核使者：途中身故、被执、改投他方，或本方已亡，此行作罢
+    const env = 'char' in o ? s.chars[(o as { char: string }).char] : undefined;
+    if (env && (env.status !== 'active' || env.faction !== m.faction || s.factions[m.faction]?.defunct)) {
+      const why = env.status === 'dead' ? '已殁于途' : env.status === 'captured' ? '途中被执' : env.faction !== m.faction ? '已改投他方' : '本方已亡';
+      if (m.faction === s.player) report(s, { cat: '交涉', ok: false, node: o.kind === 'persuade' ? o.node : s.factions[(o as { target: string }).target]?.capital, text: `${env.name}${why}，${o.kind === 'persuade' ? '劝降' : '出使'}之事作罢。`, src: { kind: 'diplomacy', ref: m.order.id, turn: s.turn } });
+      continue;
+    }
     if (o.kind === 'envoy') { const c = resolveEnvoy(s, m.faction, o); if (c) counters.push(c); }
     else if (o.kind === 'persuade') resolvePersuade(s, m.faction, o);
   }

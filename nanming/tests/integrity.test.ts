@@ -141,3 +141,52 @@ describe('民心有后果', () => {
     expect(c.controller).toBe('local');
   });
 });
+
+describe('一年展望', () => {
+  it('旧欠补发一次即销账，不在以后各月重复扣', async () => {
+    const { yearOutlook } = await import('../src/core/economy');
+    const s = createGame('hongguang', 1);
+    const a = Object.values(s.armies).find(x => x.faction === 'hongguang' && x.supply)!;
+    const c = s.cities[a.supply!];
+    c.silver = 2_000_000;
+    a.arrears = 0;
+    const base = yearOutlook(s, c);
+    a.arrears = 30000;
+    const owe = yearOutlook(s, c);
+    const extra = (base.netSilver - owe.netSilver) * base.months;
+    expect(extra).toBeGreaterThan(25000);
+    expect(extra).toBeLessThan(35000);
+  });
+});
+
+describe('时事：不长时间无事', () => {
+  it('空过三年，本方从不连续三个月以上无史事、线索或时事', async () => {
+    const { runMonthAuto } = await import('../src/core/turn');
+    for (const f of ['hongguang', 'xi'] as const) {
+      let s = createGame(f, 7);
+      const tale = (st: typeof s, t: number) => st.reports.some(r => r.turn === t && (!r.faction || r.faction === st.player) && (r.cat === '史事' || r.cat === '线索' || r.src?.ref?.startsWith('inc:')));
+      let gap = 0, worst = 0, incidents = 0;
+      for (let m = 0; m < 36 && !s.ended; m++) {
+        const t = s.turn;
+        s = runMonthAuto(s, []);
+        if (tale(s, t)) gap = 0; else gap++;
+        worst = Math.max(worst, gap);
+        incidents += s.reports.filter(r => r.turn === t && r.src?.ref?.startsWith('inc:')).length;
+      }
+      expect(worst).toBeLessThanOrEqual(2);
+      expect(incidents).toBeGreaterThan(5);
+    }
+  }, 120000);
+  it('时事有抉择时交玩家定夺，后果写入月报', async () => {
+    const { pickIncident } = await import('../src/core/incidents');
+    const s = createGame('hongguang', 1);
+    const c = Object.values(s.cities).find(x => x.controller === 'hongguang')!;
+    c.minxin = 15;
+    let inc = null;
+    for (let k = 0; k < 40 && !inc?.choices; k++) { s.turn++; inc = pickIncident(s); }
+    expect(inc).toBeTruthy();
+    expect(inc!.choices!.length).toBeGreaterThanOrEqual(2);
+    const msg = inc!.choices![0].apply(s);
+    expect(typeof msg).toBe('string');
+  });
+});

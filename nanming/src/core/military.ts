@@ -161,8 +161,11 @@ export function buildFieldBattle(s: GameState, c: Contact): BattleState | null {
   const engaged = here.filter(a => here.some(o => hostile(s, a.faction, o.faction)));
   if (engaged.length < 2) return null;
   const last = [...engaged].sort((x, y) => (c.arrivals[y.id] ?? 0) - (c.arrivals[x.id] ?? 0) || x.id.localeCompare(y.id))[0];
-  const defArmies = engaged.filter(a => hostile(s, a.faction, last.faction));
-  const attArmies = engaged.filter(a => friendly(s, a.faction, last.faction) && defArmies.some(d => hostile(s, a.faction, d.faction)));
+  // 守方只取彼此不相敌的一方：清、弘光同与大顺为敌，并不因此并肩（兵多的一方迎战，另一方观望）
+  const foes = engaged.filter(a => hostile(s, a.faction, last.faction)).sort((x, y) => y.troops - x.troops || x.id.localeCompare(y.id));
+  const main = foes[0];
+  const defArmies = main ? foes.filter(a => !hostile(s, a.faction, main.faction)) : [];
+  const attArmies = engaged.filter(a => friendly(s, a.faction, last.faction) && defArmies.every(d => hostile(s, a.faction, d.faction)) && !defArmies.some(d => friendly(s, a.faction, d.faction)));
   if (!defArmies.length) return null;
   const att = combineSide(s, attArmies, { foeFaction: defArmies[0].faction });
   const def = combineSide(s, defArmies, { foeFaction: last.faction });
@@ -260,6 +263,7 @@ export function retreat(s: GameState, a: Army, routed: boolean) {
   if (opts.length) {
     const from = a.location;
     a.location = opts[0].to; a.path = []; a.progress = 0; a.order = { kind: 'hold' };
+    if (s.chars[a.commander]) s.chars[a.commander].location = a.location;   // 主将随军而走，不留在旧城
     a.morale = Math.max(5, a.morale - (routed ? 12 : 5));
     report(s, { cat: '军报', act: 'retreat', from: a.faction, node: a.location, text: `${a.name}自${nodeName(from)}退往${nodeName(a.location)}。`, faction: a.faction });
   } else {
@@ -367,6 +371,7 @@ export function tidyPeople(s: GameState) {
     if (!s.armies[a.id]) continue;
     const c = s.chars[a.commander];
     if (!c || c.status !== 'active' || c.faction !== a.faction) handover(s, a);
+    else c.location = a.location;   // 统兵之将的所在随军
   }
   for (const f of Object.values(s.factions).sort((x, y) => x.id < y.id ? -1 : 1)) {
     if (f.defunct || f.id === 'local' || f.id === 'helan' || s.flags['need_succession_' + f.id]) continue;
@@ -558,8 +563,25 @@ export function updateSieges(s: GameState): string[] {
   for (const a of Object.values(s.armies)) if (a.order.kind === 'siege') { const c = s.cities[a.order.target]; if (!c || !hostile(s, a.faction, c.controller)) siegeDone(s, a); }
   for (const node of Object.keys(s.cities).sort()) {
     const city = s.cities[node];
-    const here = armiesAt(s, node).filter(a => hostile(s, a.faction, city.controller) && a.order.kind === 'siege' && a.order.target === node);
-    const existing = s.sieges[node];
+    const all = armiesAt(s, node).filter(a => hostile(s, a.faction, city.controller) && a.order.kind === 'siege' && a.order.target === node);
+    // 城下诸军未必一家：兵最多的一方主围，只与其同阵营或友好之军合围；互不相友者各自观望
+    const byTop = new Map<string, number>();
+    for (const a of all) byTop.set(topOf(s, a.faction), (byTop.get(topOf(s, a.faction)) ?? 0) + a.troops);
+    const leadTop = [...byTop.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1))[0]?.[0];
+    const here = all.filter(a => topOf(s, a.faction) === leadTop || (leadTop !== undefined && friendly(s, a.faction, leadTop)))
+      .sort((x, y) => Number(topOf(s, y.faction) === leadTop) - Number(topOf(s, x.faction) === leadTop) || y.troops - x.troops);
+    let existing = s.sieges[node];
+    // 换手：原围城一方已撤走（或已不在主围之列），由他方接围——重新起算，受降者、粮道、军报都归新的一方
+    if (existing && here.length && !here.some(a => a.faction === existing!.attacker || topOf(s, a.faction) === topOf(s, existing!.attacker))) {
+      const inv = friendly(s, city.controller, s.player) || friendly(s, here[0].faction, s.player) || friendly(s, existing.attacker, s.player);
+      report(s, { cat: '军报', act: 'siege', from: here[0].faction, to: city.controller, node, urgent: city.controller === s.player || here[0].faction === s.player, faction: inv ? undefined : here[0].faction,
+        text: `${factionName(s, existing.attacker)}已撤离${nodeName(node)}城下，${sideAndCommander(s, here[0].faction, here[0].commander)}接围。` });
+      delete s.sieges[node];
+      existing = undefined as unknown as typeof existing;
+      s.flags['sieged_' + node] = s.turn;
+      s.sieges[node] = { node, attacker: here[0].faction, armies: here.map(a => a.id), startTurn: s.turn, months: 0 };
+      existing = s.sieges[node];
+    }
     if (!here.length) {
       if (existing) {
         delete s.sieges[node];
@@ -578,6 +600,7 @@ export function updateSieges(s: GameState): string[] {
         text: `${sideAndCommander(s, here[0].faction, here[0].commander)}兵临${nodeName(node)}城下，开始围城。守军 ${troopsText(city.garrison)}，城防 ${Math.round(city.wall)}。` });
     } else {
       existing.armies = here.map(a => a.id);
+      if (!here.some(a => a.faction === existing!.attacker)) existing.attacker = here[0].faction;   // 同阵营换将：主围者跟着在场之军
       // 守军逐月修补：城门修回三成，塌段补起一些（修不到原有城防之上）
       if (existing.gate !== undefined) existing.gate = Math.min(1, existing.gate + 0.3);
       if (existing.segs) existing.segs = existing.segs.map(h => Math.min(city.wall, h + 4));
