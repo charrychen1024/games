@@ -8,7 +8,7 @@ const page = await browser.newPage({ viewport: { width: W, height: H } });
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
 const shot = async (name) => { await page.waitForTimeout(350); await page.screenshot({ path: `screenshots/${name}.png` }); };
-await page.goto('http://127.0.0.1:8211/');
+await page.goto('http://127.0.0.1:8211/?sample');
 await page.evaluate(() => { try { localStorage.clear(); localStorage.setItem('nanming:hint', '9'); } catch {} });
 await page.reload();
 await page.waitForFunction(() => window.NM?.map?.reliefReady, null, { timeout: 20000 }).catch(() => console.log('relief not ready'));

@@ -5,7 +5,7 @@ const browser = await pw.chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 page.on('console', m => console.log('console:', m.type(), m.text()));
 page.on('pageerror', e => console.log('pageerror', e.message));
-await page.goto('http://127.0.0.1:8214/');
+await page.goto('http://127.0.0.1:8214/?sample');
 await page.evaluate(() => localStorage.setItem('nanming:hint', '9'));
 await page.click('#btn-sample'); await page.waitForTimeout(500);
 await page.click('#btn-next');

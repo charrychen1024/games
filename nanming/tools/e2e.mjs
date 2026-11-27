@@ -92,6 +92,9 @@ try {
   await page.reload();
   await wait(1000);
   console.log('标题与开局');
+  check('玩家打开的标题页没有样稿入口，只署名', !(await visible('#btn-sample')) && (await text('#title .credit')).trim() === '一尾小石斑 作', await text('#title .credit'));
+  await page.goto(`http://127.0.0.1:${PORT}/?sample`);
+  await wait(1000);
   check('标题页出现，只有一个“开始”大按钮', await visible('#btn-new'));
   check('标题页没有原生下拉框与数字框', (await page.locator('select, input[type=number]').count()) === 0);
   await page.click('#btn-new');

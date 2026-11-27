@@ -183,6 +183,8 @@ export class App {
     this.titleTimer = window.setInterval(() => { if (this.s) { clearInterval(this.titleTimer); return; } ti = (ti + 1) % tour.length; this.map.flyTo(tour[ti], 1.3 + (ti % 3) * 0.25); }, 4200);
     const auto = loadFrom(this.kv, 'auto');
     const sample = loadFrom(this.kv, 'sample');
+    // 样稿入口只供开发与自动测试：网址带 ?sample 才出现
+    const dev = new URLSearchParams(location.search).has('sample');
     const embers = h('div', { class: 'embers' });
     for (let k = 0; k < 28; k++) embers.append(h('i', { style: { left: (Math.random() * 100) + '%', animationDelay: (Math.random() * 8) + 's', animationDuration: (6 + Math.random() * 6) + 's', transform: `scale(${0.5 + Math.random()})` } }));
     const round = (id: string, icon: string, tip: string, onclick: () => void) => h('button', { class: 'tbtn', id, 'data-tip': tip, 'aria-label': tip, onclick: () => { click(); onclick(); } }, ic(icon));
@@ -191,12 +193,12 @@ export class App {
       h('div', { class: 'title-actions' },
         h('button', { class: 'big-start', id: 'btn-new', onclick: () => { click(); this.showPick(); } }, h('span', { class: 'glow' }), h('b', null, '开 始')),
         auto ? h('button', { class: 'cont', id: 'btn-continue', onclick: () => { click(); this.start(auto.state, false); } }, ic('play'), h('div', null, h('b', null, '继续'), h('small', null, auto.label))) : null,
-        sample ? h('button', { class: 'linkish', id: 'btn-continue-sample', onclick: () => { click(); this.start(sample.state, false); } }, `继续样稿 · ${sample.label}`) : null,
+        sample && dev ? h('button', { class: 'linkish', id: 'btn-continue-sample', onclick: () => { click(); this.start(sample.state, false); } }, `继续样稿 · ${sample.label}`) : null,
         h('div', { class: 'title-icons' },
           round('btn-load', 'load', '读档', () => this.openSaves(true)),
           round('btn-about', 'help', '玩法', () => this.openAbout()),
           round('btn-sound-t', isMuted() ? 'mute' : 'sound', '声音', () => { setMuted(!isMuted()); this.showTitle(); }))),
-      h('div', { class: 'credit' }, '一尾小石斑 作 · ', h('button', { class: 'linkish', id: 'btn-sample', onclick: () => this.start(yangzhouSiegeState(), false, 'yangzhou') }, '地图样稿：扬州被围')),
+      h('div', { class: 'credit' }, '一尾小石斑 作', dev ? ' · ' : null, dev ? h('button', { class: 'linkish', id: 'btn-sample', onclick: () => this.start(yangzhouSiegeState(), false, 'yangzhou') }, '地图样稿：扬州被围') : null),
     ));
     const tl = gsap.timeline({ defaults: { clearProps: 'transform,filter' } });
     tl.from('#title .ch', { opacity: 0, y: 40, scale: 1.4, filter: 'blur(12px)', duration: 0.9, stagger: 0.25, ease: 'power3.out' })

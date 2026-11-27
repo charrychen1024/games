@@ -6,7 +6,7 @@ const server = await serve(8215);
 const browser = await pw.chromium.launch({ channel: 'chrome' });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
 page.on('pageerror', e => console.log('pageerror', e.message));
-await page.goto('http://127.0.0.1:8215/');
+await page.goto('http://127.0.0.1:8215/?sample');
 await page.evaluate(() => localStorage.setItem('nanming:hint', '9'));
 await page.click('#btn-sample'); await page.waitForTimeout(800);
 await page.evaluate(() => NM.closeModal?.());
@@ -17,7 +17,7 @@ await page.evaluate(() => { NM.map.focus('wuchang', 0.9); });
 await page.waitForTimeout(500);
 await page.screenshot({ path: `${OUT}/25d-map-far.png` });
 for (const [kind, side] of [['siege', 'att'], ['siege', 'def'], ['field', 'att']]) {
-  await page.goto('http://127.0.0.1:8215/'); await page.click('#btn-sample'); await page.waitForTimeout(600);
+  await page.goto('http://127.0.0.1:8215/?sample'); await page.click('#btn-sample'); await page.waitForTimeout(600);
   page.evaluate(([k, s]) => NM_testBattle(k, s, k === 'field' ? 'hills' : undefined), [kind, side]).catch(() => {});
   await page.waitForTimeout(2500);
   if (await page.locator('#att-assault').isVisible().catch(() => false)) { await page.click('#att-assault'); }
