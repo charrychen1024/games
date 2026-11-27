@@ -1915,7 +1915,7 @@ export class App {
         h('div', { class: 'nw-ctl' },
           h('button', { class: 'nw-b', id: 'news-prev', 'aria-label': '上一条', onclick: (e: Event) => { e.stopPropagation(); show(Math.max(0, i - 1)); } }, '‹'),
           h('button', { class: 'nw-b', id: 'news-next', 'aria-label': '下一条', onclick: (e: Event) => { e.stopPropagation(); next(); } }, '›'),
-          h('button', { class: 'nw-b nw-mode' + (this.newsMode === 'major' ? ' on' : ''), id: 'news-mode', 'data-tip': '以后只播与我方相关的要紧事（城池易主、急报）；其余可在军情里看', onclick: (e: Event) => {
+          h('button', { class: 'nw-b nw-mode' + (this.newsMode === 'major' ? ' on' : ''), id: 'news-mode', 'data-tip': '以后只播要紧事（本方城池易主、急报）与史事；其余军报、人事、交涉可在军情里看', onclick: (e: Event) => {
             e.stopPropagation();
             this.newsMode = this.newsMode === 'major' ? 'all' : 'major';
             try { localStorage.setItem('nanming:news', this.newsMode); } catch { /* 偏好只在本次有效 */ }
@@ -2015,7 +2015,8 @@ export class App {
     const seen = new Set<string>();
     return groupNews(all.filter(r => rank(r) <= 8))
       .sort((a, b) => rank(a.lead) - rank(b.lead))
-      .filter(g => { const k = splitReport(g.lead).hl; if (seen.has(k)) return false; seen.add(k); return rank(g.lead) <= cap; })
+      // 史事每月照播，“只播要紧”也不省（那只省一般军报、人事、交涉）
+      .filter(g => { const k = splitReport(g.lead).hl; if (seen.has(k)) return false; seen.add(k); return rank(g.lead) <= cap || g.lead.cat === '史事'; })
       .slice(0, 6);
   }
 

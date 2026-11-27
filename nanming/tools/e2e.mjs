@@ -534,6 +534,12 @@ try {
   }));
   await page.click('#news-skip').catch(() => {}); await wait(500);
   await page.evaluate(() => NM.closePanel?.());
+  // “只播要紧”打开时，史事照播
+  await page.evaluate(() => { const s = NM.s; NM.newsMode = 'major'; s.reports.push({ turn: s.turn, cat: '史事', node: 'nanjing', text: '【多尔衮致书史可法】摄政王多尔衮致书史可法，劝其归降。' }); NM.reportTurn = s.turn; NM.showSplash(); });
+  await wait(800);
+  check('“只播要紧”打开时，史事仍在屏幕下方播报', await visible('#news') && await page.evaluate(() => NM.splashGroups().some(g => g.lead.text.includes('多尔衮致书史可法'))));
+  await page.click('#news-skip').catch(() => {}); await wait(500);
+  await page.evaluate(() => { NM.newsMode = 'all'; NM.closePanel?.(); });
   if (await visible('#report:not(.hidden)')) await page.keyboard.press('Escape');
 
   console.log('拥挤处点选');
