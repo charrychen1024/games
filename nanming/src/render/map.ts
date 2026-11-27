@@ -10,7 +10,7 @@ import reliefUrl from '../assets/relief.png?url';
 import { POLITIES } from '../data/factions';
 import { project, WORLD_W, WORLD_H, worldToScreen, screenToWorld, flatV, flatW, flatZ, depthAt, type Camera } from './projection';
 import { makeRng } from '../core/rng';
-import { spreadApart, fanSlots, nearestHit } from './declutter';
+import { spreadApart, fanSlots, nearestHit, calloutOffsets } from './declutter';
 import { friendly } from '../core/state';
 import { routeBetween, neighbors } from '../data/geography';
 import land from '../data/geo-land.json';
@@ -68,7 +68,8 @@ export interface MapView {
 }
 type Rect = [number, number, number, number];
 interface SubPart { t: string; col: string }
-interface NodeSlot { id: string; sx: number; sy: number; w: number; tier: 'full' | 'small' | 'dot'; label: Rect | null; fsize: number; big: boolean; sub: SubPart[] | null }
+/** ax, ay：城郭挪到旁边空处时，城的真实位置（画一根牵引线连回去） */
+interface NodeSlot { id: string; sx: number; sy: number; w: number; tier: 'full' | 'small' | 'dot'; label: Rect | null; fsize: number; big: boolean; sub: SubPart[] | null; ax?: number; ay?: number }
 interface ArmyStack { armies: string[]; sx: number; sy: number; ax: number; ay: number; moving: boolean; march?: [number, number] }
 export interface Fx { kind: 'capture' | 'battle' | 'stamp' | 'float' | 'ripple' | 'convoy' | 'clash' | 'treaty' | 'card' | 'march' | 'camp' | 'envoy' | 'verdict'; node?: string; quiet?: boolean; stamp?: string; ok?: boolean; from?: string; path?: string[]; text?: string; color?: string; color2?: string; img?: string; dy?: number; t0: number; dur: number }
 const fxImg = new Map<string, HTMLImageElement>();
@@ -642,18 +643,26 @@ export class MapRenderer {
       if (sub) { g.font = '600 10.5px "Noto Serif SC", serif'; lw = Math.max(lw, sub.reduce((m, p) => m + g.measureText(p.t).width + 10, 4)); }
       const lh = fsize + 7 + (sub ? 15 : 0);
       let slot: NodeSlot | null = null;
-      for (const tier of ['full', 'small'] as const) {
+      // 原处摆不下：本方之城、被围、选中、都城，或放大到两倍以上时，挪到旁边空处摆出城郭，牵线回原处（不再缩成被盖住的小点）
+      const c0 = s.cities[id];
+      const movable = must || (!!c0 && topOfSafe(s, c0.controller) === s.player) || !!s.sieges[id] || type === 'capital' || z >= 2;
+      tiers: for (const tier of ['full', 'small'] as const) {
         const w = EMBLEM_PX[type] * zk * (tier === 'small' ? 0.62 : 1) * Math.max(0.72, Math.min(1.25, depthAt(this.h, sy)));
-        const em: Rect = [sx - w * 0.42, sy - w * 0.85, w * 0.84, w * 0.95];
-        // 城名：先放在城下，放不下试右、左
-        const cands: Rect[] = [[sx - lw / 2, sy + w * 0.12, lw, lh], [sx + w * 0.42 + 2, sy - w * 0.4 - lh / 2, lw, lh], [sx - w * 0.42 - 2 - lw, sy - w * 0.4 - lh / 2, lw, lh]];
-        if (!must && hit(em)) continue;
-        const lab = cands.find(r => !hit(r)) ?? (must || pr <= 2.5 ? cands[0] : null);
-        if (!lab && tier === 'full') continue;
-        placed.push(em);
-        if (lab) placed.push(lab);
-        slot = { id, sx, sy, w, tier, label: lab, fsize, big, sub };
-        break;
+        const anchors = [{ x: 0, y: 0 }, ...(movable && !must ? calloutOffsets(w) : [])];
+        for (const o of anchors) {
+          const ex = sx + o.x, ey = sy + o.y;
+          if (o.x || o.y) { if (ex < 20 || ex > this.w - 20 || ey < 60 || ey > this.h - 20) continue; }
+          const em: Rect = [ex - w * 0.42, ey - w * 0.85, w * 0.84, w * 0.95];
+          // 城名：先放在城下，放不下试右、左
+          const cands: Rect[] = [[ex - lw / 2, ey + w * 0.12, lw, lh], [ex + w * 0.42 + 2, ey - w * 0.4 - lh / 2, lw, lh], [ex - w * 0.42 - 2 - lw, ey - w * 0.4 - lh / 2, lw, lh]];
+          if (!must && hit(em)) continue;
+          const lab = cands.find(r => !hit(r)) ?? (must || pr <= 2.5 ? cands[0] : null);
+          if (!lab && (tier === 'full' || o.x || o.y)) continue;
+          placed.push(em);
+          if (lab) placed.push(lab);
+          slot = { id, sx: ex, sy: ey, w, tier, label: lab, fsize, big, sub, ...(o.x || o.y ? { ax: sx, ay: sy } : {}) };
+          break tiers;
+        }
       }
       if (!slot) {
         const dot: Rect = [sx - 5, sy - 5, 10, 10];
@@ -755,6 +764,12 @@ export class MapRenderer {
         if (isSel || isHover) { g.strokeStyle = 'rgba(255,214,120,0.95)'; g.lineWidth = 2; g.beginPath(); g.arc(sl.sx, sl.sy, 8 + (isSel ? Math.sin(time / 260) * 1.5 : 0), 0, Math.PI * 2); g.stroke(); }
       } else {
         const w = sl.w, type = emblemTypeOf(s, sl.id);
+        // 挪到旁边的城郭：一根牵引线连回真实位置，原处一枚小圆点
+        if (sl.ax !== undefined && sl.ay !== undefined) {
+          g.strokeStyle = 'rgba(20,14,8,0.7)'; g.lineWidth = 1.2; g.setLineDash([3, 2]);
+          g.beginPath(); g.moveTo(sl.ax, sl.ay); g.lineTo(sl.sx, sl.sy); g.stroke(); g.setLineDash([]);
+          g.beginPath(); g.arc(sl.ax, sl.ay, 3.5, 0, Math.PI * 2); g.fillStyle = col; g.fill(); g.lineWidth = 1.2; g.strokeStyle = mine ? '#f0cf86' : 'rgba(255,245,220,0.85)'; g.stroke();
+        }
         // 投影：日在左上，影落右下（显出城郭的高）
         const sh = g.createRadialGradient(sl.sx + w * 0.22, sl.sy + w * 0.02, 0, sl.sx + w * 0.22, sl.sy + w * 0.02, w * 0.62);
         sh.addColorStop(0, 'rgba(10,6,2,0.38)'); sh.addColorStop(1, 'rgba(10,6,2,0)');
@@ -1258,6 +1273,8 @@ export class MapRenderer {
       return { kind: 'army', id: h.stack[0] };
     }
     // 先看画出来的城郭（上层优先），再找最近的小点
+    // 挪到旁边的城郭：点它原处那枚小圆点也算点中
+    for (const sl of this.layout.values()) if (sl.ax !== undefined && sl.ay !== undefined && Math.hypot(sx - sl.ax, sy - sl.ay) < 10) return { kind: 'node', id: sl.id };
     // 城郭互相压着时，取城心离指针最近的一座
     const inside = [...this.layout.values()].filter(sl => sl.tier !== 'dot' && sx > sl.sx - sl.w * 0.42 && sx < sl.sx + sl.w * 0.42 && sy > sl.sy - sl.w * 0.85 && sy < sl.sy + sl.w * 0.2);
     if (inside.length) { inside.sort((a, b) => Math.hypot(sx - a.sx, sy - (a.sy - a.w * 0.35)) - Math.hypot(sx - b.sx, sy - (b.sy - b.w * 0.35))); return { kind: 'node', id: inside[0].id }; }

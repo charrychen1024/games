@@ -32,3 +32,11 @@ export function nearestHit<T extends { x: number; y: number; r: number }>(hits: 
   for (const h of hits) { const d = Math.hypot(x - h.x, y - h.y) / h.r; if (d < 1 && d < bd) { bd = d; best = h; } }
   return best;
 }
+
+/** 城池在原处摆不下时，挪到旁边的候选位置（相对原处；由近及远，每圈八方，先左右后上下）；纵向略压扁以合地图倾斜 */
+export function calloutOffsets(w: number): Pt2[] {
+  const dirs = [0, Math.PI, -Math.PI / 4, -Math.PI * 3 / 4, Math.PI / 4, Math.PI * 3 / 4, -Math.PI / 2, Math.PI / 2];
+  const out: Pt2[] = [];
+  for (const k of [1.05, 1.5, 2.0]) for (const a of dirs) out.push({ x: Math.cos(a) * w * k, y: Math.sin(a) * w * k * 0.8 });
+  return out;
+}

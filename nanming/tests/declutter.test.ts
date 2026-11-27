@@ -35,3 +35,14 @@ describe('点选取最近者', () => {
     expect(nearestHit(hits, 200, 100)).toBeNull();
   });
 });
+
+import { calloutOffsets } from '../src/render/declutter';
+describe('挤不下的城池挪到旁边空处', () => {
+  it('候选位置由近及远、八方都有，不含原位', () => {
+    const o = calloutOffsets(40);
+    expect(o.length).toBeGreaterThanOrEqual(16);
+    expect(o.every(p => Math.hypot(p.x, p.y) > 30)).toBe(true);
+    for (let i = 1; i < o.length; i++) expect(Math.hypot(o[i].x, o[i].y / 0.8)).toBeGreaterThanOrEqual(Math.hypot(o[i - 1].x, o[i - 1].y / 0.8) - 0.01);
+    expect(new Set(o.map(p => `${Math.sign(Math.round(p.x))},${Math.sign(Math.round(p.y))}`)).size).toBe(8);
+  });
+});
