@@ -114,3 +114,22 @@ describe('排队命令', () => {
     expect(u.order.t).toBe('move');
   });
 });
+
+describe('先登夺门', () => {
+  const siegeB = () => createBattle({ id: 's', kind: 'siege', node: 'x', nodeName: '某城', terrain: 'city', weather: 'clear', att: side('攻', 30000, { cav: 0.3 }), def: side('守', 3000, {}, true), wall: 80, seed: 5 });
+  it('步营登城入城后，自内夺下城门；城下待命的骑营随即由城门涌入', async () => {
+    const { stepSiege, command, legal, segX } = await import('../src/core/siege');
+    const sim = createSiege(siegeB());
+    const inf = sim.units.find(u => u.side === 'att' && u.kind === 'inf')!;
+    const cav = sim.units.find(u => u.side === 'att' && u.kind === 'cav')!;
+    // 左次段无人把守：步营一到就登城
+    for (const d of sim.units) if (d.side === 'def' && d.seg === 1) { d.seg = 3; d.x = segX(3); d.order = { t: 'man', seg: 3 }; }
+    expect(legal(cav, { t: 'assault', seg: 1 })).toBe(false);          // 骑兵爬不了云梯
+    command(sim, { unit: inf.id, side: 'att', order: { t: 'assault', seg: 1 } });
+    command(sim, { unit: cav.id, side: 'att', order: { t: 'enter' } });  // 骑营待命
+    for (let k = 0; k < 3000 && !sim.over && cav.state !== 'inside'; k++) stepSiege(sim, 0.1);
+    expect(sim.gate.hp).toBe(0);
+    expect(sim.events.some(e => e.kind === 'gate' && e.text.includes('夺'))).toBe(true);
+    expect(sim.events.some(e => e.kind === 'enter' && e.unit === cav.id && e.text.includes('城门'))).toBe(true);
+  });
+});

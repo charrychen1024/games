@@ -137,7 +137,7 @@ export function legal(u: SUnit, o: SOrder): boolean {
     if (['man', 'reserve', 'repair', 'sortie'].includes(o.t)) return false;
     if (o.t === 'bombard') return u.kind === 'art';
     if (o.t === 'cover') return u.kind === 'gun' || u.kind === 'art';
-    if (o.t === 'ram' || o.t === 'assault') return u.kind === 'inf' || u.kind === 'cav' && o.t === 'assault';
+    if (o.t === 'ram' || o.t === 'assault') return u.kind === 'inf';   // 骑兵不能攀城撞门，须由缺口或已开之门入城
     return true;
   }
   if (['assault', 'ram', 'bombard', 'cover', 'enter', 'retreat', 'move'].includes(o.t)) return false;
@@ -250,7 +250,7 @@ function move(sim: SiegeSim, dt: number) {
         }
         case 'enter': {
           const op = openings(sim);
-          if (!op.length) { u.state = goTo(u, u.x, COVER_Y + 60, dt) ? 'idle' : 'move'; break; }
+          if (!op.length) { u.state = goTo(u, u.x, Math.max(COVER_Y + 60, WALL_RANGE_Y + 30), dt) ? 'idle' : 'move'; break; }   // 在城上弓铳射程外待命
           const s = op.sort((a, b2) => Math.abs(segX(a) - u.x) - Math.abs(segX(b2) - u.x))[0];
           u.seg = s;
           if (goTo(u, segX(s), FOOT_Y, dt)) { u.state = 'inside'; u.y = WALL_Y - 10; ev(sim, 'enter', `${sim.att.name}${u.name}由${s === GATE_SEG && sim.gate.hp <= 0 ? '城门' : '缺口'}涌入城中。`, { side: 'att', unit: u.id, seg: s }); }
@@ -371,6 +371,16 @@ function fight(sim: SiegeSim, dt: number, rng: Rng) {
       const ap = inside.reduce((n, a) => n + a.troops * power(sim, a) * (a.kind === 'cav' ? 0.55 : 1), 0), dp = defenders.reduce((n, d) => n + d.troops * power(sim, d), 0);
       spread(defenders, ap * 0.0055 * jit() * dt);
       spread(inside, dp * 0.0055 * 1.2 * jit() * dt);
+    }
+  }
+  // 6.2 先登夺门：入城之兵杀到城门，自内开门（骑兵爬不得云梯，要等这一步或城墙缺口）；城中守军越多越慢
+  if (sim.gate.hp > 0) {
+    const raiders = att.filter(a => a.state === 'inside' && (a.kind === 'inf' || a.kind === 'cav'));
+    if (raiders.length) {
+      const ap = raiders.reduce((n, a) => n + a.troops * power(sim, a), 0);
+      const dp = def.filter(d => d.state === 'inside' || d.state === 'move' || (d.state === 'wall' && d.seg === GATE_SEG)).reduce((n, d) => n + d.troops * power(sim, d), 0);
+      sim.flags.seize = (sim.flags.seize ?? 0) + clamp(ap / Math.max(1, dp), 0.25, 2) * dt;
+      if (sim.flags.seize >= 12) { sim.gate.hp = 0; ev(sim, 'gate', `${sim.att.name}入城之兵夺下城门，自内打开！`, { side: 'att', seg: GATE_SEG }); }
     }
   }
   // 6.5 修城：守军边守边补

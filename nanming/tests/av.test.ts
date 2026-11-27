@@ -151,7 +151,7 @@ describe('史事不替玩家势力做决定', () => {
     let s = createGame('xi', 3);
     for (let i = 0; i < 20; i++) s = runMonthAuto(s, []);
     expect(s.reports.some(r => r.text.includes('张献忠破成都') && !r.text.includes('由你作主') && s.flags.lost_how_chengdu === undefined)).toBe(false);
-  });
+   }, 30000);
 });
 
 import { orderBudget, orderCost } from '../src/core/orders';

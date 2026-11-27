@@ -333,7 +333,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     if (u.kind === 'art') return { t: 'bombard', seg };
     if (u.kind === 'gun') return { t: 'cover', seg };
     if (open) return { t: 'enter' };
-    if (u.kind === 'cav') return null;
+    if (u.kind === 'cav') return { t: 'enter' };   // 骑兵攀不得城：城下待命，门开或墙破即冲入
     return seg === GATE_SEG ? { t: 'ram' } : { t: 'assault', seg };
   }
   view.cv.addEventListener('pointermove', e => {
@@ -398,8 +398,10 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
       const seg = p.seg ?? pu?.seg;
       if (seg !== undefined && (pu === undefined || pu.side !== side || side === 'def')) {
         const o = segOrder(sel as SUnit, seg);
-        if (!o || !isLegal(sel, o)) { say(side === 'att' && sel.kind === 'cav' ? '骑营须待城门或城墙打开缺口' : '此营做不了这件事'); return; }
-        click(); issue(sel, o); return;
+        if (!o || !isLegal(sel, o)) { say('此营做不了这件事'); return; }
+        click(); issue(sel, o);
+        if (side === 'att' && sel.kind === 'cav' && !ssim!.segs.some(x => x.hp <= 0) && ssim!.gate.hp > 0) say('骑兵攀不得云梯：已到城下待命，城墙轰出缺口、撞开城门或先登步卒自内夺门后即冲入');
+        return;
       }
       const [x, y] = view.unproject(sx, sy);
       if (side === 'def') {
