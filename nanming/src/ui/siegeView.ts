@@ -21,8 +21,11 @@ export class SiegeView extends RtView {
   }
   /** 2.5D 俯角：攻城时墙后之物（马道、女墙、城中屋宇）按离墙远近抬高，像从高处望去，墙顶与城中露出来 */
   static OB = 0.9;
+  static OB_DEF = 1.1;
   P(x: number, y: number, z = 0): [number, number, number] {
     if (this.o.me === 'att' && y < WALL_Y) z += (WALL_Y - y) * SiegeView.OB;
+    // 守城：镜头在城内高处，马道由内缘到外缘渐高（墙顶看得宽），墙外诸物一并抬起
+    else if (this.o.me === 'def' && y > WALL_Y - WALK) z += Math.min(WALK, y - (WALL_Y - WALK)) * SiegeView.OB_DEF;
     return super.P(x, y, z);
   }
   cam(): Camera { return this.o.me === 'att' ? { near: 1340, far: 0, k: 0.25, kx: 1.2, ky: 1 } : { near: 0, far: 400, k: 0.2, kx: 1.05, ky: 1.05 }; }
@@ -177,11 +180,21 @@ export class SiegeView extends RtView {
       if (!att) this.merlons(g, x0, x1, Y, true, inBreach);
       // 墙顶马道
       this.polyW(g, [[x0, Y, WALL_H], [x1, Y, WALL_H], [x1, Yi, WALL_H], [x0, Yi, WALL_H]], 'rgba(196,186,160,0.97)', ink(0.8, 0.5), 0.8);
+      // 马道铺石：两道纵缝、错缝横线（俯角下看得见墙顶）
+      g.strokeStyle = ink(0.6, att ? 0.16 : 0.2); g.lineWidth = 0.6;
+      for (const yy of [Y - WALK / 3, Y - WALK * 2 / 3]) { const [a1, b1] = this.P(x0, yy, WALL_H), [a2, b2] = this.P(x1, yy, WALL_H); g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b2); g.stroke(); }
+      for (let xx = x0 + 12; xx < x1; xx += 24) { if (inBreach(xx)) continue; const [a1, b1] = this.P(xx, Y, WALL_H), [a2, b2] = this.P(xx + 4, Yi, WALL_H); g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b2); g.stroke(); }
+      if (!att) {
+        // 垛口落在马道上的影（日在城外偏左）
+        const shw = g.createLinearGradient(0, this.P(mid, Y, WALL_H)[1], 0, this.P(mid, Y - WALK * 0.55, WALL_H)[1]);
+        shw.addColorStop(0, 'rgba(30,24,16,0.28)'); shw.addColorStop(1, 'rgba(30,24,16,0)');
+        this.polyW(g, [[x0, Y, WALL_H], [x1, Y, WALL_H], [x1 - 6, Y - WALK * 0.55, WALL_H], [x0 - 6, Y - WALK * 0.55, WALL_H]], shw);
+        // 城墙落进街巷的影，内缘上沿一道亮边
+        const shs = g.createLinearGradient(0, this.P(mid, Yi, 0)[1], 0, this.P(mid, Yi - 46, 0)[1]);
+        shs.addColorStop(0, 'rgba(30,24,16,0.32)'); shs.addColorStop(1, 'rgba(30,24,16,0)');
+        this.polyW(g, [[x0, Yi, 0], [x1, Yi, 0], [x1 - 14, Yi - 46, 0], [x0 - 14, Yi - 46, 0]], shs);
+      }
       if (att) {
-        // 马道铺石：两道纵缝、错缝横线（俯角下看得见墙顶）
-        g.strokeStyle = ink(0.6, 0.16); g.lineWidth = 0.6;
-        for (const yy of [Y - WALK / 3, Y - WALK * 2 / 3]) { const [a1, b1] = this.P(x0, yy, WALL_H), [a2, b2] = this.P(x1, yy, WALL_H); g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b2); g.stroke(); }
-        for (let xx = x0 + 12; xx < x1; xx += 24) { const [a1, b1] = this.P(xx, Y, WALL_H), [a2, b2] = this.P(xx + 4, Yi, WALL_H); g.beginPath(); g.moveTo(a1, b1); g.lineTo(a2, b2); g.stroke(); }
         // 内侧女墙（矮墙）：顶面与朝外的一面
         this.polyW(g, [[x0, Yi, WALL_H + 6], [x1, Yi, WALL_H + 6], [x1, Yi - 3, WALL_H + 6], [x0, Yi - 3, WALL_H + 6]], 'rgba(176,168,148,0.95)');
         this.polyW(g, [[x0, Yi, WALL_H], [x1, Yi, WALL_H], [x1, Yi, WALL_H + 6], [x0, Yi, WALL_H + 6]], 'rgba(132,124,108,0.95)', ink(0.8, 0.4), 0.6);
@@ -193,6 +206,7 @@ export class SiegeView extends RtView {
       // 墙面
       this.polyW(g, [[x0, faceY, 0], [x1, faceY, 0], [x1, faceY, WALL_H], [x0, faceY, WALL_H]], face, ink(0.85, 0.6), 1);
       this.bricks(g, x0, x1, faceY, WALL_H * 0.14, WALL_H, 10, att ? 0.2 : 0.14);
+      if (!att) { const [a1, b1] = this.P(x0, Yi, WALL_H), [a2, b2] = this.P(x1, Yi, WALL_H); g.strokeStyle = 'rgba(240,232,210,0.7)'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(a1, b1 + 1); g.lineTo(a2, b2 + 1); g.stroke(); }
       // 条石基座与墙根苔点
       this.polyW(g, [[x0, faceY, 0], [x1, faceY, 0], [x1, faceY, WALL_H * 0.14], [x0, faceY, WALL_H * 0.14]], att ? 'rgba(140,128,104,0.95)' : 'rgba(150,140,118,0.95)', ink(0.8, 0.5), 0.8);
       let sd = s * 97 + 13; const rr = () => { sd = (sd * 9301 + 49297) % 233280; return sd / 233280; };
@@ -369,6 +383,7 @@ export class SiegeView extends RtView {
         if (onWall) {
           // 城头守军：只露半身于垛口之后
           const sp = this.sprite(u.side, u.kind === 'gun' ? 'gun' : 'inf', u.side === this.o.me ? 'back' : 'front', 0);
+          if (this.o.me === 'def') { g.fillStyle = 'rgba(30,24,16,0.28)'; g.beginPath(); g.ellipse(x - px * 0.12, y + px * 0.02, px * 0.3, px * 0.08, 0, 0, Math.PI * 2); g.fill(); }
           if (this.o.me === 'att') { g.save(); g.beginPath(); g.rect(x - px, y - px * 2, px * 2, px * 1.45); g.clip(); }
           g.drawImage(sp, x - px * 0.375, y - px - bob, px * 0.75, px);
           if (this.o.me === 'att') g.restore();
@@ -465,11 +480,13 @@ export class SiegeView extends RtView {
     const w = this.where(u); if (!w) return null;
     const [x, y, s] = this.PU(w.x, w.y, w.z); return [x, y - this.H * s * 0.1];
   }
+  /** 看得见的那面墙（攻城看外侧，守城看内侧） */
+  faceY() { return this.o.me === 'att' ? WALL_Y : WALL_Y - WALK; }
   /** 某段城墙在画布上的点选位置 */
   segScreen(seg: number): [number, number] {
-    const [, wy, ws] = this.P(500, WALL_Y);
+    const [, wy, ws] = this.P(500, this.faceY());
     const h = WALL_H * ws * this.H / 260;
-    const [x] = this.P((seg + 0.5) * 1000 / SEGMENTS, WALL_Y);
+    const [x] = this.P((seg + 0.5) * 1000 / SEGMENTS, this.faceY());
     return [x, wy - h * 0.5];
   }
   pick(sx: number, sy: number): { unit?: string; seg?: number } {
@@ -483,7 +500,7 @@ export class SiegeView extends RtView {
       if (d < r && d < bd) { bd = d; best = u.id; }
     }
     if (best) return { unit: best };
-    const [, wy, ws] = this.P(500, WALL_Y);
+    const [, wy, ws] = this.P(500, this.faceY());
     const h = WALL_H * ws * this.H / 260;
     // 城墙一带：门段的命中区包住整个门洞，并往墙根外放宽一截（点城门下半截也算撞门）
     if (sy > wy - h * 1.6 && sy < wy + Math.max(8, h * 0.9)) {

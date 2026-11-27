@@ -2269,7 +2269,8 @@ export class App {
       }
     } catch (e) {
       console.error(e);
-      this.toast('结算出错：' + (e as Error).message, 'close');
+      const msg = (e as Error).message ?? '';
+      this.toast(/dynamically imported module|Importing a module script failed|error loading dynamically/i.test(msg) ? '游戏已更新，请刷新页面后继续（读“自动存档”即可接着玩）' : '结算出错：' + msg, 'close');
       return;
     }
     const from: Record<string, [number, number]> = {};

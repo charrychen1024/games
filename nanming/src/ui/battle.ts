@@ -3,6 +3,8 @@ import type { GameState } from '../core/types';
 import type { BattleState } from '../core/battle';
 import { POLITIES } from '../data/factions';
 import type { SideLook } from './rtView';
+// 静态引入：动态分包在新版上线后，旧页面会去取已删掉的旧分包而报错（2026-11-26 玩家实遇）
+import { playRealtime } from './rtBattle';
 
 export function lookOf(s: GameState, faction: string): SideLook {
   const f = s.factions[faction];
@@ -12,6 +14,5 @@ export function lookOf(s: GameState, faction: string): SideLook {
 }
 
 export async function playBattle(s: GameState, b0: BattleState, side: 'att' | 'def', fast = false): Promise<{ result: BattleState; manual: boolean }> {
-  const { playRealtime } = await import('./rtBattle');
   return playRealtime(s, b0, side, fast);
 }
