@@ -70,3 +70,7 @@ nanming/
 ```
 
 作者：一尾小石斑。素材授权见 [`assets/CREDITS.md`](assets/CREDITS.md)。
+
+## 素材与授权
+
+一尾小石斑 作。图标 [game-icons.net](https://game-icons.net)（Lorc、Delapouite 等，CC BY 3.0）；底图 Natural Earth（公有领域）；地形高程 AWS Terrain Tiles（SRTM、ETOPO1、GEBCO 等公开数据）；字体 Noto Serif SC、Ma Shan Zheng（OFL）。

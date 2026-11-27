@@ -2551,7 +2551,7 @@ export class App {
       step('war', '战斗', '点选一营，再点敌营、城段或地面下令；可擂鼓、劝降，也可交部将代打。敌军崩溃、破城或日暮即止'),
       step('why', '钱粮来由', '每笔变化都有出处，红框是你的命令'),
       step('event', '史事 · 时事', '史事合乎史实时触发；时事按本局局势而生（灾异、民心、索饷、来投、丰收……），常要你决断'),
-    ), h('div', { class: 'note' }, '一尾小石斑 作。图标 game-icons.net（CC BY 3.0）；底图 Natural Earth（公有领域）；地形高程 AWS Terrain Tiles（SRTM、ETOPO1、GEBCO 等公开数据）；字体 Noto Serif SC、Ma Shan Zheng（OFL）。')],
+    ), h('div', { class: 'about-sign' }, h('span', { class: 'slogan' }, '山河半壁，天命未定'), h('span', { class: 'by' }, '一尾小石斑 作'))],
     [{ label: '开始', icon: 'ok', primary: true, onclick: () => {} }]);
   }
 
