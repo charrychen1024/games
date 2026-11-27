@@ -609,6 +609,7 @@ try {
   check('样稿直接打开扬州详情', (await text('#city-name')).includes('扬州'));
   check('详情说明谁在城外围城', (await text('#siege-box')).includes('多铎'), await text('#siege-box'));
   check('详情说明实控者', (await text('#city-controller')).includes('弘光朝廷'));
+  check('围城卡写出兵力之比与威慑效果', /兵力约 \d+ 比 1/.test(await text('#siege-awe')) && /劝降 \+\d+%/.test(await text('#siege-awe')), await text('#siege-awe'));
   await page.screenshot({ path: `${OUT}/02-siege.png` });
   const sm = await nextMonth(true);
   check('扬州攻城战进入战斗画面并完成', sm.battles >= 1, JSON.stringify(sm));

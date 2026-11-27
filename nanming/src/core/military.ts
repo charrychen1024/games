@@ -182,10 +182,16 @@ export function buildSiegeBattle(s: GameState, node: string): BattleState | null
   const city = s.cities[node];
   const siege = s.sieges[node];
   if (!city || !siege) return null;
-  const attArmies = siege.armies.map(id => s.armies[id]).filter(a => a && a.location === node && a.progress === 0);
+  const present = siege.armies.map(id => s.armies[id]).filter(a => a && a.location === node && a.progress === 0);
+  // 分兵：只带下令攻城的军队；围困之军留在城外维持包围（都没下攻城令时，在场者全上）
+  const storm = present.filter(a => a.order.kind === 'siege' && a.order.assault);
+  const attArmies = storm.length ? storm : present;
   if (!attArmies.length || city.garrison <= 0) return null;
   const att = combineSide(s, attArmies, { foeFaction: city.controller });
   const def = combineSide(s, [], { garrison: { node, troops: city.garrison }, foeFaction: siege.attacker });
+  // 威慑：城外大军（围者也算）越压倒，守军开战时士气越低
+  const hit = siegeAwe(s, node).morale;
+  for (const l of def.lanes) l.morale = Math.max(10, l.morale - hit);
   // 每一方的 surrender 是本方主将的降意：攻方劝降成功率看守将降意，城中人心离散时更高
   def.surrender = Math.min(100, (s.chars[def.commander]?.att.surrender ?? 45) + Math.max(0, 50 - city.minxin) / 2);
   return createBattle({ id: newId(s, 'bt'), kind: 'siege', node, nodeName: nodeName(node), terrain: 'city', weather: weatherFor(s, node),
@@ -556,6 +562,55 @@ export function defectFaction(s: GameState, f: string, to: string) {
   for (const a of Object.values(s.armies)) if (a.faction === f && a.order.kind === 'siege' && !hostile(s, f, s.cities[a.order.target]?.controller ?? f)) a.order = { kind: 'hold' };
 }
 
+/** 围城威慑：城外诸军（攻者、围者都算）与城中守军之比越大，守军越动摇。
+ *  minxin：每月民心减；desert：每月守军逃散之比；persuade：遣使劝降加成；morale：开战时守军士气减；early：每月未战先降或弃城之机。 */
+export function siegeAwe(s: GameState, node: string): { ratio: number; besiegers: number; minxin: number; desert: number; persuade: number; morale: number; early: number } {
+  const c = s.cities[node], sg = s.sieges[node];
+  const besiegers = sg ? sg.armies.map(id => s.armies[id]).filter(a => a && a.location === node && a.progress === 0).reduce((n, a) => n + a.troops, 0) : 0;
+  return aweOf(s, node, besiegers / Math.max(1, c?.garrison ?? 0), besiegers);
+}
+function aweOf(s: GameState, node: string, ratio: number, besiegers: number) {
+  const c = s.cities[node];
+  const gov = c?.governor ? s.chars[c.governor] : undefined;
+  const sur = gov && gov.status === 'active' ? gov.att.surrender : 45;
+  const capital = !!c && s.factions[c.controller]?.capital === node;
+  const r = Math.round(ratio * 10) / 10;
+  return {
+    ratio: r, besiegers,
+    minxin: r >= 1.5 ? Math.min(4, Math.round((r - 1) * 10) / 10) : 0,
+    desert: r >= 2 ? Math.min(0.06, 0.01 + (r - 2) * 0.015) : 0,
+    persuade: r > 1 ? Math.min(0.25, (r - 1) * 0.05) : 0,
+    morale: r > 1 ? Math.min(15, Math.round((r - 1) * 3)) : 0,
+    early: r >= 3 ? Math.min(0.3, 0.03 * (r - 2) * (sur / 50)) * (capital ? 0.5 : 1) : 0,
+  };
+}
+/** 每月的威慑：民心浮动、守军夜缒逃散；兵力悬殊时守将可能未战先降（降意高）或弃城夜遁。返回城是否已易手 */
+function applyAwe(s: GameState, node: string): boolean {
+  const c = s.cities[node], sg = s.sieges[node];
+  const aw = siegeAwe(s, node);
+  if (!sg || aw.ratio < 1.5) return false;
+  const inv = friendly(s, c.controller, s.player) || friendly(s, sg.attacker, s.player);
+  const src = { kind: 'battle' as const, ref: `威慑:${node}` };
+  if (aw.minxin) bump(s, node, 'minxin', -aw.minxin, `城外大军压境（兵力 ${aw.ratio} 比 1），人心惶惶`, src);
+  const lost = Math.round(c.garrison * aw.desert);
+  if (lost > 0) {
+    bump(s, node, 'garrison', -lost, `大军压境，守军夜缒出城逃散`, src);
+    // 围城首月与此后每三月报一次，免得月月刷屏
+    if (sg.months === 1 || sg.months % 3 === 0) report(s, { cat: '军报', act: 'siege', from: sg.attacker, to: c.controller, node, urgent: c.controller === s.player, faction: inv ? undefined : sg.attacker,
+      text: `${nodeName(node)}城外${factionName(s, sg.attacker)}兵力 ${aw.ratio} 倍于守军，城中人心惶惶，守军夜缒出城逃散 ${troopsText(lost)} 人。` });
+  }
+  if (aw.early > 0 && rngFor(s.seed, 'awe', s.turn, node).chance(aw.early)) {
+    const gov = c.governor ? s.chars[c.governor] : undefined;
+    const yields = !gov || gov.att.surrender >= 50;
+    const who = gov?.name ?? '守将';
+    report(s, { cat: '军报', act: 'siege', from: sg.attacker, to: c.controller, node, urgent: c.controller === s.player || sg.attacker === s.player, faction: inv ? undefined : sg.attacker,
+      text: yields ? `${factionName(s, sg.attacker)}重兵压境（${aw.ratio} 比 1），${who}自知不敌，未战开城出降。` : `${factionName(s, sg.attacker)}重兵压境（${aw.ratio} 比 1），${who}不愿降，乘夜弃城而走。` });
+    capture(s, node, sg.attacker, yields ? '献城' : '弃城', yields ? gov?.id : sg.armies.map(id => s.armies[id]).find(Boolean)?.commander);
+    return s.cities[node].controller !== c.controller || !s.sieges[node];
+  }
+  return false;
+}
+
 /** 围城阶段的准备：建立/维持/解除围城，空城直接占领。返回需要打攻城战的城。 */
 export function updateSieges(s: GameState): string[] {
   const assaults: string[] = [];
@@ -606,6 +661,8 @@ export function updateSieges(s: GameState): string[] {
       if (existing.segs) existing.segs = existing.segs.map(h => Math.min(city.wall, h + 4));
     }
     s.sieges[node].months++;
+    const ctrl0 = city.controller;
+    if (applyAwe(s, node) || s.cities[node].controller !== ctrl0) continue;
     if (here.some(a => a.order.kind === 'siege' && a.order.assault)) assaults.push(node);
   }
   return assaults;

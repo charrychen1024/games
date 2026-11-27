@@ -29,7 +29,7 @@ import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot }
 import { yangzhouSiegeState } from '../data/presets';
 import { createGame } from '../data/scenario1644';
 import { polityOf } from '../core/regime';
-import { canSea } from '../core/military';
+import { canSea, siegeAwe } from '../core/military';
 import { LENSES, TONE_COLOR, TONE_NAME, TIER_COLOR, TIER_NAME, type LensId, type Tone, type StoreTier } from '../render/lens';
 import type { PendingChoice } from '../core/events';
 
@@ -942,6 +942,21 @@ export class App {
 
   /** 面板数字上次显示的值：再显示时从旧值滚到新值，看得出变化的过程 */
   lastNums: Record<string, number> = {};
+  /** 围城威慑：兵力之比与它带来的效果（民心、逃散、劝降、开战士气、未战先降） */
+  aweRow(node: string, known: boolean): HTMLElement {
+    const aw = siegeAwe(this.s!, node);
+    const chips: HTMLElement[] = [];
+    const chip = (icon: string, t: string) => chips.push(h('span', { class: 'aw-chip' }, ic(icon), t));
+    if (aw.minxin) chip('minxin', `民心 −${aw.minxin}/月`);
+    if (aw.desert) chip('troops', `守军逃散 ${Math.round(aw.desert * 100)}%/月`);
+    if (aw.persuade) chip('persuade', `劝降 +${Math.round(aw.persuade * 100)}%`);
+    if (aw.morale) chip('morale', `开战守军士气 −${aw.morale}`);
+    if (aw.early) chip('persuade', `未战先降之机 ${Math.round(aw.early * 100)}%/月`);
+    return h('div', { class: 'awe', id: 'siege-awe' },
+      // 敌军围我：敌兵只知约数，比值也只写约数
+      h('b', null, known ? (this.isMineOrVassal(this.s!.sieges[node]?.attacker ?? '') ? `兵力 ${aw.ratio} 比 1` : `兵力约 ${Math.max(1, Math.round(aw.ratio))} 比 1`) : '兵力之比不详'),
+      known ? (aw.ratio >= 1.5 || aw.persuade ? h('span', { class: 'aw-chips' }, ...chips) : h('small', null, '城外兵力不足以震慑守军（多过守军一倍半起渐显）')) : null);
+  }
   tile(icon: string, k: string, v: string, opts: { id?: string; d?: number; meter?: number; unit?: string; raw?: number; key?: string; fmt?: (n: number) => string } = {}): HTMLElement {
     const num = h('span', { class: 'num' }, v);
     const mt = opts.meter !== undefined ? meter(opts.meter, mcol(opts.meter)) : null;
@@ -1013,6 +1028,7 @@ export class App {
           h('div', { class: 'side' }, h('b', null, this.isMineOrVassal(sg.attacker) ? wan(total) : roughTroops(total)), h('small', null, `城外 ${s.factions[sg.attacker].short} · ${att.map(a => charName(s, a.commander)).join('、')}`)),
           h('div', { class: 'x' }, '围'),
           h('div', { class: 'side' }, h('b', null, known ? wan(c.garrison) : roughTroops(c.garrison)), h('small', null, known ? `城内守军 · 粮够 ${months} 月` : '城内守军'))),
+        this.aweRow(id, known || this.isMineOrVassal(sg.attacker)),
       ));
     }
     const here = Object.values(s.armies).filter(a => a.location === id && a.progress === 0);
@@ -1124,8 +1140,8 @@ export class App {
         const vas = Object.values(s.armies).filter(a => a.location === id && a.progress === 0 && s.factions[a.faction]?.overlord === s.player).length;
         const who = gate.length > 1 ? `${gate.length} 支合兵 ${wan(n)}` : `${gate[0].name} ${wan(n)}`;
         cmds.push(
-          { id: 'act-storm', icon: 'storm', label: gate.length > 1 ? '合兵攻城' : '攻城', tip: `${who}，本月攻城（合成一战）${vas ? `；城下另有下属 ${vas} 支，须另行号令` : ''}`, fn: () => set(true), done: sieging(true), primary: true, free: true },
-          { id: 'act-blockade', icon: 'blockade', label: gate.length > 1 ? '合兵围困' : '围困', tip: `${who}，围而不攻，待城中粮尽`, fn: () => set(false), done: sieging(false), free: true });
+          { id: 'act-storm', icon: 'storm', label: gate.length > 1 ? '合兵攻城' : '攻城', tip: `${who}，本月一齐攻城（合成一战）。也可在各军面板分别下令：攻者入战，围者留在城外不折损、照样震慑守军${vas ? `；城下另有下属 ${vas} 支，须另行号令` : ''}`, fn: () => set(true), done: sieging(true), primary: true, free: true },
+          { id: 'act-blockade', icon: 'blockade', label: gate.length > 1 ? '合兵围困' : '围困', tip: `${who}，围而不攻：断其粮道，以兵势威慑——兵力越压倒，守军逃散越多、越可能未战先降`, fn: () => set(false), done: sieging(false), free: true });
       }
       cmds.push({ id: 'act-persuade', icon: 'persuade', label: '劝降', tip: '遣使入城说降守将', fn: () => this.formPersuade(id), done: s.missions.some(m => (m.order as any).node === id) || this.orders.some(o => o.kind === 'persuade' && o.node === id), primary: !cmds.length });
     }

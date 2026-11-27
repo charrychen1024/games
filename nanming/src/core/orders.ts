@@ -566,7 +566,8 @@ export function persuadeChance(s: GameState, f: string, charId: string, node: st
   const sg = s.sieges[node];
   if (sg && topOf(s, sg.attacker) === topOf(s, f)) { p += 0.25; factors.push('城已被我军围困 +25%'); }
   const near = Object.values(s.armies).filter(a => topOf(s, a.faction) === topOf(s, f) && (a.location === node || shortestPath(a.location, node, false)?.length === 1)).reduce((n, a) => n + a.troops, 0);
-  if (near > city.garrison * 2) { p += 0.1; factors.push('我军压境 +10%'); }
+  // 威慑随兵力之比渐增（至多 +25%）
+  if (near > city.garrison) { const r = Math.round(near / Math.max(1, city.garrison) * 10) / 10, b = Math.min(0.25, (r - 1) * 0.05); p += b; factors.push(`我军压境（兵力 ${r} 比 1）+${Math.round(b * 100)}%`); }
   if (city.minxin < 40) { p += 0.08; factors.push('城中人心离散 +8%'); }
   const ctrl = s.factions[city.controller];
   if (ctrl && ctrl.polity === s.factions[f].polity) { p += 0.1; factors.push('同奉一朝 +10%'); }
