@@ -3,7 +3,7 @@
  * 支出：驻军粮饷、以本城为粮台的军队粮饷、方针开销、起运上缴。 */
 import type { City, GameState, LedgerEntry, Policy } from './types';
 import { bump, report, nodeName, topOf, troopsText, charName, hostile, friendly } from './state';
-import { neighbors, NODE } from '../data/geography';
+import { neighbors, NODE, shortestPath, pathDays } from '../data/geography';
 import { lunarOf } from './calendar';
 import { shortDate } from './calendar';
 import { govEffects } from './people';
@@ -279,6 +279,7 @@ export function runEconomy(s: GameState) {
     bump(s, c.id, 'silver', -Math.round(c.garrison * SILVER_PER_SOLDIER), `驻军 ${troopsText(c.garrison)} 人月饷`, { kind: 'upkeep', ref: 'garrison' });
     if (s.sieges[c.id]) bump(s, c.id, 'grain', -Math.round(c.garrison * GRAIN_PER_SOLDIER * 0.5), '守城加给', { kind: 'siege', ref: c.id });
   }
+  fixForeignSupply(s);
   for (const a of Object.values(s.armies).sort((x, y) => x.id.localeCompare(y.id))) {
     const mine = (id: string) => { const c = s.cities[id]; return !!c && (c.controller === a.faction || topOf(s, c.controller) === topOf(s, a.faction)); };
     // 就地筹粮：一部分口粮饷银取于所过地方，所在城民心随之下降
@@ -479,9 +480,28 @@ export function supplyChoiceError(s: GameState, a: { faction: string; location: 
   const c = s.cities[node];
   if (!c) return '不是城池';
   if (c.controller !== a.faction && topOf(s, c.controller) !== topOf(s, a.faction)) return '只能以己方或同阵营友方之城为粮台';
+  // 友方之城只在军队驻扎其地时就地支应，不能把军饷远远甩给别家（无城可依的下属军镇除外）
+  if (c.controller !== a.faction && node !== a.location && hasCity(s, a.faction)) return `${nodeName(node)}属${s.factions[c.controller]?.name ?? '友方'}：友方之城只在军队驻扎其地时就地支应，改粮台须选本方之城`;
   const sg = s.sieges[node];
   if (sg && !friendly(s, a.faction, sg.attacker)) return `${nodeName(node)}被围，支不出粮`;
   return node === a.location ? null : supplyBlock(s, a.faction, node, a.location);
+}
+
+const hasCity = (s: GameState, f: string) => Object.values(s.cities).some(c => c.controller === f);
+
+/** 军队离开了供饷的友方之城：粮台改回本方最近、可通、有粮的城（玩家与电脑同一规矩），玩家的军队写进军情 */
+export function fixForeignSupply(s: GameState) {
+  for (const a of Object.values(s.armies).sort((x, y) => x.id.localeCompare(y.id))) {
+    const sup = s.cities[a.supply];
+    if (!sup || sup.controller === a.faction || a.location === a.supply || !hasCity(s, a.faction)) continue;
+    const own = Object.values(s.cities).filter(c => c.controller === a.faction && !supplyChoiceError(s, a, c.id));
+    const best = own.map(c => ({ c, p: shortestPath(a.location, c.id, true) })).filter(x => x.p)
+      .sort((x, y) => (pathDays(a.location, x.p!) - x.c.grain / 20000) - (pathDays(a.location, y.p!) - y.c.grain / 20000) || x.c.id.localeCompare(y.c.id))[0];
+    if (!best) continue;
+    const from = a.supply;
+    a.supply = best.c.id;
+    if (a.faction === s.player) report(s, { cat: '内政', faction: s.player, node: best.c.id, text: `${a.name}离开${nodeName(from)}，${s.factions[sup.controller]?.name ?? '友方'}不再就地供饷，粮台改由${nodeName(best.c.id)}支应（每月约 ${Math.round(a.troops * GRAIN_PER_SOLDIER)} 石、饷银 ${Math.round(a.troops * SILVER_PER_FIELD_SOLDIER)} 两）。`, src: { kind: 'upkeep', ref: a.id } });
+  }
 }
 
 /** 本可用来发这支军队饷的银：本方各城中可设为它粮台的城（未被围、粮道通到军中）的存银之和。

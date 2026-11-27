@@ -23,7 +23,7 @@ import { isReduced, setReducedMotion, reducedSystem } from './motion';
 import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
-import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
+import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
 import { projectOrders, validateQueued, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, supplyBlock, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { yangzhouSiegeState } from '../data/presets';
@@ -117,6 +117,8 @@ export class App {
   targetCb: ((node: NodeId) => void) | null = null;
   /** 选目标时可否点敌军（出征、进攻：点敌军即开赴其所在截击） */
   targetArmy: ((foe: string) => void) | null = null;
+  /** 选目标的用途：行军（默认）或改粮台（悬停提示改写支粮之数与谁家出钱） */
+  targetMode: 'march' | 'supply' = 'march';
   drag: { x: number; y: number; moved: boolean } | null = null;
 
   constructor() {
@@ -472,7 +474,21 @@ export class App {
         row('troops', known ? troopsText(c.garrison) : roughTroops(c.garrison)),
         row('wall', `城防 ${Math.round(c.wall)}`));
       if (s.sieges[p.id]) tip.append(row('siege', `被围 · 第 ${s.sieges[p.id].months} 月`));
-      if (this.map.view.targeting) {
+      if (this.map.view.targeting && this.targetMode === 'supply') {
+        // 改粮台：此城能否支粮、每月支多少、出自谁家府库
+        const a = s.armies[this.map.view.targeting.army];
+        const err = supplyChoiceError(s, a, p.id);
+        const k = 1 - forageShare(s, a.faction);
+        const g = Math.round(a.troops * GRAIN_PER_SOLDIER * k), v = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * k);
+        tip.className = 'hud march';
+        clear(tip).append(h('div', { class: 'tt-h' }, h('span', { style: { width: '12px', height: '12px', borderRadius: '50%', background: f.color, display: 'inline-block', border: '1.5px solid #fff' } }), n.name, h('small', null, c.controller === a.faction ? '本方' : f.short)));
+        if (err) tip.append(h('div', { class: 'mc-warn' }, ic('close'), err));
+        else {
+          tip.append(h('div', { class: 'tt-r' }, ic('grain'), h('b', null, `每月支粮 ${wan(g)} 石`)), h('div', { class: 'tt-r' }, ic('silver'), h('b', null, `饷银 ${wan(v)} 两`)));
+          tip.append(h('div', { class: c.controller === a.faction ? 'tt-r' : 'mc-warn' }, ic('factions'), c.controller === a.faction ? `出自本方${n.name}府库（现存粮 ${wan(c.grain)} 石、银 ${wan(c.silver)} 两）` : `出自${f.name}府库：驻在此城才由其就地支应`));
+          tip.append(h('div', { class: 'mc-act' }, p.id === a.supply ? '现为粮台' : '左键：设为粮台'));
+        }
+      } else if (this.map.view.targeting) {
         const mi = this.marchInfo(this.map.view.targeting.army, p.id);
         tip.className = 'hud march';
         clear(tip).append(h('div', { class: 'tt-h' }, h('span', { style: { width: '12px', height: '12px', borderRadius: '50%', background: f.color, display: 'inline-block', border: '1.5px solid #fff' } }), n.name, h('small', null, `${f.short}${mi.rel === 'war' ? ' · 敌' : mi.rel === 'friend' ? ' · 友' : ' · 未交战'}`)));
@@ -555,7 +571,8 @@ export class App {
   }
 
   /** 进入选目标：屏幕上方一条提示带“取消”；点空地、右键、Esc、再点一次出征都可取消 */
-  beginTarget(army: string, text: string, cb: (node: NodeId) => void, onArmy?: (foe: string) => void) {
+  beginTarget(army: string, text: string, cb: (node: NodeId) => void, onArmy?: (foe: string) => void, mode: 'march' | 'supply' = 'march') {
+    this.targetMode = mode;
     this.map.view.targeting = { army, path: null };
     this.targetCb = cb;
     this.targetArmy = onArmy ?? null;
@@ -1217,7 +1234,7 @@ export class App {
     sec.append(h('div', { class: 'tiles', style: { marginTop: '8px' } },
       this.tile('troops', '兵力', visible ? wan(a.troops) : roughTroops(a.troops)),
       this.tile('morale', '士气', visible ? String(Math.round(a.morale)) : '不详', { meter: visible ? a.morale : undefined }),
-      this.tile('supply', '粮台', visible ? nodeName(a.supply) : '不详'),
+      this.tile('supply', '粮台', visible ? nodeName(a.supply) : '不详', visible && s.cities[a.supply] && s.cities[a.supply].controller !== a.faction ? { unit: `${s.factions[s.cities[a.supply].controller]?.short ?? '友方'}供饷` } : {}),
     ));
     if (visible) sec.append(h('div', { class: 'tiles', style: { marginTop: '6px', gridTemplateColumns: 'repeat(4,1fr)' } },
       this.tile('inf', '步', pct(a.mix.inf)), this.tile('cav', '骑', pct(a.mix.cav)), this.tile('gun', '火器', pct(a.mix.gun)), this.tile('navy', '水师', pct(a.mix.navy))));
@@ -1242,7 +1259,11 @@ export class App {
         acts.append(A('act-assault', 'storm', '攻城', () => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'siege', target: a.location, assault: true } }), true),
           A('act-blockade', 'blockade', '围困', () => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'siege', target: a.location, assault: false } })));
       } else if (a.progress === 0 && here && here.controller === s.player) acts.append(A('act-reinforce', 'reinforce', '拨兵', () => this.formReinforce(id)));
-      acts.append(A('act-supply', 'grain', '粮台', () => this.beginTarget(id, `点选${a.name}改由哪座城支粮（须己方或同阵营、粮道可通）`, n => { this.addOrder({ id: this.newOrderId(), kind: 'supply', army: id, node: n }); })));
+      acts.append(A('act-supply', 'grain', '粮台', () => this.beginTarget(id, `点选${a.name}改由哪座城支粮（本方之城；驻在友方城时也可由该城就地支应）`, n => {
+        if (!this.addOrder({ id: this.newOrderId(), kind: 'supply', army: id, node: n })) return;
+        const c = this.s!.cities[n];
+        if (c && c.controller !== a.faction) this.toast(`${a.name}由${nodeName(n)}就地支应，粮饷出自${this.s!.factions[c.controller]?.name ?? '友方'}府库；离开此城即改回本方之城`, 'grain');
+      }, undefined, 'supply')));
       sec.append(acts);
     } else if (vassal) {
       sec.append(h('div', { class: 'sec-title' }, ic('urgent'), `号令 · 服从 ${f.loyalty}`));

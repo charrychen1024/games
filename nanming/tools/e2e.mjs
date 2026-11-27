@@ -542,6 +542,16 @@ try {
   await page.evaluate(() => { NM.newsMode = 'all'; NM.closePanel?.(); });
   if (await visible('#report:not(.hidden)')) await page.keyboard.press('Escape');
 
+  console.log('粮台规则');
+  await page.evaluate(() => { NM.start(NM_presets.createGame('zheng', 3), false); });
+  await wait(500);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => NM.selectArmy('a_zhk'));
+  await wait(400);
+  check('军队面板写明粮台由哪家供饷（镇江水师：弘光供饷）', /镇江\s*弘光供饷/.test(await text('#panel')), (await text('#panel')).slice(0, 80));
+  check('郑氏不能把镇江水师的粮台改到弘光的南京', await page.evaluate(() => { NM.orders = NM.orders ?? []; return NM.addOrder({ id: 'sx', kind: 'supply', army: 'a_zhk', node: 'nanjing' }) === false; }));
+  await page.evaluate(() => NM.closePanel?.());
+
   console.log('拥挤处点选');
   await page.evaluate(() => NM.start(NM_presets.createGame('hongguang', 1), false));
   await wait(500);
