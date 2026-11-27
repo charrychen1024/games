@@ -26,9 +26,13 @@ export interface FUnit {
   luck?: number;
   /** 连续行进的时间（冲势）、接敌后冲锋余时 */
   run: number; charge: number;
+  /** 伏兵：藏于林中（或用“伏兵”计）不为敌所见，初次接敌加倍杀伤；lurk 为在林中静候的时长 */
+  hidden?: boolean; lurk?: number;
+  /** 排队的后续命令（按住 Shift 下令）：当前之令完成即接着做 */
+  queue?: FOrder[];
 }
-export interface FEvent { t: number; kind: 'start' | 'clash' | 'charge' | 'flank' | 'fire' | 'rout' | 'rally' | 'shaky' | 'waver' | 'drum' | 'retreat' | 'dusk' | 'end'; side?: 'att' | 'def'; unit?: string; text: string }
-export interface FCommand { unit: string | 'all'; side: 'att' | 'def'; order: FOrder }
+export interface FEvent { t: number; kind: 'start' | 'clash' | 'charge' | 'flank' | 'fire' | 'rout' | 'rally' | 'shaky' | 'waver' | 'drum' | 'retreat' | 'dusk' | 'end' | 'skill' | 'twist' | 'ambush'; side?: 'att' | 'def'; unit?: string; text: string }
+export interface FCommand { unit: string | 'all'; side: 'att' | 'def'; order: FOrder; queue?: boolean }
 export type FOutcome = 'rout' | 'collapse' | 'retreat' | 'held';
 export interface FieldSim {
   mode: 'field' | 'naval';
@@ -45,7 +49,24 @@ export interface FieldSim {
   wind: number;
   flags: Record<string, number>;
   drum: { att: number; def: number; cdAtt: number; cdDef: number };
+  /** 阵形（开战前所择；电脑按编成、兵势自择） */
+  formation: { att: Formation; def: Formation };
+  /** 战场地物：树林（可伏兵、避箭）、村落（据守少伤） */
+  features: Feature[];
+  /** 各方可用的战法与已用者（每样一战一次） */
+  skills: { att: SkillId[]; def: SkillId[] };
+  used: { att: SkillId[]; def: SkillId[] };
+  /** 增益余时（秒）：volley 齐射、laststand 死战、confused 中疑兵、brace 收缩固守；wounded 主将负伤（不消） */
+  buff: { att: Record<string, number>; def: Record<string, number> };
+  /** 预定的战场变故（风向、援军将至、主将负伤、营中哗变） */
+  twists: { t: number; kind: TwistKind; side: 'att' | 'def'; done?: boolean }[];
+  /** 已出过的战机（每样一战一次） */
+  moments: string[];
 }
+export type Formation = 'normal' | 'fengshi' | 'heyi' | 'fangyuan' | 'yanxing';
+export interface Feature { kind: 'woods' | 'village'; x: number; y: number; r: number }
+export type SkillId = 'fire' | 'feint' | 'volley' | 'laststand' | 'ambush' | 'raid';
+export type TwistKind = 'windshift' | 'relief' | 'wound' | 'mutiny';
 
 /** 日暮：开战后这么多秒天黑收兵；提前提示 */
 export const DUSK = 900, DUSK_WARN = 780;
@@ -84,6 +105,28 @@ export function createField(b: BattleState): FieldSim {
   const mode: 'field' | 'naval' = b.kind === 'naval' ? 'naval' : 'field';
   const units: FUnit[] = [];
   for (const side of ['att', 'def'] as const) compose(units, side, b[side], mode, b.weather, rng);
+  // 地物与变故另用一路随机数，不扰动编成
+  const fr = makeRng(b.seed ^ 0x77a1);
+  const features: Feature[] = [];
+  if (mode === 'field') {
+    const nW = 1 + (fr.next() < 0.6 ? 1 : 0);
+    for (let k = 0; k < nW; k++) {
+      const left = (k === 0) === (fr.next() < 0.5);
+      let y = 330 + fr.next() * 340;
+      if (b.terrain === 'river' && y > RIVER.y0 - 80 && y < RIVER.y1 + 80) y = y < 500 ? RIVER.y0 - 90 : RIVER.y1 + 90;
+      features.push({ kind: 'woods', x: left ? 110 + fr.next() * 140 : 750 + fr.next() * 140, y, r: 62 + fr.next() * 26 });
+    }
+    if (fr.next() < 0.65) {
+      let y = 400 + fr.next() * 200;
+      if (b.terrain === 'river') y = fr.next() < 0.5 ? RIVER.y0 - 80 : RIVER.y1 + 80;
+      features.push({ kind: 'village', x: 360 + fr.next() * 280, y, r: 52 });
+    }
+  }
+  const twists: FieldSim['twists'] = [];
+  const kinds: TwistKind[] = ['windshift', 'relief', 'wound', 'mutiny'];
+  const nT = 1 + (fr.next() < 0.35 ? 1 : 0);
+  for (let k = 0; k < nT; k++) twists.push({ t: Math.round(110 + fr.next() * 520), kind: kinds[Math.floor(fr.next() * kinds.length)], side: fr.next() < 0.5 ? 'att' : 'def' });
+  twists.sort((a, b2) => a.t - b2.t);
   // 临阵状态：全军将运 ±9%，各营再 ±8%（种子定，读档重打不变）
   for (const side of ['att', 'def'] as const) { const fortune = 0.8 + rng.next() * 0.4; for (const u of units) if (u.side === side) u.luck = fortune * (0.92 + rng.next() * 0.16); }
   // 临阵尚有余勇：军心再低，开战时全军军心不低于 25（各营士气在 compose 里不低于 22），免得未见敌便全线崩溃
@@ -96,7 +139,11 @@ export function createField(b: BattleState): FieldSim {
     def: { name: b.def.name, commanderName: b.def.commanderName, tong: b.def.tong, mix: b.def.mix, start: tot(b.def), morale0: mD },
     weather: b.weather, wind: b.weather === 'wind' ? (rng.next() < 0.5 ? 1 : -1) : 0,
     flags: {}, drum: { att: 0, def: 0, cdAtt: 0, cdDef: 0 },
+    formation: { att: 'normal', def: 'normal' }, features, skills: { att: [], def: [] }, used: { att: [], def: [] },
+    buff: { att: {}, def: {} }, twists, moments: [],
   };
+  (sim.att as { mou?: number }).mou = b.att.mou; (sim.def as { mou?: number }).mou = b.def.mou;
+  for (const sd of ['att', 'def'] as const) { sim.skills[sd] = skillsFor(sim, sd); setFormation(sim, sd, aiFormation(sim, sd)); }
   ev(sim, 'start', mode === 'naval' ? `${b.att.name}水师与${b.def.name}水师会于${b.nodeName}江面。` : `${b.att.name}与${b.def.name}列阵于${b.nodeName}。`);
   return sim;
 }
@@ -149,7 +196,9 @@ export function commandF(sim: FieldSim, c: FCommand) {
   for (const u of list) {
     if (!legalF(u, c.order)) continue;
     if (c.order.t === 'attack') { const tg = sim.units.find(x => x.id === (c.order as { target: string }).target); if (!tg || tg.side === u.side) continue; }
-    u.order = c.order;
+    // 排队：当前在动、在打，就记下来，完成后接着做；否则立即执行
+    if (c.queue && (u.state === 'move' || u.state === 'melee' || u.state === 'shoot')) { (u.queue ??= []).push(c.order); continue; }
+    u.order = c.order; u.queue = [];
   }
   if (c.order.t === 'retreat' && c.unit === 'all' && !sim.flags['retreat' + c.side]) { sim.flags['retreat' + c.side] = 1; ev(sim, 'retreat', `${sim[c.side].commanderName}鸣金收兵。`, { side: c.side }); }
 }
@@ -178,7 +227,11 @@ function tickField(sim: FieldSim, dt: number) {
   for (const u of sim.units) { u.hit = 0; u.engaged = false; }
   for (const k of ['att', 'def'] as const) sim.drum[k] = Math.max(0, sim.drum[k] - dt);
   sim.drum.cdAtt = Math.max(0, sim.drum.cdAtt - dt); sim.drum.cdDef = Math.max(0, sim.drum.cdDef - dt);
+  for (const sd of ['att', 'def'] as const) for (const k of Object.keys(sim.buff[sd])) if (k !== 'wounded') { sim.buff[sd][k] -= dt; if (sim.buff[sd][k] <= 0) delete sim.buff[sd][k]; }
+  for (const tw of sim.twists) if (!tw.done && sim.t >= tw.t) { tw.done = true; twist(sim, tw.kind, tw.side); }
   moveAll(sim, dt);
+  advanceQueues(sim);
+  lurkAll(sim, dt);
   fightAll(sim, dt, rng);
   moraleAll(sim, dt);
   settleF(sim);
@@ -191,6 +244,8 @@ function speedOf(sim: FieldSim, u: FUnit, dy: number) {
   if (inRiver(sim, u.x, u.y)) sp *= 0.35;
   if (sim.mode === 'naval' && sim.wind) sp *= 1 + 0.12 * Math.sign(dy) * sim.wind;   // 顺风快、逆风慢
   if (u.state === 'rout') sp *= 1.15;
+  sp *= fm(sim, u.side).speed;
+  if (inFeature(sim, u, 'woods')) sp *= u.kind === 'cav' ? 0.7 : 0.85;
   return sp;
 }
 function goTo(sim: FieldSim, u: FUnit, x: number, y: number, dt: number, stopAt = 0): boolean {
@@ -293,7 +348,8 @@ function moveAll(sim: FieldSim, dt: number) {
 /* ---------------- 交战 ---------------- */
 function power(sim: FieldSim, u: FUnit) {
   const drum = sim.drum[u.side] > 0 ? 1.12 : 1;
-  return (0.5 + u.morale / 200) * (0.55 + 0.45 * u.stamina / 100) * (0.85 + sim[u.side].tong / 400) * drum * (u.luck ?? 1);
+  const b = sim.buff[u.side];
+  return (0.5 + u.morale / 200) * (0.55 + 0.45 * u.stamina / 100) * (0.85 + sim[u.side].tong / 400) * drum * (u.luck ?? 1) * (b.laststand ? 1.12 : 1) * (b.wounded ? 0.95 : 1);
 }
 function hurt(u: FUnit, dmg: number, shock = 1) {
   if (dmg <= 0 || u.troops < 1) return;
@@ -336,14 +392,22 @@ function fightAll(sim: FieldSim, dt: number, rng: Rng) {
       const share = d.troops / tot;
       let m = meleeMult(sim, a, d);
       let shock = 1;
-      if ((engagedBy.get(d.id)?.length ?? 0) >= 2) { m *= 1.3; shock *= 1.25; }
+      if ((engagedBy.get(d.id)?.length ?? 0) >= 2) { m *= 1.3 * fm(sim, a.side).flank; shock *= 1.25; }
       if (fromRear(a, d) && d.state !== 'rout') {
-        m *= 1.4; shock *= 1.4;
+        m *= 1.4 * fm(sim, a.side).flank; shock *= 1.4;
         const key = `rear${a.id}${d.id}`;
         if (!sim.flags[key]) { sim.flags[key] = 1; ev(sim, 'flank', `${sim[a.side].name}${a.name}抄到${sim[d.side].name}${d.name}背后！`, { side: a.side, unit: a.id }); }
       }
       // 结阵坚守的营：正面来敌一概少伤一成半（被抄背则无此利）
       else if (d.order.t === 'hold' && d.state !== 'rout' && d.state !== 'move') m *= 0.85;
+      // 阵形、战法、地物
+      m *= fm(sim, a.side).atk * fm(sim, d.side).taken * takenMul(sim, d.side);
+      if (inFeature(sim, d, 'village')) m *= 0.85;
+      if (a.hidden) {
+        m *= 1.5; shock *= 1.6; a.hidden = false; a.lurk = 0;
+        ev(sim, 'ambush', `${sim[a.side].name}${a.name}伏兵杀出，${sim[d.side].name}${d.name}大乱！`, { side: a.side, unit: a.id });
+        d.morale -= 12;
+      }
       if (onRidge(sim, d.x, d.y) && !onRidge(sim, a.x, a.y)) m *= 0.55;      // 仰攻高地
       if (inRiver(sim, a.x, a.y)) m *= 0.7;
       if (inRiver(sim, d.x, d.y)) m *= 1.3;
@@ -357,7 +421,8 @@ function fightAll(sim: FieldSim, dt: number, rng: Rng) {
     if (a.state !== 'shoot' || !a.target) continue;
     const d = sim.units.find(x => x.id === a.target);
     if (!d || !alive(d)) continue;
-    const r = RANGE[a.kind] * (onRidge(sim, a.x, a.y) ? 1.15 : 1) * (sim.weather === 'fog' ? 0.65 : 1);   // 大雾：看不远，射程短
+    if (d.hidden) continue;   // 伏兵不见，射不着
+    const r = RANGE[a.kind] * (onRidge(sim, a.x, a.y) ? 1.15 : 1) * (sim.weather === 'fog' ? 0.65 : 1) * fm(sim, a.side).range;   // 大雾：看不远，射程短
     const dd = dist(a, d);
     if (dd > r) continue;
     const fall = 1 - 0.4 * dd / r;
@@ -366,6 +431,8 @@ function fightAll(sim: FieldSim, dt: number, rng: Rng) {
     if (d.kind === 'cav' && d.state === 'move') rate *= 1.15;
     if (onRidge(sim, d.x, d.y)) rate *= 0.85;
     if (inRiver(sim, d.x, d.y)) rate *= 1.2;
+    if (inFeature(sim, d, 'woods')) rate *= 0.6; else if (inFeature(sim, d, 'village')) rate *= 0.8;
+    rate *= (sim.buff[a.side].volley ? 2 : 1) * (sim.formation[a.side] === 'yanxing' ? 1.15 : 1) * takenMul(sim, d.side);
     hurt(d, a.troops * rate * power(sim, a) * (a.kind === 'gun' ? rain : 0.8 + rain * 0.2) * fall * jit() * dt, a.kind === 'art' ? 1.3 : 1);
     a.engaged = true;
   }
@@ -477,8 +544,10 @@ export function aiField(sim: FieldSim, side: 'att' | 'def', opts: { eager?: bool
   const cmds: FCommand[] = [];
   const set = (u: FUnit, o: FOrder) => { if (JSON.stringify(u.order) !== JSON.stringify(o)) { cmds.push({ unit: u.id, side, order: o }); commandF(sim, { unit: u.id, side, order: o }); } };
   const mine = sim.units.filter(u => u.side === side && active(u));
-  const foes = sim.units.filter(u => u.side !== side && active(u));
+  const foes = sim.units.filter(u => u.side !== side && active(u) && !u.hidden);   // 伏兵不见
   if (!mine.length || (!foes.length && sim.flags['pursuit' + foeOf(side)] === undefined)) return cmds;
+  // 中了疑兵：逡巡不前，不下新令（已在厮杀的照打）
+  if (sim.buff[side].confused && !opts.eager) { for (const u of mine) if (u.state === 'move' && u.order.t === 'attack') set(u, { t: 'hold' }); return cmds; }
   const sa = strengthF(sim, side), sf = strengthF(sim, foeOf(side));
   // 追击：敌已全溃，各营追杀溃兵（步卒追近处的，骑兵追远的）
   if (sim.flags['pursuit' + foeOf(side)] !== undefined) {
@@ -504,6 +573,8 @@ export function aiField(sim: FieldSim, side: 'att' | 'def', opts: { eager?: bool
   const engaged = foes.filter(f => sim.units.some(m => m.side === side && alive(m) && dist(m, f) < CONTACT));
   // 擂鼓：两军接战、或军心见低时擂一通（冷却好了就擂），电脑与部将代打都会
   if (engaged.length && (sim.resolve[side] < 60 || engaged.length >= 2)) drumF(sim, side);
+  // 战法：电脑与部将代打也会用
+  if (!opts.hold) aiSkills(sim, side, engaged.length > 0);
   const nearOf = (u: FUnit, pool: FUnit[]) => pool.slice().sort((a, b) => Math.abs(a.x - u.x) * 1.4 + Math.abs(a.y - u.y) - (Math.abs(b.x - u.x) * 1.4 + Math.abs(b.y - u.y)))[0];
   for (const u of mine) {
     if (u.order.t === 'retreat') continue;
@@ -576,4 +647,220 @@ export function toFieldResult(b: BattleState, sim: FieldSim): BattleState {
   if (sim.over?.verdict) r.verdict = sim.over.verdict;
   r.round = Math.max(1, Math.round(sim.t / 30));
   return r;
+}
+
+/* ================= 阵形、地物、战法、变故、战机、排队命令 ================= */
+export const FORMATIONS: Record<Formation, { name: string; desc: string; atk: number; taken: number; flank: number; speed: number; range: number }> = {
+  normal: { name: '常阵', desc: '各营按常法列阵，不偏不倚', atk: 1, taken: 1, flank: 1, speed: 1, range: 1 },
+  fengshi: { name: '锋矢阵', desc: '中军突前，一点破阵：近战杀伤 +12%，受伤 +6%', atk: 1.12, taken: 1.06, flank: 1, speed: 1.05, range: 1 },
+  heyi: { name: '鹤翼阵', desc: '两翼张开包抄：夹击、抄背再加两成，正面杀伤 −5%', atk: 0.95, taken: 1, flank: 1.2, speed: 1, range: 1 },
+  fangyuan: { name: '方圆阵', desc: '结阵自固：受伤 −12%，行动 −15%', atk: 1, taken: 0.88, flank: 1, speed: 0.85, range: 1 },
+  yanxing: { name: '雁行阵', desc: '火器列前，层层轮射：射程 +20%、射击 +15%；被近身受伤 +8%', atk: 1, taken: 1.08, flank: 1, speed: 1, range: 1.2 },
+};
+const fm = (sim: FieldSim, side: 'att' | 'def') => FORMATIONS[sim.formation?.[side] ?? 'normal'];
+const takenMul = (sim: FieldSim, side: 'att' | 'def') => (sim.buff[side].laststand ? 0.9 : 1) * (sim.buff[side].brace ? 0.85 : 1);
+export const inFeature = (sim: FieldSim, u: { x: number; y: number }, kind: Feature['kind']) => sim.features.some(f => f.kind === kind && Math.hypot(u.x - f.x, u.y - f.y) < f.r);
+const fwd = (side: 'att' | 'def') => (side === 'att' ? -1 : 1);
+
+/** 定阵形：只在开战之前（t=0）；各营按阵形挪到起手位置 */
+export function setFormation(sim: FieldSim, side: 'att' | 'def', f: Formation): boolean {
+  if (sim.t > 0 || sim.mode === 'naval' && f !== 'normal' && f !== 'fangyuan' && f !== 'fengshi') return false;
+  const prev = sim.formation[side];
+  // 先退回常阵位置，再按新阵挪
+  const shift = (form: Formation, sign: number) => {
+    for (const u of sim.units.filter(x => x.side === side)) {
+      let dx = 0, dy = 0;
+      if (form === 'fengshi' && u.kind === 'inf') dy = (Math.abs(u.x - 500) < 60 ? 70 : 20) * fwd(side);
+      if (form === 'heyi' && u.kind === 'cav') { dx = (u.x < 500 ? -70 : 70); dy = 60 * fwd(side); }
+      if (form === 'fangyuan') dx = (500 - u.x) * 0.3;
+      if (form === 'yanxing') { if (u.kind === 'gun') dy = 140 * fwd(side); else if (u.kind === 'art') dy = 100 * fwd(side); else if (u.kind === 'inf') dy = -30 * fwd(side); }
+      u.x = clamp(u.x + dx * sign, 40, 960); u.y = clamp(u.y + dy * sign, 40, 960);
+    }
+  };
+  shift(prev, -1);
+  sim.formation[side] = f;
+  shift(f, 1);
+  return true;
+}
+/** 电脑择阵：火器多用雁行，骑多用鹤翼，势弱用方圆，势强用锋矢 */
+export function aiFormation(sim: FieldSim, side: 'att' | 'def'): Formation {
+  if (sim.mode === 'naval') return 'normal';
+  const mix = sim[side].mix, ratio = sim[side].start / Math.max(1, sim[foeOf(side)].start);
+  if (mix.gun >= 0.25) return 'yanxing';
+  if (mix.cav >= 0.3) return 'heyi';
+  if (ratio < 0.8) return 'fangyuan';
+  if (ratio > 1.25) return 'fengshi';
+  return 'normal';
+}
+
+export const SKILLS: Record<SkillId, { name: string; desc: string; icon: string }> = {
+  fire: { name: '火攻', desc: '纵火焚敌阵：最近的敌军大营及其左近折损、士气大挫（有风更烈）', icon: 'fire' },
+  feint: { name: '疑兵', desc: '虚张旗鼓：敌军士气 −5，二十秒内不敢轻进', icon: 'flank' },
+  volley: { name: '齐射', desc: '火器、炮十二秒内轮番齐放，射击杀伤加倍', icon: 'volley' },
+  laststand: { name: '死战', desc: '主将亲冒矢石：全军士气 +15，二十五秒内杀伤 +12%、受伤 −10%，事后疲惫', icon: 'morale' },
+  ambush: { name: '伏兵', desc: '最精的骑营潜行不见，初次接敌加倍杀伤、敌营大乱', icon: 'ambush' },
+  raid: { name: '夜袭', desc: '日暮之后可用：衔枚夜袭，敌军心 −8、士气 −8', icon: 'night' },
+};
+/** 各方可用的战法（看主将谋略、统军，编成与天时），至多三样 */
+export function skillsFor(sim: FieldSim, side: 'att' | 'def'): SkillId[] {
+  const sd = sim[side], mou = (sd as { mou?: number }).mou ?? 50, out: SkillId[] = [];
+  if (sim.weather === 'wind' || mou >= 65) if (sim.weather !== 'rain') out.push('fire');
+  if (sd.mix.gun >= 0.08) out.push('volley');
+  if (sim.mode === 'field' && sd.mix.cav >= 0.12 && mou >= 50) out.push('ambush');
+  if (mou >= 55) out.push('feint');
+  if (sd.tong >= 55 || out.length < 2) out.push('laststand');
+  if (out.length < 3) out.push('raid');
+  return out.slice(0, 3);
+}
+/** 此刻能否用某战法：不能则返回原因 */
+export function skillBlock(sim: FieldSim, side: 'att' | 'def', id: SkillId): string | null {
+  if (sim.over) return '战已毕';
+  if (!sim.skills[side].includes(id)) return '主将不擅此计';
+  if (sim.used[side].includes(id)) return '一战只能用一次';
+  const mine = sim.units.filter(u => u.side === side && active(u)), foes = sim.units.filter(u => u.side !== side && active(u));
+  if (id === 'fire' && !foes.some(f => mine.some(m => dist(m, f) < 450))) return '敌在远处，火攻不及';
+  if (id === 'volley' && !mine.some(u => u.kind === 'gun' || u.kind === 'art')) return '已无火器营';
+  if (id === 'ambush' && !mine.some(u => u.kind === 'cav' && !u.engaged)) return '无可伏之骑';
+  if (id === 'raid' && sim.t < 600) return '日暮之后方可夜袭';
+  return null;
+}
+export function useSkill(sim: FieldSim, side: 'att' | 'def', id: SkillId): boolean {
+  if (skillBlock(sim, side, id)) return false;
+  sim.used[side].push(id);
+  const foe = foeOf(side), nm = sim[side].commanderName;
+  const mine = sim.units.filter(u => u.side === side && active(u)), foes = sim.units.filter(u => u.side === foe && active(u));
+  switch (id) {
+    case 'fire': {
+      const tg = foes.filter(f => mine.some(m => dist(m, f) < 450)).sort((a, b) => b.troops - a.troops)[0];
+      const k = sim.weather === 'wind' ? 1.35 : 1;
+      for (const d of foes) if (dist(d, tg) < 120) { hurt(d, d.troops * 0.05 * k * (d === tg ? 1 : 0.6), 1.5); d.morale -= 10 * k; }
+      ev(sim, 'fire', `${nm}纵火焚敌，${sim[foe].name}${tg.name}一带烈焰腾空！`, { side, unit: tg.id });
+      break;
+    }
+    case 'feint':
+      for (const d of foes) d.morale = Math.max(0, d.morale - 5);
+      sim.buff[foe].confused = 20;
+      ev(sim, 'skill', `${nm}多张旗帜、虚设疑兵，${sim[foe].name}疑有大军，逡巡不前。`, { side });
+      break;
+    case 'volley': sim.buff[side].volley = 12; ev(sim, 'skill', `${nm}令火器营分番齐射，铳炮连珠！`, { side }); break;
+    case 'laststand':
+      for (const u of mine) { u.morale = Math.min(100, u.morale + 15); u.stamina = Math.max(0, u.stamina - 15); }
+      sim.resolve[side] = Math.min(100, sim.resolve[side] + 8);
+      sim.buff[side].laststand = 25;
+      ev(sim, 'skill', `${nm}拔剑立于阵前，誓与将士同死，全军死战！`, { side });
+      break;
+    case 'ambush': {
+      const c = mine.filter(u => u.kind === 'cav' && !u.engaged).sort((a, b) => b.troops - a.troops)[0];
+      c.hidden = true;
+      ev(sim, 'skill', `${nm}令${c.name}偃旗息鼓，潜伏侧翼待机。`, { side, unit: c.id });
+      break;
+    }
+    case 'raid':
+      sim.resolve[foe] = Math.max(0, sim.resolve[foe] - 8);
+      for (const d of foes) d.morale = Math.max(0, d.morale - 8);
+      ev(sim, 'skill', `${nm}乘夜衔枚劫营，${sim[foe].name}营中惊扰！`, { side });
+      break;
+  }
+  return true;
+}
+/** 电脑（与部将代打）用战法 */
+function aiSkills(sim: FieldSim, side: 'att' | 'def', engaged: boolean) {
+  const can = (id: SkillId) => !skillBlock(sim, side, id);
+  if (can('laststand') && engaged && sim.resolve[side] < 40) { useSkill(sim, side, 'laststand'); return; }
+  if (can('volley') && sim.units.some(u => u.side === side && u.state === 'shoot')) { useSkill(sim, side, 'volley'); return; }
+  if (can('fire') && engaged) { useSkill(sim, side, 'fire'); return; }
+  if (can('feint') && sim.t > 30 && !engaged && sim.units.some(f => f.side !== side && active(f) && sim.units.some(m => m.side === side && dist(m, f) < 420))) { useSkill(sim, side, 'feint'); return; }
+  if (can('ambush') && sim.t > 20 && !engaged) { useSkill(sim, side, 'ambush'); return; }
+  if (can('raid')) useSkill(sim, side, 'raid');
+}
+
+/** 战场变故 */
+function twist(sim: FieldSim, kind: TwistKind, side: 'att' | 'def') {
+  const nm = sim[side].name;
+  switch (kind) {
+    case 'windshift': {
+      const was = sim.weather;
+      sim.weather = was === 'clear' || was === 'fog' ? 'wind' : was === 'wind' ? 'rain' : 'clear';
+      if (sim.weather === 'wind' && !sim.wind) sim.wind = side === 'att' ? -1 : 1;
+      if (sim.weather !== 'wind' && sim.mode !== 'naval') sim.wind = 0;
+      ev(sim, 'twist', sim.weather === 'wind' ? '狂风骤起，旌旗猎猎——火攻之机！' : sim.weather === 'rain' ? '骤雨倾盆，火绳尽湿，铳炮难施。' : '雨霁云开，铳炮复振。');
+      for (const sd of ['att', 'def'] as const) if (sim.weather === 'wind' && !sim.skills[sd].includes('fire') && sim.skills[sd].length < 4) sim.skills[sd].push('fire');
+      break;
+    }
+    case 'relief':
+      for (const u of sim.units) if (u.side === side && active(u)) u.morale = Math.min(100, u.morale + 10);
+      sim.resolve[side] = Math.min(100, sim.resolve[side] + 8);
+      ev(sim, 'twist', `探马飞报：${nm}后队援兵将至，全军振奋！`, { side });
+      break;
+    case 'wound':
+      sim.buff[side].wounded = 1;
+      sim.resolve[side] = Math.max(0, sim.resolve[side] - 10);
+      ev(sim, 'twist', `${sim[side].commanderName}中流矢负伤，${nm}军心浮动！`, { side });
+      break;
+    case 'mutiny': {
+      const u = sim.units.filter(x => x.side === side && active(x)).sort((a, b) => a.morale - b.morale)[0];
+      if (!u) break;
+      if (u.morale < 45 && pressed(sim, u)) { u.state = 'rout'; ev(sim, 'twist', `${nm}${u.name}哗变，阵脚大乱！`, { side, unit: u.id }); }
+      else { u.morale = Math.max(0, u.morale - 15); ev(sim, 'twist', `${nm}${u.name}军中鼓噪，士气骤降。`, { side, unit: u.id }); }
+      break;
+    }
+  }
+}
+
+/** 排队命令：当前之令完成即接下一道 */
+function advanceQueues(sim: FieldSim) {
+  for (const u of sim.units) {
+    if (!u.queue?.length || !active(u)) continue;
+    const o = u.order;
+    const tg = 'target' in o && o.target ? sim.units.find(x => x.id === o.target) : undefined;
+    const done = o.t === 'hold' ? u.state === 'idle' || u.state === 'shoot'
+      : o.t === 'move' ? Math.hypot(u.x - o.x, u.y - o.y) < 14
+      : (o.t === 'attack' || o.t === 'fire') ? !tg || !active(tg) : false;
+    if (done) u.order = u.queue.shift()!;
+  }
+}
+/** 伏兵：在林中原地静候六秒即隐；一动或接敌即现（“伏兵”计所隐者，接敌前一直隐） */
+function lurkAll(sim: FieldSim, dt: number) {
+  for (const u of sim.units) {
+    if (!active(u) || sim.mode !== 'field') continue;
+    const still = u.state === 'idle' && !u.engaged && inFeature(sim, u, 'woods');
+    if (still) { u.lurk = (u.lurk ?? 0) + dt; if (u.lurk >= 6 && !u.hidden) u.hidden = true; }
+    else if (u.lurk) { u.lurk = 0; if (u.state !== 'move' || !u.hidden) u.hidden = u.hidden && u.state === 'move' ? true : false; }
+  }
+}
+
+/* ---------------- 战机：关键时刻停下来请主帅定夺（部将代打时也会） ---------------- */
+export interface Moment { id: string; title: string; text: string; options: { label: string; desc: string; apply: (sim: FieldSim) => void }[] }
+export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
+  if (sim.over || sim.t < 5) return null;
+  const foe = foeOf(side), once = (id: string) => !sim.moments.includes(id);
+  const mine = sim.units.filter(u => u.side === side && active(u)), foes = sim.units.filter(u => u.side === foe && active(u));
+  const fire = (id: string, m: Omit<Moment, 'id'>): Moment => { sim.moments.push(id); return { id, ...m }; };
+  // 敌骑抄我侧后（逼近我火器、炮营，或已到我阵后）
+  const midY = mine.length ? mine.reduce((n, u) => n + u.y, 0) / mine.length : 500;
+  const raider = foes.find(f => f.kind === 'cav' && !f.hidden && (mine.some(m => (m.kind === 'gun' || m.kind === 'art') && dist(m, f) < 230) || (side === 'att' ? f.y > midY + 60 : f.y < midY - 60)));
+  if (raider && once('flank')) {
+    const guard = mine.filter(u => (u.kind === 'inf' || u.kind === 'cav') && u.state !== 'melee').sort((a, b) => dist(a, raider) - dist(b, raider))[0];
+    return fire('flank', { title: '敌骑抄我侧后', text: `${sim[foe].name}${raider.name}绕出侧翼，直扑我军${mine.some(m => m.kind === 'gun' || m.kind === 'art') ? '火器、炮营' : '阵后'}！`, options: [
+      { label: guard ? `遣${guard.name}迎击` : '分兵迎击', desc: '就近一营回身截住来骑', apply: s => { if (guard) commandF(s, { unit: guard.id, side, order: { t: 'attack', target: raider.id } }); } },
+      { label: '火器转射来骑', desc: '火器、炮营掉转铳口射之', apply: s => { for (const u of s.units) if (u.side === side && active(u) && (u.kind === 'gun' || u.kind === 'art')) commandF(s, { unit: u.id, side, order: { t: 'fire', target: raider.id } }); } },
+      { label: '不予理会，专攻正面', desc: '冒侧后受冲之险，正面不减攻势', apply: () => {} },
+    ] });
+  }
+  if (sim.resolve[side] < 38 && once('waver')) return fire('waver', { title: '我军动摇', text: `${sim[side].name}折损渐重，军心只剩 ${Math.round(sim.resolve[side])}，前排已有退缩之意。`, options: [
+    { label: '主将亲临，死战不退', desc: '士气 +12、军心 +10；兵疲', apply: s => { for (const u of s.units) if (u.side === side && active(u)) { u.morale = Math.min(100, u.morale + 12); u.stamina = Math.max(0, u.stamina - 10); } s.resolve[side] = Math.min(100, s.resolve[side] + 10); ev(s, 'skill', `${s[side].commanderName}亲临前阵，将士复振！`, { side }); } },
+    { label: '收缩固守', desc: '全军原地结阵，二十秒内受伤 −15%', apply: s => { s.buff[side].brace = 20; for (const u of s.units) if (u.side === side && active(u) && u.state !== 'melee') commandF(s, { unit: u.id, side, order: { t: 'hold' } }); } },
+    { label: '鸣金收兵', desc: '全军撤出战场，保全余众', apply: s => commandF(s, { unit: 'all', side, order: { t: 'retreat' } }) },
+  ] });
+  if (sim.resolve[foe] < 35 && sim.resolve[side] > 45 && once('chance')) return fire('chance', { title: '敌阵松动', text: `${sim[foe].name}军心只剩 ${Math.round(sim.resolve[foe])}，阵脚已乱——乘胜之机！`, options: [
+    { label: '全军压上', desc: '各营一齐进击，并擂鼓助威', apply: s => { aiField(s, side, { eager: true }); drumF(s, side); } },
+    { label: '骑兵直捣其最弱一营', desc: '各骑营冲其士气最低之营', apply: s => { const w = s.units.filter(u => u.side === foe && active(u)).sort((a, b) => a.morale - b.morale)[0]; if (w) for (const u of s.units) if (u.side === side && active(u) && u.kind === 'cav') commandF(s, { unit: u.id, side, order: { t: 'attack', target: w.id } }); } },
+    { label: '稳扎稳打', desc: '不改部署，免得追击中阵形散乱', apply: () => {} },
+  ] });
+  if (sim.t >= DUSK_WARN && !sim.over && once('dusk')) return fire('dusk', { title: '日暮将至', text: '天色向晚，再过一阵便要收兵。是乘夜再战，还是收兵待旦？', options: [
+    { label: '挑灯夜战', desc: '敌士气 −6；我军疲惫（体力 −15）', apply: s => { for (const u of s.units) if (active(u)) { if (u.side === foe) u.morale = Math.max(0, u.morale - 6); else u.stamina = Math.max(0, u.stamina - 15); } } },
+    { label: '鸣金收兵', desc: '全军撤出战场', apply: s => commandF(s, { unit: 'all', side, order: { t: 'retreat' } }) },
+    { label: '各守营垒，待天明', desc: '不改部署，日暮按战果论', apply: () => {} },
+  ] });
+  return null;
 }

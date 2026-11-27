@@ -4,8 +4,8 @@
  * 点城墙按兵种定（步营登城、撞门，炮营轰墙，火器压制；守军守段、再点本段修城）。底栏只放看板（各营兵数士气）与全军号令。 */
 import type { GameState } from '../core/types';
 import type { BattleState } from '../core/battle';
-import { createSiege, stepSiege, aiCommands, command, drum, defDecision, attWithdraw, toBattleResult, runSiege, legal, segName, persuade, persuadeOdds, SEGMENTS, GATE_SEG, WALL_Y, type SUnit, type SOrder } from '../core/siege';
-import { createField, stepField, aiField, commandF, drumF, legalF, toFieldResult, runField, KIND_NAME, DUSK, type FUnit, type FOrder } from '../core/field';
+import { createSiege, stepSiege, aiCommands, command, drum, defDecision, attWithdraw, toBattleResult, runSiege, legal, segName, persuade, persuadeOdds, momentS, SEGMENTS, GATE_SEG, WALL_Y, type SUnit, type SOrder } from '../core/siege';
+import { createField, stepField, aiField, commandF, drumF, legalF, toFieldResult, runField, KIND_NAME, DUSK, momentF, useSkill, skillBlock, setFormation, SKILLS, FORMATIONS, type FUnit, type FOrder, type Formation } from '../core/field';
 import { SiegeView } from './siegeView';
 import { FieldView } from './fieldView';
 import { lookOf } from './battle';
@@ -222,6 +222,20 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
       renderTray();
       return;
     }
+    if (phase === 'deploy' && !siege) {
+      // 临阵布阵：择阵形；看敌阵、本方战法、战场地物
+      const fs = fsim!, cur = fs.formation[side];
+      const forms: Formation[] = naval ? ['normal', 'fangyuan', 'fengshi'] : ['normal', 'fengshi', 'heyi', 'fangyuan', 'yanxing'];
+      const feats = fs.features.map(f => f.kind === 'woods' ? '林（可伏兵、避箭）' : '村（据守少伤）');
+      const C = (id: string, icon: string, title: string, desc: string, fn: () => void, primary = false) => h('button', { class: 'dchoice' + (primary ? ' primary' : ''), id, onclick: () => { click(); fn(); } }, ic(icon), h('b', null, title), h('small', null, desc));
+      ui.append(h('div', { class: 'dchoices wide' },
+        h('div', { class: 'dc-head' }, h('b', null, '临阵布阵'), h('small', null, `敌布${FORMATIONS[fs.formation[foe]].name} · 我军战法：${fs.skills[side].map(k => SKILLS[k].name).join('、') || '无'}${feats.length ? ' · 战场有' + feats.join('、') : ''}`)),
+        ...forms.map(f => C('form-' + f, f === 'yanxing' ? 'volley' : f === 'heyi' ? 'flank' : f === 'fangyuan' ? 'hold' : f === 'fengshi' ? 'charge' : 'army', FORMATIONS[f].name, FORMATIONS[f].desc, () => { setFormation(fs, side, f); renderUi(); }, cur === f)),
+        C('form-go', 'battle', '擂鼓开战', `以${FORMATIONS[cur].name}出战`, () => start()),
+        C('battle-auto', 'auto', '交部将指挥', '部将按常法布阵、指挥；关键时刻仍请你定夺', () => { autoMe = true; start(); })));
+      renderTray();
+      return;
+    }
     const cards = h('div', { class: 'ucards' });
     for (const u of myUnits()) {
       const pct = Math.max(0, u.troops / u.start);
@@ -260,7 +274,8 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
             renderUi();
           }, false, ssim!.flags.persuaded ? '一战只能劝一次' : `遣使入城说降守将（约 ${Math.round(persuadeOdds(ssim!) * 100)}% 能成；不成则守军益坚）。城门已破、守军动摇时更易成`, ssim!.flags.persuaded ? 'cool' : '')] : []),
           A('siege-drum', cd > 0 ? `擂鼓 ${Math.ceil(cd)}` : '擂鼓', 'battle', () => { if (ssim ? drum(ssim, side) : drumF(fsim!, side)) { battleSfx.ambush(); bark('me', 'lead'); } renderUi(); }, false, '全军士气上扬一阵；六十秒一次', cd > 0 ? 'cool' : ''),
-          A('siege-auto', autoMe ? '收回指挥' : '部将代打', 'auto', () => { autoMe = !autoMe; if (autoMe) { speed = 4; paused = false; } renderUi(); }, autoMe, '由部将按常法指挥我军（四倍速推进，可随时收回）'),
+          ...(!siege ? fsim!.skills[side].map(id => { const why = skillBlock(fsim!, side, id); return A('skill-' + id, fsim!.used[side].includes(id) ? `${SKILLS[id].name}·已用` : SKILLS[id].name, SKILLS[id].icon, () => { if (useSkill(fsim!, side, id)) { manual = true; battleSfx.ambush(); bark('me', 'lead'); } else say(why ?? '', 'bad'); renderUi(); }, false, `战法 · ${SKILLS[id].desc}${why ? `（${why}）` : '（一战一次）'}`, why ? 'cool' : 'skill'); }) : []),
+          A('siege-auto', autoMe ? '收回指挥' : '部将代打', 'auto', () => { autoMe = !autoMe; if (autoMe) { speed = 4; paused = false; } renderUi(); }, autoMe, '由部将按常法指挥我军（四倍速推进，可随时收回）；战机来时仍停下请你定夺'),
           ...(siege && side === 'def' ? [
             A('def-abandon2', '弃城', 'withdraw', () => { manual = true; defDecision(ssim!, 'abandon'); }, false, retreatCity(s, b0.node) ? `弃城突围：守军退往${nodeNameOf(retreatCity(s, b0.node)!)}（交战中的营伍折损一成五），城归敌手` : '无城可退：弃城则守军就地溃散，城归敌手', 'warn'),
             A('def-surrender2', '投降', 'persuade', () => { manual = true; defDecision(ssim!, 'surrender'); }, false, '开城投降：城与守军一并归敌', 'warn')] : [
@@ -269,17 +284,34 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     ui.append(h('div', { class: 'su-body' }, cards, all));
     renderTray();
   }
-  function selectUnit(id: string | null) {
-    click();
-    view.selected = id;
+  /** 所选诸营：主选一营（view.selected）加框选、编组带上的（view.group） */
+  const groups: Record<string, string[]> = {};
+  const selected = () => [view.selected, ...view.group].filter((x): x is string => !!x && myUnits().some(u => u.id === x && u.state !== 'gone'));
+  function setSelection(ids: string[]) {
+    view.selected = ids[0] ?? null; view.group = ids.slice(1);
     if (fview) fview.aiming = false;
     renderUi();
   }
+  function selectUnit(id: string | null) {
+    click();
+    setSelection(id ? [id] : []);
+  }
+  let queueNext = false;
   function issue(u: AnyUnit, o: AnyOrder) {
     if (!isLegal(u, o)) return;
     manual = true;
-    cmd(u.id, o);
-    say(`${u.name}：${orderText(o)}`);
+    // 多营同令：移阵保持彼此相对位置；进击、射击同一目标；按住 Shift 排在当前之令后面（野战）
+    const others = view.group.map(id => units().find(x => x.id === id && x.side === side && x.state !== 'gone')).filter((x): x is AnyUnit => !!x && x.id !== u.id);
+    const send = (unit: AnyUnit, ord: AnyOrder) => { if (!isLegal(unit, ord)) return; if (fsim) commandF(fsim, { unit: unit.id, side, order: ord as FOrder, queue: queueNext }); else cmd(unit.id, ord); };
+    send(u, o);
+    for (const x of others) {
+      let ord = o;
+      if ((o as FOrder).t === 'move') { const m = o as { t: 'move'; x: number; y: number }; ord = { ...m, x: Math.max(30, Math.min(970, m.x + x.x - u.x)), y: Math.max(30, Math.min(970, m.y + x.y - u.y)) } as AnyOrder; }
+      if ((o as FOrder).t === 'fire' && !(x.kind === 'gun' || x.kind === 'art')) ord = { t: 'attack', target: (o as { target: string }).target } as AnyOrder;
+      if ((o as FOrder).t === 'attack' && (x.kind === 'gun' || x.kind === 'art')) ord = { t: 'fire', target: (o as { target: string }).target } as AnyOrder;
+      send(x, ord);
+    }
+    say(`${others.length ? `${u.name}等 ${others.length + 1} 营` : u.name}：${orderText(o)}${queueNext ? '（排队）' : ''}`);
     if (!siege && (o as FOrder).t === 'attack' && u.kind === 'cav') battleSfx.advance(true);
     renderUi();
   }
@@ -317,17 +349,45 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     if (fview) { const p = fview.pick(sx, sy); const u = p.unit ? units().find(x => x.id === p.unit) : undefined; fview.hoverUnit = u && (u.side === side || sel) ? u.id : null; view.cv.style.cursor = u && u.side === foe && sel ? 'crosshair' : u ? 'pointer' : sel ? 'cell' : 'default'; }
   });
   view.cv.addEventListener('contextmenu', e => { e.preventDefault(); if (view.selected) selectUnit(null); });
+  /** 按下地面：松开时若拖动过即框选，否则照常下令（移阵等） */
+  let drag: { sx: number; sy: number; moved: boolean; act: () => void } | null = null;
+  const beginDrag = (sx: number, sy: number, act: () => void) => { drag = { sx, sy, moved: false, act }; };
+  view.cv.addEventListener('pointermove', e => {
+    if (!drag || !(e.buttons & 1)) return;
+    const r = view.cv.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top;
+    if (!drag.moved && Math.hypot(sx - drag.sx, sy - drag.sy) > 8) drag.moved = true;
+    if (drag.moved) view.box = [Math.min(drag.sx, sx), Math.min(drag.sy, sy), Math.max(drag.sx, sx), Math.max(drag.sy, sy)];
+  });
+  window.addEventListener('pointerup', onUp);
+  function onUp() {
+    if (!drag) return;
+    const d = drag; drag = null;
+    if (d.moved && view.box) {
+      const [x0, y0, x1, y1] = view.box;
+      const ids = myUnits().filter(u => u.state !== 'gone' && u.state !== 'rout').filter(u => { const q = view.unitScreen(u.id); return !!q && q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1; }).map(u => u.id);
+      view.box = null;
+      if (ids.length) { click(); setSelection(ids); say(`选中 ${ids.length} 营 · Ctrl+5～9 可编队`); }
+      return;
+    }
+    view.box = null;
+    d.act();
+  }
   view.cv.addEventListener('pointerdown', e => {
     if (e.button === 2) return;
     if (phase === 'end') { done(); return; }
-    if (phase !== 'fight') return;
     const r = view.cv.getBoundingClientRect(); const sx = e.clientX - r.left, sy = e.clientY - r.top;
+    queueNext = e.shiftKey && !!fsim;
+    if (phase !== 'fight') {
+      // 布阵时也能点选、框选看看各营
+      if (phase === 'deploy') { const pk = sview ? sview.pick(sx, sy).unit : fview!.pick(sx, sy).unit; const pu = pk ? units().find(x => x.id === pk) : undefined; if (pu && pu.side === side) selectUnit(pu.id); else beginDrag(sx, sy, () => {}); }
+      return;
+    }
     const sel = selUnit();
     if (sview) {
       const p = sview.pick(sx, sy);
       const pu = p.unit ? units().find(x => x.id === p.unit) as SUnit : undefined;
-      // 没选中：点我军一营就选中
-      if (!sel) { if (pu && pu.side === side) selectUnit(pu.id); return; }
+      // 没选中：点我军一营就选中；点空处可拖框多选
+      if (!sel) { if (pu && pu.side === side) selectUnit(pu.id); else if (!pu && p.seg === undefined) beginDrag(sx, sy, () => {}); return; }
       if (pu && pu.id === sel.id) {
         if (side === 'def' && (sel as SUnit).state === 'wall' && (sel as SUnit).seg !== undefined) { click(); issue(sel, segOrder(sel as SUnit, (sel as SUnit).seg!)!); }
         else { click(); issue(sel, side === 'att' ? { t: 'hold', x: sel.x, y: Math.max(sel.y, 560) } : { t: 'reserve' }); }
@@ -344,16 +404,16 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
       const [x, y] = view.unproject(sx, sy);
       if (side === 'def') {
         if (pu && pu.side === foe && isLegal(sel, { t: 'sortie' })) { click(); issue(sel, { t: 'sortie' }); return; }
-        if (y < WALL_Y) { click(); issue(sel, { t: 'reserve' }); return; }
-        selectUnit(null); return;
+        beginDrag(sx, sy, () => { if (y < WALL_Y) { click(); issue(sel, { t: 'reserve' }); } else selectUnit(null); });
+        return;
       }
-      if (y > 150) { click(); issue(sel, { t: 'move', x: Math.max(60, Math.min(940, x)), y: Math.min(950, y) }); }
+      beginDrag(sx, sy, () => { if (y > 150) { click(); issue(sel, { t: 'move', x: Math.max(60, Math.min(940, x)), y: Math.min(950, y) }); } });
       return;
     }
     const fv = fview!;
     const p = fv.pick(sx, sy);
     const u = p.unit ? units().find(x => x.id === p.unit) : undefined;
-    if (!sel) { if (u && u.side === side) selectUnit(u.id); return; }
+    if (!sel) { if (u && u.side === side) selectUnit(u.id); else if (!u) beginDrag(sx, sy, () => {}); return; }
     if (u && u.id === sel.id) { click(); issue(sel, { t: 'hold' }); return; }
     if (u && u.side === side) { selectUnit(u.id); return; }
     if (u && u.side === foe) {
@@ -364,18 +424,26 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     }
     if (p.ground) {
       const [x, y] = p.ground;
-      click(); issue(sel, { t: 'move', x: Math.max(30, Math.min(970, x)), y: Math.max(30, Math.min(970, y)) });
+      beginDrag(sx, sy, () => { click(); issue(sel, { t: 'move', x: Math.max(30, Math.min(970, x)), y: Math.max(30, Math.min(970, y)) }); });
     }
   });
   const onKey = (e: KeyboardEvent) => {
     if (phase === 'end') { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') { e.preventDefault(); done(); } return; }
+    if (momentPick && /^[1-9]$/.test(e.key)) { e.preventDefault(); momentPick(Number(e.key) - 1); return; }
+    // 编组：Ctrl（⌘）+5～9 记下所选诸营，5～9 唤回
+    if (/^[5-9]$/.test(e.key)) {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) { const ids = selected(); if (ids.length) { groups[e.key] = ids; say(`已编为第 ${e.key} 队（${ids.length} 营）`); } }
+      else { const ids = (groups[e.key] ?? []).filter(id => myUnits().some(u => u.id === id && u.state !== 'gone')); if (ids.length) { setSelection(ids); say(`唤回第 ${e.key} 队`); } }
+      return;
+    }
     if (e.key === 'Tab') {
       e.preventDefault();
       const list = myUnits(); if (!list.length) return;
       const i = list.findIndex(u => u.id === view.selected);
-      view.selected = list[(i + 1) % list.length].id; renderUi(); return;
+      setSelection([list[(i + 1) % list.length].id]); return;
     }
-    if (e.key === 'Escape') { view.selected = null; renderUi(); return; }
+    if (e.key === 'Escape') { setSelection([]); return; }
     if (phase !== 'fight') return;
     if (e.key === ' ') { e.preventDefault(); paused = !paused; renderUi(); }
     else if (e.key === '1') { speed = 1; paused = false; renderUi(); }
@@ -410,6 +478,8 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
         view.harvest(now);
       }
       for (; lastEv < sim.events.length; lastEv++) onEvent(sim.events[lastEv]);
+      // 战机：关键时刻停下来请你定夺（部将代打时也会）
+      if (!momentEl && !sim.over) { const m = ssim ? momentS(ssim, side) : momentF(fsim!, side); if (m) showMoment(m as unknown as { title: string; text: string; options: { label: string; desc: string; apply: (x: never) => void }[] }); }
       if (now > sfxNext) { sfxNext = now + 1100; ambientSfx(); }
       if (sim.over && phase === 'fight') ending();
     }
@@ -459,7 +529,32 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     if (e.kind === 'charge') { battleSfx.advance(true); const u = units().find(x => x.id === e.unit); if (u && fview) fview.burst(u as FUnit, 'dust'); }
     if (e.kind === 'fire') { battleSfx.fire(); const u = units().find(x => x.id === e.unit) as FUnit | undefined; const t = u?.target ? units().find(x => x.id === u.target) as FUnit : undefined; if (fview && (t || u)) fview.burst((t ?? u)!, 'fire'); }
     if (e.kind === 'rout') battleSfx.rout();
+    if (e.kind === 'skill' || e.kind === 'twist' || e.kind === 'ambush') { showBanner(e.text, !e.side || e.side === side ? 'good' : 'bad'); if (e.kind === 'ambush') { battleSfx.shout(); view.shake = 6; } renderUi(); }
     if (e.kind === 'shaky' || e.kind === 'waver') { showBanner(e.text, mine ? 'bad' : 'good'); bark('me', mine ? 'behind' : 'ahead'); }   // 总由我方主将开口：我军动摇时稳住阵脚，敌军动摇时催进
+  }
+  let momentEl: HTMLElement | null = null;
+  let momentPick: ((i: number) => void) | null = null;
+  function showMoment(m: { title: string; text: string; options: { label: string; desc: string; apply: (x: never) => void }[] }) {
+    const wasPaused = paused;
+    paused = true;
+    battleSfx.shout();
+    const pick = (i: number) => {
+      const o = m.options[i]; if (!o || !momentEl) return;
+      click();
+      (o.apply as (x: unknown) => void)(sim);
+      say(`${m.title}：${o.label}`, 'good');
+      momentEl.remove(); momentEl = null; momentPick = null;
+      paused = wasPaused && !autoMe ? false : false;
+      renderUi();
+    };
+    momentPick = pick;
+    momentEl = h('div', { class: 'bmoment' },
+      h('div', { class: 'bm-h' }, ic('urgent'), h('b', null, `战机 · ${m.title}`)),
+      h('p', null, m.text),
+      h('div', { class: 'bm-opts' }, ...m.options.map((o, i) => h('button', { class: 'bm-opt', 'data-moment': String(i), onclick: () => pick(i) }, h('i', null, String(i + 1)), h('b', null, o.label), h('small', null, o.desc)))));
+    stage.append(momentEl);
+    if (!isReduced()) gsap.from(momentEl, { opacity: 0, y: 20, scale: 0.94, duration: 0.3, ease: 'back.out(2)' });
+    renderUi();
   }
   function showBanner(text: string, kind: 'good' | 'bad') {
     banner.textContent = text; banner.className = 'sbanner ' + kind;
@@ -494,6 +589,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     return meWin ? { win: true, big: '大胜', text: `${enemy}全军溃败。`, tone: 'win' } : { win: false, big: '溃败', text: `我军溃败。`, tone: 'lose' };
   }
   function ending() {
+    momentEl?.remove(); momentEl = null; momentPick = null;
     phase = 'end';
     gsap.killTweensOf(banner); banner.classList.add('hidden');
     paused = false;
@@ -530,13 +626,14 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     clearTimeout(exitTimer);
     cancelAnimationFrame(raf);
     window.removeEventListener('keydown', onKey);
+    window.removeEventListener('pointerup', onUp);
     window.removeEventListener('resize', onResize);
     resolveFn(finish(ssim ? toBattleResult(b0, ssim) : toFieldResult(b0, fsim!), manual));
   }
   renderUi(); updateHud();
   raf = requestAnimationFrame(frame);
   // 不另布阵：各营按常法列阵，一开场就交战（攻守城先定方略、大计；部将代打则直接开打）
-  if (!siege || (side === 'att' && autoMe)) start();
+  if (autoMe && !(siege && side === 'def')) start();
   return finished;
 
   function finish(result: BattleState, man: boolean) {

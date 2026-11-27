@@ -451,8 +451,21 @@ try {
   for (const kind of ['field', 'naval']) {
     const K = kind === 'naval' ? '水战' : '野战';
     const done = page.evaluate(k => NM_testBattle(k, 'att'), kind);
+    await page.waitForSelector('#form-go', { timeout: 8000 }).catch(() => {});
+    const forms = await page.locator('#battle-ui [id^="form-"]').count();
+    check(`${K}开战前临阵布阵：可择阵形（看得到敌阵、战法、地物），再擂鼓开战`, forms >= (kind === 'naval' ? 4 : 6) && /临阵布阵/.test(await text('#battle .dc-head')), String(forms));
+    if (kind === 'field') { await page.click('#form-fangyuan').catch(() => {}); await wait(150); check('换阵形即生效', await page.evaluate(() => NM_siege.sim.formation[NM_siege.view.o.me]) === 'fangyuan'); }
+    await page.click('#form-go').catch(() => {});
     await wait(1400);
-    check(`${K}不另布阵：一开场就在交战，没有“开战”按钮`, (await page.evaluate(() => NM_siege.sim.t)) > 0 && !(await visible('#siege-go')), String(await page.evaluate(() => NM_siege.sim.t)));
+    check(`${K}擂鼓之后即交战`, (await page.evaluate(() => NM_siege.sim.t)) > 0, String(await page.evaluate(() => NM_siege.sim.t)));
+    if (kind === 'field') {
+      check('底栏有战法按钮（一战一次）', (await page.locator('#battle-ui [id^="skill-"]').count()) >= 1);
+      await page.evaluate(() => { NM_siege.sim.resolve[NM_siege.view.o.me] = 30; });
+      await page.waitForSelector('.bmoment', { timeout: 4000 }).catch(() => {});
+      check('关键时刻弹出战机，停下请你定夺', await visible('.bmoment') && (await page.locator('.bm-opt').count()) >= 2);
+      await page.click('.bm-opt').catch(() => {}); await wait(200);
+      check('择定战机后继续', !(await visible('.bmoment')));
+    }
     check(`${K}底栏各营看板只看不点（不是按钮）`, (await page.locator('#battle-ui .ucard').count()) >= 4 && (await page.locator('#battle-ui button.ucard').count()) === 0);
     if (kind === 'field') check('战斗标明地点与谁在指挥', (await text('#battle-where')).includes('·') && /指挥|号令/.test(await text('#battle .bh-who')), await text('#battle .sh-mid'));
     check(`${K}头部标出我军、敌军与两军军心`, (await text('#battle .sh-side.mine .bm-tag')) === '我军' && (await page.locator('#battle .sres').count()) === 2);

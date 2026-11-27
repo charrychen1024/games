@@ -18,6 +18,15 @@ export class FieldView extends RtView {
   // 镜头稍稍拉远：我军最近的一排也在号令牌之上
   cam(): Camera { return this.o.me === 'att' ? { near: 1520, far: 0, k: 0.29, kx: 1.1, ky: 1 } : { near: 0, far: 520, k: 0.29, kx: 1.1, ky: 1 }; }
   get naval() { return this.sim.mode === 'naval'; }
+  /** 2.5D：高地的地面高度与背景所画的岗一致，上岗的人马随坡抬高 */
+  lift(x: number, y: number): number {
+    if (this.sim.mode !== 'field' || this.sim.terrain !== 'hills') return 0;
+    const { x0, x1, y0, y1 } = RIDGE, crestY = (y0 + y1) / 2, seed = this.sim.seed ?? 7;
+    if (x < x0 - 120 || x > x1 + 120) return 0;
+    const tx = (x - (x0 - 120)) / (x1 - x0 + 240), bump = Math.sin(tx * Math.PI) * (0.75 + 0.25 * Math.sin(tx * 9 + seed));
+    const half = (y1 - y0) / 2 + 40, f = Math.max(0, 1 - Math.abs(y - crestY) / half);
+    return 70 * bump * f;
+  }
 
   /* ---------- 背景（缓存）：水墨长卷 ---------- */
   background(): HTMLCanvasElement {
@@ -92,6 +101,18 @@ export class FieldView extends RtView {
         g.fillStyle = ink(0.85, 0.6); g.font = '700 12px "Noto Serif SC", serif'; g.textAlign = 'center';
         const [lx, ly] = at(500, (y0 + y1) / 2); g.fillText('浅 滩', lx, ly + 4);
       }
+      // 战场地物：林（可伏兵、避箭）、村（据守少伤）——立体画出，近大远小
+      for (const f of this.sim.features.slice().sort((a, b) => this.depth(b.y) - this.depth(a.y))) {
+        const [fx, fy, fs] = at(f.x, f.y);
+        g.fillStyle = f.kind === 'woods' ? 'rgba(70,90,60,0.22)' : 'rgba(150,120,80,0.2)';
+        g.beginPath(); g.ellipse(fx, fy, f.r * fs * 3.1, f.r * fs * 1.1, 0, 0, Math.PI * 2); g.fill();
+        const items = f.kind === 'woods' ? 11 : 6;
+        const pts = Array.from({ length: items }, () => { const a = r() * Math.PI * 2, d = Math.sqrt(r()) * f.r * 0.85; return [f.x + Math.cos(a) * d, f.y + Math.sin(a) * d * 0.8] as [number, number]; })
+          .sort((p1, p2) => this.depth(p2[1]) - this.depth(p1[1]));
+        for (const [px2, py2] of pts) { const [sx, sy, s] = at(px2, py2); if (f.kind === 'woods') tree(g, sx, sy, s * 4.2, r() < 0.6 ? 'pine' : 'grove', r, 0.9); else hut(g, sx, sy, s * 3.4, r, 0.92); }
+        g.fillStyle = ink(0.85, 0.65); g.font = '700 13px "Noto Serif SC", serif'; g.textAlign = 'center';
+        g.fillText(f.kind === 'woods' ? '林' : '村', fx, fy + f.r * fs * 1.1 + 14);
+      }
       // 草：疏疏几笔，近大远小
       for (let k = 0; k < 150; k++) { const x = -400 + r() * 1800, y = -100 + r() * 1300, [sx, sy, s] = at(x, y); grass(g, sx, sy, s * 2, r, 0.28 + r() * 0.2); }
       // 两翼：杂树、松、村舍，远处一线疏林
@@ -147,12 +168,15 @@ export class FieldView extends RtView {
   /* ---------- 一营 ---------- */
   drawUnit(g: CanvasRenderingContext2D, u: FUnit) {
     if (u.state === 'gone' || u.troops < 1) return;
+    // 伏兵：敌之伏兵不画；我之伏兵淡画，标“伏”
+    if (u.hidden && u.side !== this.o.me) return;
+    if (u.hidden) g.globalAlpha = 0.45;
     const [cx, cy, s] = this.PU(u.x, u.y);
     const mine = u.side === this.o.me;
     const facing: 'back' | 'front' = mine ? 'back' : 'front';
     const px = this.H * s * 0.11;
     const moving = u.state === 'move' || u.state === 'rout';
-    const sel = this.selected === u.id, hov = this.hoverUnit === u.id;
+    const sel = this.selected === u.id || this.group.includes(u.id), hov = this.hoverUnit === u.id;
     if (u.state === 'rout') g.globalAlpha = 0.72;
     let top: number, spread: number;
     if (this.naval) {
@@ -202,7 +226,7 @@ export class FieldView extends RtView {
       g.beginPath(); g.ellipse(cx, cy + 2, spread + 8, px * 0.45 + 6, 0, 0, Math.PI * 2); g.stroke();
     }
     const notes: Record<string, string> = { melee: '接战', shoot: this.naval ? '炮击' : '射击' };
-    this.label(g, u, cx, top, px, u.state === 'melee' || u.state === 'shoot' ? notes[u.state] : u.kind === 'fire' ? '火船' : undefined);
+    this.label(g, u, cx, top, px, u.hidden ? '伏' : u.state === 'melee' || u.state === 'shoot' ? notes[u.state] : u.kind === 'fire' ? '火船' : undefined);
   }
 
   /** 所选我营的去向：进击目标标红圈，移阵画落点 */
@@ -243,6 +267,7 @@ export class FieldView extends RtView {
     this.drawShots(g, now);
     this.drawFloats(g, now);
     if (sim.weather === 'rain') this.rain(g, now);
+    this.drawBox(g);
     this.frameAge(g);
     this.vignette(g, sim.resolve[this.o.me], !!sim.over, now);
   }
@@ -295,7 +320,7 @@ export class FieldView extends RtView {
   pick(sx: number, sy: number): { unit?: string; ground?: [number, number] } {
     let best: string | undefined, bd = 1e9;
     for (const u of this.sim.units) {
-      if (u.state === 'gone' || u.troops < 1) continue;
+      if (u.state === 'gone' || u.troops < 1 || (u.hidden && u.side !== this.o.me)) continue;
       const [x, y, s] = this.PU(u.x, u.y);
       const r = Math.max(28, this.H * s * 0.38);
       const d = Math.hypot(sx - x, (sy - (y - this.H * s * 0.1)) * 1.3);

@@ -596,3 +596,35 @@ export function toBattleResult(b: BattleState, sim: SiegeSim): BattleState {
   r.gate = Math.round(Math.max(0, sim.gate.hp) / sim.gate.max * 100) / 100;
   return r;
 }
+
+/* ---------------- 战机：攻守城的关键时刻请主帅定夺（部将代打时也会） ---------------- */
+export interface SMoment { id: string; title: string; text: string; options: { label: string; desc: string; apply: (sim: SiegeSim) => void }[] }
+export function momentS(sim: SiegeSim, side: 'att' | 'def'): SMoment | null {
+  if (sim.over || sim.t < 5) return null;
+  const once = (id: string) => !sim.flags['m_' + id];
+  const fire = (id: string, m: Omit<SMoment, 'id'>): SMoment => { sim.flags['m_' + id] = 1; return { id, ...m }; };
+  const mine = sim.units.filter(u => u.side === side && active(u));
+  const broke = sim.gate.hp <= 0 || sim.segs.some(s => s.hp <= 0);
+  if (side === 'att') {
+    if (broke && once('open')) return fire('open', { title: sim.gate.hp <= 0 ? '城门已破' : '城墙塌出缺口', text: '缺口已开，城中守军惊惶。是一鼓作气杀进城去，还是先压住城头再进？', options: [
+      { label: '全军突入', desc: '各步营、骑营一齐入城巷战，并擂鼓', apply: s => { for (const u of mine) if (u.kind === 'inf' || u.kind === 'cav') command(s, { unit: u.id, side, order: { t: 'enter' } }); drum(s, 'att'); } },
+      { label: '先清城头，再行入城', desc: '火器、炮压住缺口两侧城头，步营候命', apply: s => { const seg = s.gate.hp <= 0 ? GATE_SEG : s.segs.findIndex(g => g.hp <= 0); for (const u of mine) if (u.kind === 'gun' || u.kind === 'art') command(s, { unit: u.id, side, order: { t: 'cover', seg } }); } },
+      ...(sim.flags.persuaded ? [] : [{ label: '遣使劝降', desc: `城破在即，劝其开城（约 ${Math.round(persuadeOdds(sim) * 100)}%）`, apply: (s: SiegeSim) => { persuade(s); } }]),
+    ] });
+    if (sim.resolve.att < 35 && once('waverA')) return fire('waverA', { title: '攻势受挫', text: `${sim.att.name}屡攻不下，军心只剩 ${Math.round(sim.resolve.att)}。`, options: [
+      { label: '再鼓一通，督战猛攻', desc: '擂鼓，全军士气 +10', apply: s => { drum(s, 'att'); for (const u of s.units) if (u.side === 'att' && active(u)) u.morale = Math.min(100, u.morale + 10); } },
+      { label: '鸣金收兵，改日再攻', desc: '收兵回营，围城照旧', apply: s => { for (const u of s.units) if (u.side === 'att' && active(u)) command(s, { unit: u.id, side: 'att', order: { t: 'retreat' } }); } },
+    ] });
+  } else {
+    if (broke && once('openD')) return fire('openD', { title: sim.gate.hp <= 0 ? '城门被破' : '城墙崩塌', text: '敌军将要涌入。堵住缺口死战，还是退入街巷节节抵抗？', options: [
+      { label: '堵口死战', desc: '预备营全数补上缺口，守军士气 +10', apply: s => { const seg = s.gate.hp <= 0 ? GATE_SEG : s.segs.findIndex(g => g.hp <= 0); for (const u of s.units) if (u.side === 'def' && active(u)) { u.morale = Math.min(100, u.morale + 10); if (u.order.t === 'reserve') command(s, { unit: u.id, side: 'def', order: { t: 'man', seg } }); } } },
+      { label: '退守街巷', desc: '城头之兵退为预备，以逸待劳打巷战', apply: s => { for (const u of s.units) if (u.side === 'def' && active(u) && u.state === 'wall') command(s, { unit: u.id, side: 'def', order: { t: 'reserve' } }); } },
+      { label: '弃城突围', desc: '保全约八成守军退往邻城', apply: s => defDecision(s, 'abandon') },
+    ] });
+    if (sim.resolve.def < 35 && once('waverD')) return fire('waverD', { title: '守军动摇', text: `城中军心只剩 ${Math.round(sim.resolve.def)}，有人议论开城。`, options: [
+      { label: '斩议降者，誓死守城', desc: '全军士气 +12', apply: s => { for (const u of s.units) if (u.side === 'def' && active(u)) u.morale = Math.min(100, u.morale + 12); } },
+      { label: '开城出降', desc: '免于兵燹，城与守军归敌', apply: s => defDecision(s, 'surrender') },
+    ] });
+  }
+  return null;
+}

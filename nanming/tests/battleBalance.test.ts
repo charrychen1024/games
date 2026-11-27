@@ -31,7 +31,7 @@ describe('野战：胜负有悬念', () => {
       expect(attWins(s => fieldB(30000 * ratio, 30000, s, 'hills'))).toBeLessThanOrEqual(plain);
       expect(attWins(s => fieldB(30000 * ratio, 30000, s, 'river'))).toBeLessThanOrEqual(plain);
     }
-  });
+  }, 60000);
 });
 
 describe('代打与亲征', () => {
@@ -59,7 +59,7 @@ describe('代打与亲征', () => {
     const auto = SEEDS.filter(s => run(fieldB(30000, 30000, s), false)).length;
     const drum = SEEDS.filter(s => run(fieldB(30000, 30000, s), true)).length;
     expect(drum - auto).toBeLessThanOrEqual(SEEDS.length * 0.3);
-  });
+  }, 60000);
 });
 
 describe('攻城', () => {

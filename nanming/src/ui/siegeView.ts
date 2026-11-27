@@ -336,7 +336,7 @@ export class SiegeView extends RtView {
     const cols = onWall ? n : Math.ceil(Math.sqrt(n * 2.2));
     const rows = Math.ceil(n / cols);
     const gapX = px * (u.kind === 'cav' ? 0.75 : u.kind === 'art' ? 1.5 : 0.5), gapY = px * 0.32;
-    const sel = this.selected === u.id;
+    const sel = this.selected === u.id || this.group.includes(u.id);
     if (sel) { g.strokeStyle = 'rgba(255,214,120,0.95)'; g.lineWidth = 2.5; g.beginPath(); g.ellipse(cx, cy + 2, cols * gapX * 0.62 + 6, rows * gapY * 0.7 + 6, 0, 0, Math.PI * 2); g.stroke(); }
     if (u.state === 'rout') g.globalAlpha = 0.75;
     if (!onWall) this.footprint(g, cx, cy - rows * gapY * 0.35, cols * gapX * 0.6 + px * 0.5, rows * gapY * 0.6 + px * 0.25, moving, u.x | 0);
@@ -416,6 +416,7 @@ export class SiegeView extends RtView {
     this.drawShots(g, now);
     this.drawFloats(g, now);
     if (sim.weather === 'rain') this.rain(g, now);
+    this.drawBox(g);
     this.frameAge(g);
     this.vignette(g, sim.resolve[this.o.me], !!sim.over, now);
   }

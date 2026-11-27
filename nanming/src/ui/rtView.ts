@@ -22,6 +22,10 @@ export abstract class RtView {
   W = 0; H = 0; dpr = 1;
   o: ViewOpts;
   selected: string | null = null;
+  /** 框选、编组带上的其余诸营 */
+  group: string[] = [];
+  /** 框选中的矩形（屏幕坐标） */
+  box: [number, number, number, number] | null = null;
   floats: Float[] = [];
   shots: Shot[] = [];
   shake = 0;
@@ -68,8 +72,17 @@ export abstract class RtView {
     return [sx, sy, s];
   }
   /** 画营时用：横向夹在画面之内（近处的营偏到边上也看得见） */
+  /** 框选矩形 */
+  drawBox(g: CanvasRenderingContext2D) {
+    if (!this.box) return;
+    const [x0, y0, x1, y1] = this.box;
+    g.save(); g.fillStyle = 'rgba(255,214,120,0.08)'; g.fillRect(x0, y0, x1 - x0, y1 - y0);
+    g.strokeStyle = 'rgba(255,214,120,0.85)'; g.lineWidth = 1.5; g.setLineDash([6, 4]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.restore();
+  }
+  /** 地势高低（2.5D）：子类按地形给出某处地面的高度，人马站在坡上随之抬高 */
+  lift(_x: number, _y: number): number { return 0; }
   PU(x: number, y: number, z = 0): [number, number, number] {
-    const p = this.P(x, y, z);
+    const p = this.P(x, y, z + this.lift(x, y));
     p[0] = Math.max(this.edge, Math.min(this.W - this.edge, p[0]));
     return p;
   }
