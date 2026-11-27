@@ -12,7 +12,7 @@ export const LENSES: { id: LensId; name: string; icon: string; tip: string }[] =
 ];
 
 export type Tone = 'self' | 'ally' | 'war' | 'truce' | 'neutral';
-export const TONE_COLOR: Record<Tone, string> = { self: '#e2b04a', ally: '#3f7fbf', war: '#d0372a', truce: '#c9a33c', neutral: '#7d7466' };
+export const TONE_COLOR: Record<Tone, string> = { self: '#e2b04a', ally: '#3f7fbf', war: '#d0372a', truce: '#b04aa6', neutral: '#7d7466' };
 export const TONE_NAME: Record<Tone, string> = { self: '本方', ally: '同阵营', war: '交战', truce: '停战', neutral: '中立' };
 
 /** 某势力与玩家的关系：本方（玩家能下令的城）、同阵营（宗主、下属、同奉一主、盟友）、交战、停战、中立 */

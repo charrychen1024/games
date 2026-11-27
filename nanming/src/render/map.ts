@@ -392,7 +392,7 @@ export class MapRenderer {
     const c = s.cities[id];
     if (this.lens === 'war') {
       const tone = relationTone(s, c.controller);
-      return [TONE_COLOR[tone], tone === 'war' ? 0.4 : tone === 'self' ? 0.32 : tone === 'ally' ? 0.28 : tone === 'truce' ? 0.24 : 0.1];
+      return [TONE_COLOR[tone], tone === 'war' ? 0.4 : tone === 'self' ? 0.32 : tone === 'ally' ? 0.28 : tone === 'truce' ? 0.3 : 0.1];
     }
     if (this.lens === 'econ') {
       if (c.controller !== s.player) return ['#2a2118', 0.22];
