@@ -10,6 +10,7 @@ import reliefUrl from '../assets/relief.png?url';
 import { POLITIES } from '../data/factions';
 import { project, WORLD_W, WORLD_H, worldToScreen, screenToWorld, flatV, flatW, flatZ, depthAt, type Camera } from './projection';
 import { makeRng } from '../core/rng';
+import { spreadApart, fanSlots, nearestHit } from './declutter';
 import { friendly } from '../core/state';
 import { routeBetween, neighbors } from '../data/geography';
 import land from '../data/geo-land.json';
@@ -291,6 +292,9 @@ export class MapRenderer {
       f.translate(-cam.x, -cam.y);
       f.imageSmoothingQuality = 'high';
       f.drawImage(this.base, 0, 0, WORLD_W, WORLD_H);
+      // 东缘是海：舆图边上淡入海色，远看倾斜时画面上角不露出直边
+      const eg = f.createLinearGradient(WORLD_W - 90, 0, WORLD_W, 0); eg.addColorStop(0, 'rgba(0,0,0,0)'); eg.addColorStop(1, SEA);
+      f.fillStyle = eg; f.fillRect(WORLD_W - 90, 0, 90, WORLD_H);
       if (s) this.drawTerritory(f, s);
       this.drawWater(f);
       if (s) this.drawRoutes(f, s, time);
@@ -699,7 +703,21 @@ export class MapRenderer {
         out.push({ armies: arm.map(a => a.id), sx: sx + ox, sy: sy + oy, ax: sx, ay: sy, moving, march });
       });
     }
+    // 靠得太近的军旗互相让开（各留一根牵引线回到原处），免得后面的被挡住点不着
+    const sp = spreadApart(out.map(o => ({ x: o.sx, y: o.sy })), 26);
+    out.forEach((o, i) => { o.sx = sp[i].x; o.sy = sp[i].y; });
     this.stacks = out;
+  }
+  /** 悬停在同处多军的旗上：展开成一行，各军分开可点；指针移出展开区才收起 */
+  expand: string | null = null;
+  hoverAt(sx: number, sy: number) {
+    const cur = this.stacks.find(st => st.armies[0] === this.expand);
+    if (cur) {
+      const f = fanSlots(cur.armies.length, cur.sx, cur.sy);
+      if (sx > f[0].x - 18 && sx < f[f.length - 1].x + 18 && sy > f[0].y - 20 && sy < cur.sy + 16) return;
+    }
+    const hit = this.stacks.find(st => st.armies.length > 1 && Math.hypot(sx - st.sx, sy - st.sy) < 15);
+    this.expand = hit ? hit.armies[0] : null;
   }
 
   drawScreen(g: CanvasRenderingContext2D, s: GameState, time: number) {
@@ -807,7 +825,10 @@ export class MapRenderer {
 
   drawStacks(g: CanvasRenderingContext2D, s: GameState, focus: Set<string> | null) {
     this.armyHits = [];
-    for (const st of this.stacks) {
+    // 选中的、展开的画在最上层
+    const top = (st: ArmyStack) => (st.armies[0] === this.expand ? 2 : 0) + (st.armies.includes(this.view.selectedArmy ?? '') ? 1 : 0);
+    const order = [...this.stacks].sort((a, b) => top(a) - top(b));
+    for (const st of order) {
       const a = s.armies[st.armies[0]];
       const f = s.factions[a.faction];
       const pol = POLITIES[f?.polity ?? 'none'];
@@ -819,7 +840,7 @@ export class MapRenderer {
       if (focus && !sel && !focus.has(a.location) && !a.path.some(p => focus.has(p))) g.globalAlpha = 0.4;
       if (this.lens === 'econ' && !sel && a.faction !== s.player) g.globalAlpha = 0.3;
       // 牵引线：旗到城
-      if (!st.moving) { g.strokeStyle = 'rgba(20,14,8,0.55)'; g.lineWidth = 1; g.beginPath(); g.moveTo(st.ax, st.ay - 4); g.lineTo(st.sx - 4, st.sy + 6); g.stroke(); }
+      if (!st.moving || Math.hypot(st.sx - st.ax, st.sy - st.ay) > 8) { g.strokeStyle = 'rgba(20,14,8,0.55)'; g.lineWidth = 1; g.beginPath(); g.moveTo(st.ax, st.ay - 4); g.lineTo(st.sx - 4, st.sy + 6); g.stroke(); }
       if (st.march) this.drawColumn(g, st, f?.color ?? '#888', s.armies[st.armies[0]]);
       g.translate(st.sx, st.sy);
       if (st.moving) g.translate(0, Math.sin(this.lastTime / 180 + st.sx) * 1.2);
@@ -852,9 +873,31 @@ export class MapRenderer {
       g.fillStyle = a.morale > 50 ? '#f0cf86' : a.morale > 25 ? '#e8a447' : '#ff8f7f';
       g.fillText(t, 0, 18);
       g.restore();
-      const [wx, wy] = screenToWorld(this.cam, this.w, this.h, st.sx, st.sy);
-      for (const id of st.armies) this.armyHits.push({ id, x: wx, y: wy, r: 14 / this.cam.z, stack: st.armies });
+      // 命中区用屏幕坐标：旗盘一枚；展开时每支军队各一枚
+      this.armyHits.push({ id: st.armies[0], x: st.sx, y: st.sy, r: 14, stack: st.armies });
+      if (st.armies[0] === this.expand && st.armies.length > 1) this.drawFan(g, s, st);
     }
+  }
+
+  /** 同处多军展开：一行小旗盘，各写主将姓、兵数，各自可点 */
+  drawFan(g: CanvasRenderingContext2D, s: GameState, st: ArmyStack) {
+    const slots = fanSlots(st.armies.length, st.sx, st.sy);
+    g.save();
+    roundRect(g, slots[0].x - 17, slots[0].y - 16, slots[slots.length - 1].x - slots[0].x + 34, 44, 10);
+    g.fillStyle = 'rgba(15,10,6,0.82)'; g.fill(); g.strokeStyle = 'rgba(217,173,91,0.6)'; g.lineWidth = 1; g.stroke();
+    st.armies.forEach((id, k) => {
+      const a = s.armies[id], f = s.factions[a.faction], { x, y } = slots[k];
+      const sel = this.view.selectedArmy === id;
+      if (sel) { g.fillStyle = 'rgba(255,214,120,0.55)'; g.beginPath(); g.arc(x, y, 14, 0, Math.PI * 2); g.fill(); }
+      g.beginPath(); g.arc(x, y, 11, 0, Math.PI * 2); g.fillStyle = f?.color ?? '#888'; g.fill();
+      g.lineWidth = 1.6; g.strokeStyle = topOfSafe(s, a.faction) === s.player ? '#f0cf86' : '#e8d9b4'; g.stroke();
+      g.fillStyle = '#fff8e6'; g.font = '700 12px "Noto Serif SC", serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText((s.chars[a.commander]?.name ?? f?.short ?? '?').slice(0, 1), x, y + 0.5);
+      g.font = '700 9px "Noto Serif SC", serif'; g.fillStyle = '#f0cf86';
+      g.fillText(this.knownArmy(s, a) ? fmtTroops(a.troops) : roughT(a.troops), x, y + 19);
+      this.armyHits.push({ id, x, y, r: 13, stack: st.armies });
+    });
+    g.restore();
   }
 
   /** 行军纵队：旗后一队兵卒（骑兵多则画马），踏起尘土 */
@@ -1205,16 +1248,19 @@ export class MapRenderer {
 
   /* ---------- 交互 ---------- */
   pick(sx: number, sy: number): { kind: 'army' | 'node'; id: string } | null {
-    const [wx, wy] = screenToWorld(this.cam, this.w, this.h, sx, sy);
-    for (const h of [...this.armyHits].reverse()) if (Math.hypot(wx - h.x, wy - h.y) < h.r) {
-      // 叠放的军旗：再点一次换下一支
+    // 军旗：取离指针最近的一枚（展开的小旗盘各指一支军队）
+    const h = nearestHit(this.armyHits, sx, sy);
+    if (h) {
+      if (h.id !== h.stack[0] || h.stack.length === 1) return { kind: 'army', id: h.id };
+      // 叠放的旗盘本身：再点一次换下一支
       const cur = this.view.selectedArmy;
       if (cur && h.stack.includes(cur)) return { kind: 'army', id: h.stack[(h.stack.indexOf(cur) + 1) % h.stack.length] };
       return { kind: 'army', id: h.stack[0] };
     }
     // 先看画出来的城郭（上层优先），再找最近的小点
-    const slots = [...this.layout.values()].filter(sl => sl.tier !== 'dot').sort((a, b) => b.sy - a.sy);
-    for (const sl of slots) if (sx > sl.sx - sl.w * 0.42 && sx < sl.sx + sl.w * 0.42 && sy > sl.sy - sl.w * 0.85 && sy < sl.sy + sl.w * 0.2) return { kind: 'node', id: sl.id };
+    // 城郭互相压着时，取城心离指针最近的一座
+    const inside = [...this.layout.values()].filter(sl => sl.tier !== 'dot' && sx > sl.sx - sl.w * 0.42 && sx < sl.sx + sl.w * 0.42 && sy > sl.sy - sl.w * 0.85 && sy < sl.sy + sl.w * 0.2);
+    if (inside.length) { inside.sort((a, b) => Math.hypot(sx - a.sx, sy - (a.sy - a.w * 0.35)) - Math.hypot(sx - b.sx, sy - (b.sy - b.w * 0.35))); return { kind: 'node', id: inside[0].id }; }
     for (const sl of this.layout.values()) if (sl.label && sx > sl.label[0] && sx < sl.label[0] + sl.label[2] && sy > sl.label[1] && sy < sl.label[1] + sl.label[3]) return { kind: 'node', id: sl.id };
     let best: string | null = null, bd = Infinity;
     for (const sl of this.layout.values()) { const d = Math.hypot(sx - sl.sx, sy - sl.sy); if (d < bd) { bd = d; best = sl.id; } }
@@ -1235,7 +1281,7 @@ export class MapRenderer {
   clamp() {
     this.cam.z = Math.max(this.minZoom(), this.cam.z);
     const Z = flatZ(this.cam);
-    const hw = this.w / 2 / Z * flatW(this.h, 0), up = -flatV(this.h, 0) / Z, down = flatV(this.h, this.h) / Z;
+    const hw = this.w / 2 / Z * flatW(this.h, flatV(this.h, 0)), up = -flatV(this.h, 0) / Z, down = flatV(this.h, this.h) / Z;
     this.cam.x = Math.max(Math.min(hw, WORLD_W / 2), Math.min(WORLD_W - Math.min(hw, WORLD_W / 2), this.cam.x));
     this.cam.y = Math.max(up, Math.min(WORLD_H - down, this.cam.y));
   }

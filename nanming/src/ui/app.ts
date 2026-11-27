@@ -340,6 +340,7 @@ export class App {
           return;
         }
       }
+      this.map.hoverAt(e.clientX - r.left, e.clientY - r.top);
       const p = this.map.pick(e.clientX - r.left, e.clientY - r.top);
       this.map.view.hover = p?.kind === 'node' ? p.id : null;
       if (this.map.view.targeting && p?.kind === 'node') {
@@ -387,7 +388,7 @@ export class App {
       const node = p?.kind === 'node' ? p.id : p?.kind === 'army' ? this.s.armies[p.id]?.location : null;
       if (node) { this.endTarget(); this.issueMarch(a.id, node); }
     });
-    canvas.addEventListener('pointerleave', () => { this.hideTip(); this.map.view.hover = null; });
+    canvas.addEventListener('pointerleave', () => { this.hideTip(); this.map.view.hover = null; this.map.expand = null; });
     canvas.addEventListener('wheel', e => {
       e.preventDefault();
       const r = canvas.getBoundingClientRect();

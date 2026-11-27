@@ -19,7 +19,7 @@ page.on('console', m => { if (m.type() === 'error' && !m.text().includes('fonts.
 const wait = ms => page.waitForTimeout(ms);
 const visible = sel => page.locator(sel).first().isVisible().catch(() => false);
 const text = sel => page.locator(sel).first().innerText().catch(() => '');
-const armyXY = id => page.evaluate(id => { const m = NM.map; const h = m.armyHits.find(x => x.id === id); if (!h) return null; return m.toScreen(h.x, h.y); }, id);
+const armyXY = id => page.evaluate(id => { const m = NM.map; const h = m.armyHits.find(x => x.id === id) ?? m.armyHits.find(x => x.stack.includes(id)); if (!h) return null; return [h.x, h.y]; }, id);
 
 /** 推进一个月：遇到史事抉择选第一项，遇到战斗交给部将自动打完 */
 async function nextMonth(manualBattle = false, probe = null) {
@@ -519,6 +519,28 @@ try {
     check(`${K}结果亮出数秒后自行收场`, Date.now() - t0 < 6000 && await page.evaluate(() => document.querySelector('#battle').classList.contains('hidden')), String(Date.now() - t0));
     check(`${K}打完，记为亲征`, res.manual === true && res.result.over === true);
   }
+
+  console.log('拥挤处点选');
+  await page.evaluate(() => NM.start(NM_presets.createGame('hongguang', 1), false));
+  await wait(500);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => NM.map.focus('yangzhou', 1.1));
+  await wait(500);
+  const crowd = await page.evaluate(() => {
+    const m = NM.map, r = m.canvas.getBoundingClientRect();
+    let minD = 1e9; for (let i = 0; i < m.stacks.length; i++) for (let j = i + 1; j < m.stacks.length; j++) minD = Math.min(minD, Math.hypot(m.stacks[i].sx - m.stacks[j].sx, m.stacks[i].sy - m.stacks[j].sy));
+    const st = m.stacks.find(x => x.armies.length > 1 && x.sx > 300 && x.sx < 1100 && x.sy > 120);
+    return { minD, st: st ? { x: r.left + st.sx, y: r.top + st.sy, armies: st.armies } : null };
+  });
+  check('靠得近的军旗互相让开，不再叠在一起', crowd.minD >= 25, String(crowd.minD));
+  if (crowd.st) {
+    await page.mouse.move(crowd.st.x, crowd.st.y); await wait(250);
+    const slot = await page.evaluate(id => { const m = NM.map, r = m.canvas.getBoundingClientRect(); const h = m.armyHits.find(x => x.id === id && x.r === 13); return h ? [r.left + h.x, r.top + h.y] : null; }, crowd.st.armies[1]);
+    check('悬停同处多军的旗：展开成一行，各军各有点选处', !!slot);
+    if (slot) { await page.mouse.move(slot[0], slot[1]); await wait(150); await page.mouse.click(slot[0], slot[1]); await wait(300); }
+    check('点展开后的第二支军队，选中的正是它', await page.evaluate(() => NM.map.view.selectedArmy) === crowd.st.armies[1]);
+  } else check('拥挤处有同处多军可测', false);
+  await page.evaluate(() => NM.closePanel?.());
 
   console.log('人物档案');
   await page.click('#btn-chars');
