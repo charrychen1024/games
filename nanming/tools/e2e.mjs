@@ -184,6 +184,17 @@ try {
     await wait(250);
     check('改换粮台加入本月命令（不占政令）', (await text('#orders')).includes('镇江为粮台'), await text('#orders'));
   }
+  // 军略：行军快慢、粮秣、营垒，不占政令
+  await page.evaluate(() => NM.selectArmy('a_shi'));
+  await wait(200);
+  check('本方军队面板有军略（行军、粮秣、营垒）', await visible('#army-conduct') && await visible('#conduct-pace-forced') && await visible('#conduct-forage-plunder') && await visible('#conduct-camp-true'));
+  const used0 = await page.evaluate(() => NM.orders.length);
+  await page.click('#conduct-pace-forced');
+  await wait(200);
+  check('选急行加入本月命令', (await text('#orders')).includes('急行'));
+  await page.click('#conduct-pace-null');
+  await wait(200);
+  check('改回常行即撤去该令', (await page.evaluate(() => NM.orders.length)) === used0);
   // 号令黄得功
   await page.evaluate(() => NM.selectArmy('a_huang'));
   await wait(200);

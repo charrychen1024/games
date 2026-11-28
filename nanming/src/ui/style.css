@@ -1359,3 +1359,12 @@ html.reduced *:not(#toast, #toast *), html.reduced *:not(#toast, #toast *)::befo
 .aw-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .aw-chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px 1px 4px; border-radius: 10px; background: rgba(20, 10, 6, 0.55); font-size: 11px; color: #f3dcc0; }
 .aw-chip svg { width: 12px; height: 12px; }
+
+/* 军略 */
+.conduct { margin-top: 10px; }
+.conduct-row { display: grid; grid-template-columns: 36px 1fr; align-items: center; gap: 6px; margin-top: 6px; }
+.conduct-row .k { font-weight: 900; color: var(--dim); font-size: 13px; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
+.segb { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 5px 4px; border-radius: 8px; font-size: 12px; font-weight: 800; color: var(--dim); background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(217, 173, 91, 0.18); cursor: pointer; white-space: nowrap; }
+.segb .ic { width: 15px; height: 15px; }
+.segb.on { color: #1a1208; background: linear-gradient(180deg, #f5d58c, #b98a3c); border-color: var(--gold); }

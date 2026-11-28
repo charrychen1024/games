@@ -37,6 +37,17 @@ export function forageShare(s: GameState, faction: string): number {
   if (pol === 'shun' || pol === 'xi' || faction === 'shun' || faction === 'xi') return 0.75;
   return 0.2;
 }
+/** 一支军队取于地方的口粮饷银之比：各家常例之上，就粮 +0.35（至多九成）；在敌城抄掠则全取于敌 */
+export function armyForage(s: GameState, a: { faction: string; forage?: 'forage' | 'plunder'; location: string }): number {
+  const base = forageShare(s, a.faction);
+  if (!a.forage) return base;
+  const here = s.cities[a.location];
+  if (a.forage === 'plunder' && here && hostile(s, a.faction, here.controller)) return 1;
+  return Math.min(0.9, base + 0.35);
+}
+export const plundering = (s: GameState, a: { faction: string; forage?: string; location: string }) => a.forage === 'plunder' && !!s.cities[a.location] && hostile(s, a.faction, s.cities[a.location].controller);
+/** 纵掠之名：十二个月内，凡被此家劝降的城都更死守 */
+export const PLUNDER_INFAMY = 12;
 export const RECRUIT_SILVER = 3; // 两/人
 /** 裁兵每人遣散银（两）；军队另须结清所欠之饷 */
 export const DISBAND_SILVER = 0.5;
@@ -71,7 +82,7 @@ export function monthlyIncome(s: GameState, c: City): { silver: number; grain: n
 
 export function upkeepOf(s: GameState, c: City): { grain: number; silver: number } {
   let grain = c.garrison * GRAIN_PER_SOLDIER * garrisonGrainMul(c), silver = c.garrison * SILVER_PER_SOLDIER;
-  for (const a of Object.values(s.armies)) if (a.supply === c.id) { const k = 1 - forageShare(s, a.faction); const keep = supplyLegOf(s, a).keep || 1; grain += a.troops * GRAIN_PER_SOLDIER * k / keep; silver += a.troops * SILVER_PER_FIELD_SOLDIER * k; }
+  for (const a of Object.values(s.armies)) if (a.supply === c.id) { const k = 1 - armyForage(s, a); const keep = supplyLegOf(s, a).keep || 1; grain += a.troops * GRAIN_PER_SOLDIER * k / keep; silver += a.troops * SILVER_PER_FIELD_SOLDIER * k; }
   if (s.sieges[c.id]) grain += c.garrison * GRAIN_PER_SOLDIER * 0.5;
   return { grain: Math.round(grain), silver: Math.round(silver) };
 }
@@ -120,7 +131,7 @@ export function cityForecast(s: GameState, c: City): CityForecast {
     if (a.supply !== c.id) continue;
     const mine = c.controller === a.faction || topOf(s, c.controller) === topOf(s, a.faction);
     if (!mine || (a.location !== c.id && supplyBlock(s, a.faction, c.id, a.location))) continue;
-    const fs = forageShare(s, a.faction);
+    const fs = armyForage(s, a);
     const leg = supplyLegOf(s, a);
     const g = Math.round(a.troops * GRAIN_PER_SOLDIER * (1 - fs) / (leg.keep || 1)), sv = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * (1 - fs));
     const note = fs >= 0.5 ? `（${Math.round(fs * 100)}% 就粮于地方）` : '';
@@ -224,7 +235,7 @@ export const LOAN_COOLDOWN = 6;
  * 连欠满四月起就所驻本方城池索饷（民心 −3、吏治 −1）；索不到而本方本可发饷（有可设为粮台的城存银够三个月，却不改粮台、不调银），每月逃散 1%，逐月加重，至多 4%，按所欠比例折算。粮台有余银即补发旧欠，补清则军心回升。 */
 export const arrearsPenalty = (a: { unpaid?: number }) => Math.min(24, (a.unpaid ?? 0) * 3);
 export function payArrears(s: GameState, a: import('./types').Army, owed: number, from?: string) {
-  const need = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * (1 - forageShare(s, a.faction)));
+  const need = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * (1 - armyForage(s, a)));
   const ours = a.faction === s.player || topOf(s, a.faction) === s.player;
   if (owed > need * 0.1) {
     a.unpaid = (a.unpaid ?? 0) + 1;
@@ -289,9 +300,10 @@ export function runEconomy(s: GameState) {
   for (const a of Object.values(s.armies).sort((x, y) => x.id.localeCompare(y.id))) {
     const mine = (id: string) => { const c = s.cities[id]; return !!c && (c.controller === a.faction || topOf(s, c.controller) === topOf(s, a.faction)); };
     // 就地筹粮：一部分口粮饷银取于所过地方，所在城民心随之下降
-    const fs = forageShare(s, a.faction);
+    const fs = armyForage(s, a);
     const where = s.cities[a.location];
-    if (fs > 0 && where) bump(s, where.id, 'minxin', -Math.min(3, Math.round(a.troops * fs / 15000 * 10) / 10), `${a.name}就粮于地方`, { kind: 'upkeep', ref: a.id });
+    if (plundering(s, a)) plunder(s, a);
+    else if (fs > 0 && where) bump(s, where.id, 'minxin', -Math.min(3, Math.round(a.troops * fs / 15000 * 10) / 10), `${a.name}就粮于地方`, { kind: 'upkeep', ref: a.id });
     const needG = Math.round(a.troops * GRAIN_PER_SOLDIER * (1 - fs)), needS = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * (1 - fs));
     let got = 0, paid = 0;
     const sup = s.cities[a.supply];
@@ -416,6 +428,23 @@ function applyPolicy(s: GameState, c: City) {
     case 'levy': bump(s, c.id, 'minxin', -3, '加派', src); bump(s, c.id, 'order', -1, '加派', src); break;
     default: break;
   }
+}
+
+/** 纵兵抄掠敌城四乡：军中粮饷全取于敌，另得掳获之银解回粮台；敌城户口、民心大损；士卒得利士气稍振；
+ * 落下纵掠之名，一年之内本方劝降各城都更难（见 persuadeChance）。 */
+function plunder(s: GameState, a: import('./types').Army) {
+  const c = s.cities[a.location];
+  const src = { kind: 'upkeep' as const, ref: a.id };
+  const loot = Math.round(Math.min(Math.max(0, c.silver) * 0.25, a.troops * 0.4));
+  if (loot > 0) bump(s, c.id, 'silver', -loot, `${a.name}抄掠四乡`, src);
+  const sup = s.cities[a.supply];
+  if (loot > 0 && sup && topOf(s, sup.controller) === topOf(s, a.faction)) bump(s, sup.id, 'silver', loot, `${a.name}掳获解回`, src);
+  bump(s, c.id, 'pop', -Math.round(c.pop * 0.015 * 100) / 100, `${a.name}抄掠，百姓逃散`, src);
+  bump(s, c.id, 'minxin', -8, `${a.name}抄掠四乡`, src);
+  a.morale = Math.min(90, a.morale + 4);
+  s.flags['plunder_' + topOf(s, a.faction)] = s.turn;
+  if (topOf(s, a.faction) === s.player || c.controller === s.player)
+    report(s, { cat: '军报', urgent: c.controller === s.player, node: c.id, text: `${a.name}纵兵抄掠${nodeName(c.id)}四乡：军中粮饷全取于敌${loot ? `，掳银 ${loot} 两` : ''}；${nodeName(c.id)}户口逃散、民心大坏。${topOf(s, a.faction) === s.player ? '纵掠之名传开，一年之内各城更不肯降。' : ''}`, src });
 }
 
 /** 本城本月净变化 */

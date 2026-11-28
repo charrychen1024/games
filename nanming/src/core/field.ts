@@ -26,6 +26,8 @@ export interface FUnit {
   luck?: number;
   /** 临阵镇定：主将统军高则受创时士气掉得慢（乘在士气损失上） */
   poise?: number;
+  /** 营垒：所受伤损之比 */
+  guard?: number;
   /** 连续行进的时间（冲势）、接敌后冲锋余时 */
   run: number; charge: number;
   /** 伏兵：藏于林中（或用“伏兵”计）不为敌所见，初次接敌加倍杀伤；lurk 为在林中静候的时长 */
@@ -138,7 +140,7 @@ export function createField(b: BattleState): FieldSim {
   for (let k = 0; k < nT; k++) { const t = Math.round(110 + fr.next() * 520), kind = kinds[Math.floor(fr.next() * kinds.length)], r = fr.next(); twists.push({ t, kind, side: kind === 'wound' || kind === 'mutiny' ? (r < pAtt ? 'att' : 'def') : kind === 'relief' ? (r < 1 - pAtt ? 'att' : 'def') : r < 0.5 ? 'att' : 'def' }); }
   twists.sort((a, b2) => a.t - b2.t);
   // 临阵状态：全军将运 ±9%，各营再 ±8%（种子定，读档重打不变）
-  for (const side of ['att', 'def'] as const) { const fortune = 0.8 + rng.next() * 0.4; for (const u of units) if (u.side === side) { u.luck = fortune * (0.92 + rng.next() * 0.16); u.poise = tongPoise(b[side].tong); } }
+  for (const side of ['att', 'def'] as const) { const fortune = 0.8 + rng.next() * 0.4; for (const u of units) if (u.side === side) { u.luck = fortune * (0.92 + rng.next() * 0.16); u.poise = tongPoise(b[side].tong) * (b[side].camp ? 0.9 : 1); u.guard = b[side].camp ? 0.8 : 1; } }
   // 临阵尚有余勇：军心再低，开战时全军军心不低于 25（各营士气在 compose 里不低于 22），免得未见敌便全线崩溃
   const mA = Math.max(25, avgMorale(b.att)), mD = Math.max(25, avgMorale(b.def));
   const tot = (s: BattleSide) => s.lanes.reduce((n, l) => n + l.troops, 0) + (s.reserve ?? 0);
@@ -364,7 +366,7 @@ function power(sim: FieldSim, u: FUnit) {
 }
 function hurt(u: FUnit, dmg: number, shock = 1) {
   if (dmg <= 0 || u.troops < 1) return;
-  const n = Math.min(u.troops, dmg);
+  const n = Math.min(u.troops, dmg * (u.guard ?? 1));
   u.morale -= n / Math.max(1, u.troops) * 110 * shock * (u.poise ?? 1) / (u.luck ?? 1);
   u.troops -= n; u.hit += n; u.engaged = true;
 }
@@ -632,7 +634,7 @@ export function runField(b: BattleState, opts: { maxT?: number; dt?: number } = 
   void opts.dt;
   let next = 0;
   while (!sim.over && sim.t < maxT) {
-    if (sim.t >= next) { aiField(sim, 'att'); aiField(sim, 'def'); next = sim.t + 2; }
+    if (sim.t >= next) { aiField(sim, 'att', { hold: !!b.att.camp }); aiField(sim, 'def', { hold: !!b.def.camp }); next = sim.t + 2; }
     stepField(sim, TICK);
   }
   return sim;

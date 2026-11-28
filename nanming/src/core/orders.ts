@@ -4,13 +4,13 @@ import type { ArmyOrder, City, GameState, Order } from './types';
 import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance, treasuryOf } from './state';
 import { setArmyOrder, capture } from './military';
 import { recruitSilverOf, gunBonusOf, eduSteadfast } from './develop';
-import { RECRUIT_SILVER, DISBAND_SILVER, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
+import { PLUNDER_INFAMY, RECRUIT_SILVER, DISBAND_SILVER, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
 import { rngFor } from './rng';
 import { seekTalent, seekError, prisonerError, handlePrisoner, SEEK_SILVER, govEffects, hasTrait } from './people';
 import { shortestPath, neighbors, NODE, pathDays } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
-  trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', supply: '粮台', reinforce: '增兵', disband: '裁兵',
+  trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', supply: '粮台', conduct: '军略', reinforce: '增兵', disband: '裁兵',
   envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立', war: '宣战', raise: '出兵',
   seek: '招贤', prisoner: '俘虏',
 };
@@ -29,6 +29,7 @@ export function describeOrder(s: GameState, o: Order): string {
     case 'loan': return `${nodeName(o.node)}劝捐助饷`;
     case 'army': return `${s.armies[o.army]?.name ?? o.army}${armyOrderText(o.order)}`;
     case 'supply': return `${s.armies[o.army]?.name ?? o.army}改以${nodeName(o.node)}为粮台`;
+    case 'conduct': return `${s.armies[o.army]?.name ?? o.army}${conductText(o)}`;
     case 'reinforce': return o.troops >= 0 ? `${s.armies[o.army]?.name}拨 ${o.troops} 人入${nodeName(o.node)}驻守` : `${nodeName(o.node)}抽驻军 ${-o.troops} 人补入${s.armies[o.army]?.name}`;
     case 'envoy': return `遣${charName(s, o.char)}赴${factionName(s, o.target)}${o.aim === 'alliance' ? '议结盟' : o.aim === 'truce' ? '议停战' : '议和'}`;
     case 'persuade': return `遣${charName(s, o.char)}赴${nodeName(o.node)}劝降`;
@@ -38,6 +39,16 @@ export function describeOrder(s: GameState, o: Order): string {
     case 'raise': return `${nodeName(o.node)}出兵 ${o.troops} 人，${charName(s, o.char)}统${o.navy ? '水师' : '领'}`;
     case 'independence': return `脱离${factionName(s, s.factions[s.player]?.overlord ?? '')}，自立门户`;
   }
+}
+
+export const PACE_NAME = { steady: '稳进', normal: '常行', forced: '急行' } as const;
+export const FORAGE_NAME = { depot: '粮台', forage: '就粮', plunder: '抄掠' } as const;
+function conductText(o: Extract<Order, { kind: 'conduct' }>): string {
+  const parts: string[] = [];
+  if (o.pace !== undefined) parts.push(`改为${PACE_NAME[o.pace ?? 'normal']}`);
+  if (o.forage !== undefined) parts.push(`粮秣改为${FORAGE_NAME[o.forage ?? 'depot']}`);
+  if (o.camp !== undefined) parts.push(o.camp ? '坚守营垒' : '撤去营垒');
+  return parts.join('，') || '军略不变';
 }
 
 export function armyOrderText(o: ArmyOrder): string {
@@ -51,7 +62,7 @@ export function armyOrderText(o: ArmyOrder): string {
  * 军令（调动已有军队、改换粮台）不占次数；定方针、任命、募兵、调拨、出兵、遣使、劝降、号令藩镇、赏赐、宣战等每道占一次。
  * 次数随两样东西变：中枢的理政之才（君主与治所宰辅中政务、威望最高者），以及所辖城池多寡（城多则设官分治、可多发政令）。
  * 方针一经定下逐月照行，不必每月重下；主官在任的城自会按方针治理。 */
-export const orderCost = (o: Order): number => (o.kind === 'army' || o.kind === 'supply' ? 0 : 1);
+export const orderCost = (o: Order): number => (o.kind === 'army' || o.kind === 'supply' || o.kind === 'conduct' ? 0 : 1);
 export function orderBudget(s: GameState, f: string): { total: number; factors: string[] } {
   const fac = s.factions[f];
   const capital = fac?.capital;
@@ -119,6 +130,11 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       const a = s.armies[o.army];
       if (!a || a.faction !== f) return '不是你的军队';
       if (o.order.kind !== 'hold') { const st = a.progress > 0 && a.path.length ? a.path[0] : a.location; if (armyRoute(s, a.faction, st, o.order.target, a.mix.navy >= 0.3) === null) return noRouteReason(s, a.faction, st, o.order.target, a.mix.navy >= 0.3); }
+      return null;
+    }
+    case 'conduct': {
+      const a = s.armies[o.army];
+      if (!a || a.faction !== f) return '不是你的军队';
       return null;
     }
     case 'supply': {
@@ -330,6 +346,14 @@ export function applyOrder(s: GameState, f: string, o: Order) {
     case 'army': {
       const a = s.armies[o.army];
       setArmyOrder(s, a, o.order);
+      if (isPlayer) report(s, { cat: '军报', node: a.location, text: `${describeOrder(s, o)}。`, src });
+      break;
+    }
+    case 'conduct': {
+      const a = s.armies[o.army];
+      if (o.pace !== undefined) { if (o.pace) a.pace = o.pace; else delete a.pace; }
+      if (o.forage !== undefined) { if (o.forage) a.forage = o.forage; else delete a.forage; }
+      if (o.camp !== undefined) { if (o.camp) a.camp = true; else delete a.camp; }
       if (isPlayer) report(s, { cat: '军报', node: a.location, text: `${describeOrder(s, o)}。`, src });
       break;
     }
@@ -631,6 +655,8 @@ export function persuadeChance(s: GameState, f: string, charId: string, node: st
   // 威慑随兵力之比渐增（至多 +25%）
   if (near > city.garrison) { const r = Math.round(near / Math.max(1, city.garrison) * 10) / 10, b = Math.min(0.25, (r - 1) * 0.05); p += b; factors.push(`我军压境（兵力 ${r} 比 1）+${Math.round(b * 100)}%`); }
   if (city.minxin < 40) { p += 0.08; factors.push('城中人心离散 +8%'); }
+  const inf = s.flags['plunder_' + topOf(s, f)];
+  if (typeof inf === 'number' && s.turn - inf < PLUNDER_INFAMY) { p -= 0.15; factors.push('我军纵掠之名在外，人皆死守 −15%'); }
   const st = eduSteadfast(city);
   if (Math.abs(st) >= 0.01) { p += st; factors.push(st < 0 ? `文教 ${Math.round(city.edu)}，士绅守节 −${Math.round(-st * 100)}%` : `文教 ${Math.round(city.edu)}，士风浮薄 +${Math.round(st * 100)}%`); }
   const ctrl = s.factions[city.controller];

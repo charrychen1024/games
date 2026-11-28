@@ -26,6 +26,8 @@ export interface BattleSide {
   garrison: boolean;
   startTroops: number;
   reserve?: number;
+  /** 坚守营垒：本月未动、扎营以待 */
+  camp?: boolean;
 }
 export type Terrain = 'plain' | 'river' | 'hills' | 'city' | 'water';
 export type Weather = 'clear' | 'rain' | 'wind' | 'fog';

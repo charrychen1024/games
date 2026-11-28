@@ -25,11 +25,24 @@ export function setArmyOrder(s: GameState, a: Army, order: ArmyOrder): boolean {
 
 export interface Contact { node: NodeId; arrivals: Record<string, number> }
 
+/** 每日行程：稳进 0.75、常行 1、急行 1.5；就粮、抄掠分兵征敛，再打八五折 */
+export const paceOf = (a: Army) => (a.pace === 'forced' ? 1.5 : a.pace === 'steady' ? 0.75 : 1) * (a.forage ? 0.85 : 1);
+/** 急行：每走一日士气 −0.6、掉队千分之一点五；稳进：每走一日士气 +0.3（至多 80） */
+export function marchToll(s: GameState, a: Army, days: number) {
+  if (!days) return;
+  if (a.pace === 'forced') {
+    const lost = Math.round(a.troops * 0.0015 * days);
+    a.troops -= lost; a.morale = Math.max(10, Math.round(a.morale - 0.6 * days));
+    if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}急行 ${days} 日，掉队 ${lost} 人，士卒疲惫（士气 −${Math.round(0.6 * days)}）。`, src: { kind: 'order', ref: a.id } });
+  } else if (a.pace === 'steady' && a.morale < 80) a.morale = Math.min(80, Math.round(a.morale + 0.3 * days));
+}
+
 /** 逐日推进本月行军。返回遭遇地点（敌对军队同处一地）。 */
 export function moveArmies(s: GameState): Contact[] {
   const contacts = new Map<NodeId, Contact>();
   const arrivedDay: Record<string, number> = {};
   const stopped = new Set<string>();
+  const marched: Record<string, number> = {};
   const armies = Object.values(s.armies).sort((x, y) => x.id.localeCompare(y.id));
   for (let day = 1; day <= 30; day++) {
     for (const a of armies) {
@@ -44,9 +57,11 @@ export function moveArmies(s: GameState): Contact[] {
         a.path = p ?? [];
         continue;
       }
-      a.progress++;
+      const was = a.progress;
+      a.progress = Math.round((a.progress + paceOf(a)) * 100) / 100;
+      marched[a.id] = (marched[a.id] ?? 0) + 1;
       // 船走不了陆路：水师踏上陆路即舍舟登岸，船只留在岸边，水手改作步卒
-      if (a.progress === 1 && r.kind === 'land' && a.mix.navy > 0) {
+      if (was === 0 && r.kind === 'land' && a.mix.navy > 0) {
         const nv = a.mix.navy;
         a.mix = { ...a.mix, inf: a.mix.inf + nv, navy: 0 };
         if (a.name.endsWith('水师')) a.name = a.name.slice(0, -2) + '部';
@@ -93,6 +108,7 @@ export function moveArmies(s: GameState): Contact[] {
       }
     }
   }
+  for (const a of armies) if (s.armies[a.id]) marchToll(s, a, marched[a.id] ?? 0);
   for (const a of armies) {
     if (!s.armies[a.id]) continue;
     if (a.order.kind === 'move' && a.path.length === 0 && a.progress === 0) {
@@ -187,6 +203,10 @@ export function buildFieldBattle(s: GameState, c: Contact): BattleState | null {
   if (!defArmies.length) return null;
   const att = combineSide(s, attArmies, { foeFaction: defArmies[0].faction });
   const def = combineSide(s, defArmies, { foeFaction: last.faction });
+  // 坚守营垒：本月未动（未抵达、无行程）、扎营以待之军
+  const camped = (list: Army[]) => list.length > 0 && list.every(a => a.camp && !c.arrivals[a.id] && a.order.kind === 'hold');
+  if (camped(defArmies)) def.camp = true;
+  if (camped(attArmies)) att.camp = true;
   // 港口、渡口，或江边相遇而两军多为水师：水战
   const n = NODE[c.node];
   const watery = n.kind === 'port' || n.kind === 'ferry' || neighbors(c.node).some(x => x.route.kind === 'river' || x.route.kind === 'sea');

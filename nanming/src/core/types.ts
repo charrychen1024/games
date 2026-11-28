@@ -173,6 +173,10 @@ export interface Army {
   unpaid?: number;
   /** 守城出击之兵：战罢回城并入驻军 */
   sortie?: boolean;
+  /** 军略：行军（稳进/急行，缺省常行）、粮秣（就粮/抄掠，缺省粮台）、坚守营垒 */
+  pace?: 'steady' | 'forced';
+  forage?: 'forage' | 'plunder';
+  camp?: boolean;
 }
 export interface Siege {
   node: NodeId;
@@ -198,6 +202,8 @@ export type Order =
   | { id: string; kind: 'army'; army: ArmyId; order: ArmyOrder }
   /** 改换粮台 */
   | { id: string; kind: 'supply'; army: ArmyId; node: NodeId }
+  /** 军略：行军、粮秣、营垒（null 表示复归常例） */
+  | { id: string; kind: 'conduct'; army: ArmyId; pace?: 'steady' | 'forced' | null; forage?: 'forage' | 'plunder' | null; camp?: boolean }
   | { id: string; kind: 'reinforce'; node: NodeId; army: ArmyId; troops: number }
   /** 裁兵：裁撤本城驻军（army 缺省）或在本城的某军若干人 */
   | { id: string; kind: 'disband'; node: NodeId; army?: ArmyId; troops: number }

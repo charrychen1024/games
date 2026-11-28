@@ -1,5 +1,5 @@
 /* 界面主控：游戏式 HUD。图标 + 大数字 + 短标签，细节点开才看。 */
-import type { GameState, Order, NodeId, ArmyOrder, Policy, ReportEntry, LedgerEntry, Character, ReportCat } from '../core/types';
+import type { GameState, Order, NodeId, ArmyOrder, Policy, ReportEntry, LedgerEntry, Character, ReportCat, Army } from '../core/types';
 import { MapRenderer, nodePt, armyPt, roadPts, legFrac } from '../render/map';
 import { h, $, clear, fmt, wan, signed } from './dom';
 import { iconSvg } from './icons';
@@ -30,7 +30,7 @@ import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot }
 import { yangzhouSiegeState } from '../data/presets';
 import { createGame } from '../data/scenario1644';
 import { polityOf } from '../core/regime';
-import { canSea, siegeAwe } from '../core/military';
+import { canSea, siegeAwe, paceOf } from '../core/military';
 import { armyRoute, routeNotes, noRouteReason, supplyRoute } from '../core/route';
 import { LENSES, TONE_COLOR, TONE_NAME, TIER_COLOR, TIER_NAME, type LensId, type Tone, type StoreTier } from '../render/lens';
 import type { PendingChoice } from '../core/events';
@@ -59,7 +59,7 @@ const FIELD_NAME: Record<string, string> = { grain: '仓粮', silver: '府库', 
 const FIELD_ICON: Record<string, string> = { grain: 'grain', silver: 'silver', pop: 'pop', minxin: 'minxin', garrison: 'troops', wall: 'wall', order: 'order', agri: 'agri', commerce: 'commerce', edu: 'edu' };
 const CAT_ICON: Record<ReportCat, string> = { 急报: 'urgent', 军报: 'war', 易主: 'capture', 交涉: 'envoy', 内政: 'admin', 人事: 'person', 史事: 'event', 线索: 'clue' };
 const POLICY_ICON: Record<Policy, string> = { balanced: 'order', agri: 'agri', commerce: 'commerce', fortify: 'wall', relief: 'minxin', edu: 'edu', levy: 'reward' };
-const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', supply: 'grain', reinforce: 'reinforce', disband: 'troops', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army', seek: 'chars', prisoner: 'prisoner' };
+const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', supply: 'grain', conduct: 'policy', reinforce: 'reinforce', disband: 'troops', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army', seek: 'chars', prisoner: 'prisoner' };
 const HINT_KEY = 'nanming:hint';
 
 /** 选势力卡片：难度、一句处境、目标 */
@@ -502,7 +502,7 @@ export class App {
             // 途中有敌城挡路：行军到第一座敌城即停，先写这一程
             const a = s.armies[this.map.view.targeting.army];
             const stop = mi.blocked[0];
-            const d = marchPlan(a.location, mi.path.slice(0, mi.path.indexOf(stop) + 1), a.progress).pop()?.day ?? 0;
+            const d = marchPlan(a.location, mi.path.slice(0, mi.path.indexOf(stop) + 1), a.progress, paceOf(a)).pop()?.day ?? 0;
             tip.append(h('div', { class: 'mc-days' }, h('b', null, String(d)), ' 日', h('span', null, `至${nodeName(stop)}即停`)));
             tip.append(h('div', { class: 'mc-warn' }, ic('siege'), `${nodeName(stop)}有敌把守，须先攻下${mi.blocked.length > 1 ? `（沿途另有${mi.blocked.slice(1).map(nodeName).join('、')}）` : ''}；道路畅通时全程 ${mi.days} 日${mi.days > 30 ? `（约 ${Math.ceil(mi.days / 30)} 个月）` : ''}`));
           } else {
@@ -540,7 +540,7 @@ export class App {
     const ctrl = s.cities[node].controller;
     const rel = hostile(s, a.faction, ctrl) ? 'war' : friendly(s, a.faction, ctrl) ? 'friend' : 'neutral';
     if (!path) return { path, days: 0, reach: null, blocked: [], via: [], rel, why: noRouteReason(s, a.faction, start, node, canSea(a)) };
-    const plan = marchPlan(a.location, path, a.progress);
+    const plan = marchPlan(a.location, path, a.progress, paceOf(a));
     const reach = [...plan].reverse().find(x => x.day <= 30)?.node ?? null;
     // 途经敌城：到城下即停（与月结同一规矩）；中立之城借道
     const { stops: blocked, via } = routeNotes(s, a.faction, path);
@@ -879,7 +879,7 @@ export class App {
     const vas = Object.values(s.armies).filter(a => s.factions[a.faction]?.overlord === s.player);
     const chip = (a: typeof mine[number]) => {
       const pend = this.orders.find(o => (o.kind === 'army' || o.kind === 'command') && o.army === a.id);
-      const st = pend ? '已下令' : a.path.length ? `行军 · 余 ${Math.max(1, pathDays(a.location, a.path) - a.progress)} 日` : a.order.kind === 'siege' ? (a.order.assault ? '攻城' : '围城') : '驻扎';
+      const st = pend ? '已下令' : a.path.length ? `行军 · 余 ${Math.max(1, Math.ceil((pathDays(a.location, a.path) - a.progress) / paceOf(a)))} 日` : a.order.kind === 'siege' ? (a.order.assault ? '攻城' : '围城') : '驻扎';
       return h('button', { class: 'achip' + (this.map.view.selectedArmy === a.id ? ' on' : '') + (pend ? ' pend' : '') + (a.faction !== s.player ? ' vas' : ''), 'data-army': a.id, 'data-tip': `${a.name} · ${nodeName(a.location)}`,
         onclick: () => { click(); this.selectArmy(a.id); this.map.flyTo(a.location, Math.max(this.map.cam.z, 2)); } },
       face(s, a.commander, 34), h('div', { class: 'ac-t' }, h('b', null, a.name.replace(/本部$|部$/, '')), h('small', null, st)), h('span', { class: 'ac-n' }, wan(a.troops)));
@@ -1269,7 +1269,7 @@ export class App {
     sec.append(h('div', { class: 'rows', style: { marginTop: '6px' } },
       h('div', { class: 'row' }, ic('target'), h('span', { class: 't' }, visible && a.progress > 0 && a.path.length ? `${nodeName(a.location)} → ${nodeName(a.path[0])}` : nodeName(a.location)), h('b', null, '所在')),
       // 敌军的军令与日程不得而知
-      h('div', { class: 'row' }, ic('move'), h('span', { class: 't' }, visible ? armyOrderText(a.order) : a.progress > 0 ? '行军中，去向不明' : '驻扎'), h('b', null, visible && a.path.length ? `${pathDays(a.location, a.path) - a.progress} 日` : '')),
+      h('div', { class: 'row' }, ic('move'), h('span', { class: 't' }, visible ? armyOrderText(a.order) : a.progress > 0 ? '行军中，去向不明' : '驻扎'), h('b', null, visible && a.path.length ? `${Math.ceil((pathDays(a.location, a.path) - a.progress) / paceOf(a))} 日` : '')),
       // 粮道：粮台不在军中时，写转运天数与途耗；断了直说断在哪里
       visible && a.location !== a.supply && s.cities[a.supply] ? (() => {
         const leg = supplyRoute(s, a.faction, a.supply, a.location);
@@ -1279,7 +1279,7 @@ export class App {
       })() : null,
       a.hunger ? h('div', { class: 'row mine' }, ic('grain'), h('span', { class: 't' }, '断粮'), h('b', { class: 'down' }, `${a.hunger} 月`)) : null,
       visible && a.unpaid ? h('div', { class: 'row mine', id: 'army-arrears' }, ic('silver'), h('span', { class: 't' }, `欠饷 ${a.unpaid} 月 · 积欠 ${wan(a.arrears ?? 0)} 两${a.unpaid >= 4 ? ' · 士卒逃散' : ''}`), h('b', { class: 'down' }, `士气上限 −${Math.min(24, a.unpaid * 3)}`)) : null));
-    for (const pend of this.orders.filter(o => (o.kind === 'army' || o.kind === 'command' || o.kind === 'supply') && o.army === id))
+    for (const pend of this.orders.filter(o => (o.kind === 'army' || o.kind === 'command' || o.kind === 'supply' || o.kind === 'conduct') && o.army === id))
       sec.append(h('div', { class: 'row mine', style: { marginTop: '6px' } }, ic(pend.kind === 'supply' ? 'grain' : 'appoint'), h('span', { class: 't' }, describeOrder(s, pend)), h('b', null, '已下令')));
     const A = (aid: string, icon: string, label: string, onclick: () => void, primary = false) => h('button', { class: 'act' + (primary ? ' primary' : ''), id: aid, onclick }, ic(icon), label);
     if (mine) {
@@ -1300,6 +1300,7 @@ export class App {
         if (c && c.controller !== a.faction) this.toast(`${a.name}由${nodeName(n)}就地支应，粮饷出自${this.s!.factions[c.controller]?.name ?? '友方'}府库；离开此城即改回本方之城`, 'grain');
       }, undefined, 'supply')));
       sec.append(acts);
+      sec.append(this.conductPanel(a));
     } else if (vassal) {
       sec.append(h('div', { class: 'sec-title' }, ic('urgent'), `号令 · 服从 ${f.loyalty}`));
       sec.append(meter(f.loyalty ?? 50, mcol(f.loyalty ?? 50)));
@@ -1373,6 +1374,32 @@ export class App {
       h('div', { class: 'bar' }, h('i', { style: { left: v + '%' } })),
       h('div', { class: 'marks' }, ...marks.map(m => h('span', null, m))),
       h('div', { class: 'factors' }, ...factors.map(f => h('span', { class: 'factor ' + (/\+\d/.test(f) ? 'pos' : /[−-]\d/.test(f) ? 'neg' : '') }, f))));
+  }
+
+  /** 军略：行军快慢、粮秣取给、营垒。不占政令次数，下月起照行 */
+  conductPanel(a: Army) {
+    const s = this.s!;
+    const pend = this.orders.filter(o => o.kind === 'conduct' && o.army === a.id) as Extract<Order, { kind: 'conduct' }>[];
+    const cur = { pace: a.pace ?? null, forage: a.forage ?? null, camp: !!a.camp } as { pace: 'steady' | 'forced' | null; forage: 'forage' | 'plunder' | null; camp: boolean };
+    for (const o of pend) { if (o.pace !== undefined) cur.pace = o.pace; if (o.forage !== undefined) cur.forage = o.forage; if (o.camp !== undefined) cur.camp = o.camp; }
+    const set = (k: 'pace' | 'forage' | 'camp', v: unknown) => {
+      this.orders = this.orders.filter(o => !(o.kind === 'conduct' && o.army === a.id && (o as any)[k] !== undefined));
+      const now = k === 'pace' ? a.pace ?? null : k === 'forage' ? a.forage ?? null : !!a.camp;
+      if (now !== v) this.addOrder({ id: this.newOrderId(), kind: 'conduct', army: a.id, [k]: v } as Order);
+      else { this.renderAll(); }
+    };
+    const fs = Math.round(forageShare(s, a.faction) * 100);
+    const here = s.cities[a.location];
+    const inFoe = !!here && hostile(s, a.faction, here.controller);
+    const row = (label: string, opts: [unknown, string, string, string][], k: 'pace' | 'forage' | 'camp', v: unknown) =>
+      h('div', { class: 'conduct-row' }, h('span', { class: 'k' }, label), h('div', { class: 'seg' }, ...opts.map(([val, icon, name, tip]) =>
+        h('button', { class: 'segb' + (v === val ? ' on' : ''), id: `conduct-${k}-${String(val)}`, 'data-tip': tip, onclick: () => set(k, val) }, ic(icon), name))));
+    return h('div', { class: 'conduct', id: 'army-conduct' },
+      h('div', { class: 'sec-title' }, ic('policy'), '军略', h('small', null, ' · 不占政令，下月起照行')),
+      row('行军', [['steady', 'hold', '稳进', '每日行程七成五；沿途休整，每走一日士气 +0.3（至多 80）'], [null, 'move', '常行', '常例'], ['forced', 'charge', '急行', '每日行程一倍半，先敌而至；每走一日士气 −0.6、掉队千分之一点五']], 'pace', cur.pace),
+      row('粮秣', [[null, 'grain', '粮台', `由粮台支粮饷（本家常例 ${fs}% 取于地方）`], ['forage', 'agri', '就粮', `取于地方增至 ${Math.min(90, fs + 35)}%，省粮台；分兵征敛行军慢一成五，所在城民心多降`],
+        ['plunder', 'storm', '抄掠', `${inFoe ? '' : '（须在敌城下才抄掠，否则同就粮）'}在敌城：粮饷全取于敌，掳银解回粮台，士气 +4；敌城户口、民心大坏；纵掠之名一年内各城更不肯降`]], 'forage', cur.forage),
+      row('营垒', [[false, 'move', '不扎营', '随时可动'], [true, 'wall', '坚守营垒', '驻扎不动时，敌来攻则据营而守：所受伤损八成、阵脚更稳，部将不轻出；行军之月不生效']], 'camp', cur.camp));
   }
 
   formPolicy(node: string) {

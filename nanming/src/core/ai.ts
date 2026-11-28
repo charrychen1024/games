@@ -603,3 +603,20 @@ export function aiIntrigue(s: GameState) {
       text: `【谍报】探得${s.factions[best.f].name}遣${s.chars[best.env].name}潜赴${nodeName(best.node)}，欲劝守将献城。可换守将、增兵或安抚民心以防。`, src: { kind: 'diplomacy', ref: o.id } });
   }
 }
+
+/** 电脑的军略：驰援被围之城则急行；大顺、大西之军围攻敌城时纵兵抄掠（流动作战，就粮于敌）；
+ * 驻扎而邻近有敌军者坚守营垒。玩家之军不动。 */
+export function aiConduct(s: GameState) {
+  for (const a of Object.values(s.armies)) {
+    if (topOf(s, a.faction) === s.player || a.sortie) continue;
+    const o = a.order;
+    const tgt = o.kind !== 'hold' ? s.cities[o.target] : undefined;
+    const rescue = o.kind === 'move' && !!tgt && !!s.sieges[tgt.id] && topOf(s, tgt.controller) === topOf(s, a.faction);
+    if (rescue && a.morale >= 45) a.pace = 'forced'; else delete a.pace;
+    const pol = s.factions[a.faction]?.polity;
+    const here = s.cities[a.location];
+    if ((pol === 'shun' || pol === 'xi') && o.kind === 'siege' && here && hostile(s, a.faction, here.controller)) a.forage = 'plunder'; else delete a.forage;
+    const threat = o.kind === 'hold' && a.path.length === 0 && Object.values(s.armies).some(b => hostile(s, a.faction, b.faction) && b.troops >= a.troops * 0.6 && (b.location === a.location || neighbors(a.location).some(n => n.to === b.location)));
+    if (threat) a.camp = true; else delete a.camp;
+  }
+}

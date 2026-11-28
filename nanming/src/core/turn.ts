@@ -8,7 +8,7 @@ import { applyOrder, resolveMissions, orderBudget, orderCost, answerCounter } fr
 import { proposalsFor, applyOffer, aiDiplomacyTalks } from './diplomacy';
 import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects, tidyPeople, unrest } from './military';
 import { runEconomy, arriveConvoys } from './economy';
-import { aiOrders, aiFixSupply, aiPayArmies, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy, aiSorties, aiMusters, aiOpportunism, aiIntrigue, aiRegarrison } from './ai';
+import { aiOrders, aiFixSupply, aiPayArmies, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy, aiSorties, aiMusters, aiOpportunism, aiConduct, aiIntrigue, aiRegarrison } from './ai';
 import { dueEvents, fireEvent, choiceFor, applyChoice, type EventDef, type PendingChoice } from './events';
 import { EVENTS } from '../data/events';
 import { pruneLedger, topOf, report, citiesOf, armiesOf } from './state';
@@ -106,6 +106,7 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   aiIntrigue(s);
   // 翻脸宣战放在本月用兵之后：先有急报，下月才动兵，玩家有一个月补防
   aiOpportunism(s);
+  aiConduct(s);
 
   // 三、行军
   const contacts = moveArmies(s);

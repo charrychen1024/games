@@ -352,10 +352,11 @@ export function shortestPath(from: string, to: string, canSea: boolean): string[
 }
 
 /** 行军日程：每一站的累计天数，以及每月（三十日）走到哪里 */
-export function marchPlan(from: string, path: string[], progress = 0): { node: string; day: number; month: number }[] {
+/** speed：每日行程（稳进 0.75、急行 1.5 等） */
+export function marchPlan(from: string, path: string[], progress = 0, speed = 1): { node: string; day: number; month: number }[] {
   const out: { node: string; day: number; month: number }[] = [];
   let d = -progress, c = from;
-  for (const p of path) { const r = routeBetween(c, p); if (!r) break; d += r.days; out.push({ node: p, day: d, month: Math.max(1, Math.ceil(d / 30)) }); c = p; }
+  for (const p of path) { const r = routeBetween(c, p); if (!r) break; d += r.days; const day = Math.ceil(d / speed); out.push({ node: p, day, month: Math.max(1, Math.ceil(day / 30)) }); c = p; }
   return out;
 }
 
