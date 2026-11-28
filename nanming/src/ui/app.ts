@@ -23,9 +23,10 @@ import { isReduced, setReducedMotion, reducedSystem } from './motion';
 import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
+import { transitOf, etaText, type TransitItem } from '../core/transit';
 import { popTip, devTip, devStep, reached, MILESTONE_NAME, policyOutlook, advisePolicy, recruitSilverOf, type DevKey } from '../core/develop';
 import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, supplyLegOf, RECRUIT_SILVER, DISBAND_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
-import { projectOrders, validateQueued, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
+import { projectOrders, validateQueued, cascadeInvalid, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { yangzhouSiegeState } from '../data/presets';
 import { createGame } from '../data/scenario1644';
@@ -683,7 +684,18 @@ export class App {
     const btn = $('#btn-next');
     if (btn) gsap.fromTo(btn, { scale: 1.08 }, { scale: 1, duration: 0.35, ease: 'power2.out' });
   }
-  removeOrder(id: string) { this.orders = this.orders.filter(o => o.id !== id); this.renderOrders(); this.renderTop(); this.refreshPanel(); this.renderArmyBar(); }
+  /** 撤销本月所排之令（月末才施行，此前皆可撤）。后面的命令若靠这一道才成立，列出来一并撤去 */
+  removeOrder(id: string) {
+    const s = this.s!;
+    const target = this.orders.find(o => o.id === id);
+    const deps = cascadeInvalid(s, this.orders, id);
+    const drop = (ids: string[]) => { this.orders = this.orders.filter(o => !ids.includes(o.id)); this.renderOrders(); this.renderTop(); this.refreshPanel(); this.renderArmyBar(); };
+    if (!deps.length || !target) { drop([id]); return; }
+    this.modal('close', '撤销连带', `撤去“${describeOrder(s, target)}”`, [
+      h('div', { class: 'note', id: 'undo-deps' }, '以下命令靠这一道才成立，撤去后不再可行，将一并撤销：'),
+      h('div', { class: 'rows' }, ...deps.map(d => h('div', { class: 'row mine' }, ic(ORDER_ICON[d.order.kind]), h('span', { class: 't' }, describeOrder(s, d.order)), h('b', { class: 'down' }, d.why))))],
+      [{ label: `一并撤销（${deps.length + 1} 道）`, icon: 'close', primary: true, id: 'undo-ok', onclick: () => drop([id, ...deps.map(d => d.order.id)]) }, { label: '不撤', icon: 'ok', onclick: () => {} }]);
+  }
   /** 政令用尽：醒目的红色警示（在一切弹窗之上），顶栏政令数与政令台的令点一齐跳动 */
   warnBudget() {
     const bud = orderBudget(this.s!, this.s!.player);
@@ -792,6 +804,7 @@ export class App {
       h('div', { class: 'spacer' }),
       this.lensEl,
       ib('btn-report', 'report', '军情（R）', () => this.toggleReport(), { badge: unread }),
+      ib('btn-transit', 'hourglass', '在途：运送、出使、行军', () => this.openTransit(), { badge: transitOf(s).length }),
       ib('btn-factions', 'factions', '天下', () => this.openFactions()),
       ib('btn-chars', 'chars', '人物', () => this.openChars()),
       ib('btn-menu', 'menu', '菜单', () => this.toggleMenu(), { on: !$('#menu').classList.contains('hidden') }),
@@ -830,7 +843,7 @@ export class App {
   renderOrders() {
     const box = clear($('#orders'));
     if (!this.s || !this.orders.length) return;
-    box.append(h('span', { class: 'ord-label' }, `本月命令 ${this.orders.length}`));
+    box.append(h('span', { class: 'ord-label', 'data-tip': '所排之令都在月末结算时依次施行；结算之前随时可撤，撤去一道时，靠它才成立的命令会一并撤去。结算之后已成定局，不能再撤。' }, `本月命令 ${this.orders.length} · 月末施行`));
     for (const o of this.orders) {
       box.append(h('div', { class: 'order hud', title: describeOrder(this.s, o) }, ic(ORDER_ICON[o.kind]), h('span', null, describeOrder(this.s, o)),
         h('button', { title: '撤销', onclick: () => this.removeOrder(o.id) }, ic('close'))));
@@ -1374,6 +1387,20 @@ export class App {
       h('div', { class: 'bar' }, h('i', { style: { left: v + '%' } })),
       h('div', { class: 'marks' }, ...marks.map(m => h('span', null, m))),
       h('div', { class: 'factors' }, ...factors.map(f => h('span', { class: 'factor ' + (/\+\d/.test(f) ? 'pos' : /[−-]\d/.test(f) ? 'neg' : '') }, f))));
+  }
+
+  /** 在途：运送钱粮、使者、行军、拖延的号令——从哪到哪、约何时到、走了几成、有无变故 */
+  openTransit() {
+    const s = this.s!;
+    const list = transitOf(s);
+    const KIND: Record<TransitItem['kind'], [string, string]> = { convoy: ['transfer', '运送'], mission: ['envoy', '出使'], march: ['move', '行军'], delayed: ['hourglass', '号令'] };
+    const body = list.length ? list.map(t => h('div', { class: 'transit' + (t.warn ? ' warn' : ''), 'data-kind': t.kind, onclick: t.node ? () => { this.closeModal(); this.map.flyTo(t.node!); this.selectNode(t.node!); } : undefined },
+      h('div', { class: 'transit-h' }, ic(KIND[t.kind][0]), h('small', null, KIND[t.kind][1]), h('b', null, t.title), h('span', { class: 'eta' }, etaText(s, t.eta))),
+      h('div', { class: 'transit-d' }, t.detail, t.sent !== undefined ? ` · ${shortDate(t.sent)}发` : ''),
+      t.progress !== null ? h('div', { class: 'transit-bar' }, h('i', { style: { width: Math.round(t.progress * 100) + '%' } })) : null,
+      t.warn ? h('div', { class: 'transit-w' }, ic('urgent'), t.warn) : null))
+      : [h('div', { class: 'note' }, '眼下没有在途之事。远处调拨钱粮、遣使劝降、大军远行，都会列在这里。')];
+    this.modal('hourglass', '在途', `${list.length} 件 · 点一件看目的地`, [h('div', { class: 'transit-list', id: 'transit-list' }, ...body)], [{ label: '知道了', icon: 'ok', onclick: () => {} }], 'wide');
   }
 
   /** 军略：行军快慢、粮秣取给、营垒。不占政令次数，下月起照行 */

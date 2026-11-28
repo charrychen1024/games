@@ -4,7 +4,7 @@
 import type { GameState, Order } from './types';
 import type { BattleState } from './battle';
 import { autoResolve } from './battle';
-import { applyOrder, resolveMissions, orderBudget, orderCost, answerCounter } from './orders';
+import { applyOrder, validateOrder, describeOrder, resolveMissions, orderBudget, orderCost, answerCounter } from './orders';
 import { proposalsFor, applyOffer, aiDiplomacyTalks } from './diplomacy';
 import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects, tidyPeople, unrest } from './military';
 import { runEconomy, arriveConvoys } from './economy';
@@ -70,6 +70,9 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   let used = 0;
   for (const o of [...playerOrders].sort((a, b) => Number(b.kind === 'war') - Number(a.kind === 'war'))) {
     if (used + orderCost(o) > budget) { report(s, { cat: '内政', text: `本月政令已满（${budget} 道），“${o.kind}”一道未能施行。` }); continue; }
+    // 月末施行时再按当时局面校验一道：排令时成立、而前面的命令有变（或局势已变）的，不行并说明
+    const err = validateOrder(s, s.player, o);
+    if (err) { report(s, { cat: '内政', text: `“${describeOrder(s, o)}”未能施行：${err}。` }); continue; }
     used += orderCost(o);
     applyOrder(s, s.player, o);
   }

@@ -1,7 +1,8 @@
 /* 命令队列试算：排入命令后的局面、预估与校验，和正式月结一致（审查《数值计算与决策信息》第一、二、三节）。 */
 import { describe, it, expect } from 'vitest';
 import { createGame } from '../src/data/scenario1644';
-import { projectOrders, validateQueued } from '../src/core/orders';
+import { projectOrders, validateQueued, cascadeInvalid } from '../src/core/orders';
+import { runMonthAuto } from '../src/core/turn';
 import { cityForecast, runEconomy, yearOutlook } from '../src/core/economy';
 import type { GameState, Order } from '../src/core/types';
 
@@ -84,5 +85,26 @@ describe('预估补漏：各省明官府的城既起运本省治所，又解饷�
     const labels = cityForecast(s, prov).silver.items.map(i => i.label).join('|');
     expect(labels).toMatch(/起运/);
     expect(labels).toMatch(/解饷/);
+  });
+});
+
+/* 撤销（2026-11-27 玩家：政令执行后还能撤销吗？彼此有影响，怎么控制？）
+ * 所排之令月末才施行，此前皆可撤；撤去一道，靠它才成立的后续命令一并撤去；月末施行时再校验一道，不成立的不行。 */
+describe('撤销与连带', () => {
+  it('撤去劝捐：靠劝捐之银的募兵连带不成立', () => {
+    const s = createGame('zheng', 1);
+    s.cities.quanzhou.silver = 3832; s.cities.quanzhou.commerce = 60;
+    const loan: Order = { id: 'l', kind: 'loan', node: 'quanzhou' };
+    const rec: Order = { id: 'r', kind: 'recruit', node: 'quanzhou', troops: 1500 };
+    const deps = cascadeInvalid(s, [loan, rec], 'l');
+    expect(deps.map(d => d.order.id)).toEqual(['r']);
+    expect(deps[0].why).toMatch(/府库/);
+    expect(cascadeInvalid(s, [loan, rec], 'r')).toEqual([]);
+  });
+  it('月末施行时不成立的命令不行，并有说明，府库不致成负', () => {
+    const s = createGame('zheng', 1);
+    s.cities.quanzhou.silver = 3832; s.cities.quanzhou.commerce = 60;
+    const t = runMonthAuto(s, [{ id: 'r', kind: 'recruit', node: 'quanzhou', troops: 1500 }]);
+    expect(t.reports.some(r => /未能施行/.test(r.text))).toBe(true);
   });
 });

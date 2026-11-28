@@ -135,6 +135,27 @@ try {
   await page.click('#recruit-ok');
   await wait(200);
   check('募兵加入本月命令', (await text('#orders')).includes('募兵'));
+  // 撤销连带：先劝捐、再靠劝捐之银募兵，撤去劝捐时连带列出募兵
+  {
+    const dep = await page.evaluate(() => { const s = NM.s; const c = s.cities.suzhou; const keep = NM.orders.slice(); const silver = c.silver;
+      c.silver = 500; NM.orders = [{ id: 'xl', kind: 'loan', node: 'suzhou' }, { id: 'xr', kind: 'recruit', node: 'suzhou', troops: 300 }]; NM.renderOrders();
+      return { keep, silver }; });
+    await page.evaluate(() => NM.removeOrder('xl'));
+    await wait(250);
+    check('撤去一道时，靠它才成立的命令列出并一并撤销', (await text('#undo-deps')).includes('一并撤销') && (await text('#modal')).includes('募兵'));
+    await page.click('#undo-ok');
+    await wait(200);
+    check('确认后两道一起撤去', (await page.evaluate(() => NM.orders.filter(o => o.id === 'xl' || o.id === 'xr').length)) === 0);
+    await page.evaluate(d => { NM.s.cities.suzhou.silver = d.silver; NM.orders = d.keep; NM.renderOrders(); NM.renderTop(); }, dep);
+  }
+  // 在途：远程调拨、出使、行军列表
+  await page.evaluate(() => { const s = NM.s; (s.convoys ??= []).push({ id: 'cv1', faction: s.player, from: 'nanjing', to: 'wuchang', grain: 9000, silver: 0, sent: s.turn, arrive: s.turn + 2, days: 70, path: [] }); NM.renderTop(); });
+  await page.click('#btn-transit');
+  await wait(250);
+  check('在途表列出远程调拨，写明约到之期与进度', (await text('#transit-list')).includes('南京 → 武昌') && (await text('#transit-list')).includes('到') && (await page.locator('#transit-list .transit-bar').count()) >= 1);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { const s = NM.s; s.convoys = s.convoys.filter(v => v.id !== 'cv1'); NM.renderTop(); });
+  await wait(150);
   // 裁兵：弹窗写明遣散银与每月所省（只看不下，免占政令）
   await page.click('#act-disband');
   await wait(200);

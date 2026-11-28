@@ -34,9 +34,8 @@ describe('农业', () => {
   });
   it('“沃野”军屯：驻军口粮省二成', () => {
     const s = game(); const c = s.cities.nanjing;
-    c.agri = 60; const g0 = upkeepOf(s, c).grain - (upkeepOf(s, c).grain - c.garrison * 0.25);
-    c.agri = 70; const g1 = upkeepOf(s, c).grain - (upkeepOf(s, { ...c, garrison: 0 }).grain);
-    expect(g1).toBeCloseTo(g0 * 0.8, -1);
+    const own = (agri: number) => upkeepOf(s, { ...c, agri }).grain - upkeepOf(s, { ...c, agri, garrison: 0 }).grain;
+    expect(own(70)).toBeCloseTo(own(60) * 0.8, -1);
   });
 });
 

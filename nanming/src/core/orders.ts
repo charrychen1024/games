@@ -247,6 +247,18 @@ export function validateQueued(s: GameState, queued: Order[], o: Order): string 
   return validateOrder(projectOrders(s, queued), s.player, o);
 }
 
+/** 撤去一道命令后，排在后面、因此不再成立的命令（例：撤去劝捐，靠劝捐之银的募兵便府库不足）。
+ * 按排令次序逐道以前面仍在的命令推演校验。 */
+export function cascadeInvalid(s: GameState, orders: Order[], removeId: string): { order: Order; why: string }[] {
+  const kept: Order[] = [], out: { order: Order; why: string }[] = [];
+  for (const o of orders) {
+    if (o.id === removeId) continue;
+    const err = validateQueued(s, kept, o);
+    if (err) out.push({ order: o, why: err }); else kept.push(o);
+  }
+  return out;
+}
+
 /** 本月还能募多少（按月初人口与民心定上限，同月多道命令累计） */
 export function recruitLeft(s: GameState, node: string): number {
   const c = s.cities[node];

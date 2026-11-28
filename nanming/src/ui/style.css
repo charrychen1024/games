@@ -1368,3 +1368,18 @@ html.reduced *:not(#toast, #toast *), html.reduced *:not(#toast, #toast *)::befo
 .segb { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 5px 4px; border-radius: 8px; font-size: 12px; font-weight: 800; color: var(--dim); background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(217, 173, 91, 0.18); cursor: pointer; white-space: nowrap; }
 .segb .ic { width: 15px; height: 15px; }
 .segb.on { color: #1a1208; background: linear-gradient(180deg, #f5d58c, #b98a3c); border-color: var(--gold); }
+
+/* 在途 */
+.transit-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.transit { padding: 8px 10px; border-radius: 10px; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(217, 173, 91, 0.18); cursor: pointer; }
+.transit.warn { border-color: rgba(200, 80, 60, 0.6); }
+.transit-h { display: flex; align-items: center; gap: 6px; }
+.transit-h .ic { width: 18px; height: 18px; color: var(--gold); }
+.transit-h small { color: var(--dim); font-size: 11px; }
+.transit-h b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transit-h .eta { font-size: 12px; color: var(--gold-2); white-space: nowrap; }
+.transit-d { color: var(--dim); font-size: 12px; margin: 3px 0 0 24px; }
+.transit-bar { height: 5px; margin: 6px 0 0 24px; border-radius: 3px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.transit-bar i { display: block; height: 100%; background: linear-gradient(90deg, #b98a3c, #f5d58c); }
+.transit-w { display: flex; align-items: center; gap: 4px; margin: 5px 0 0 24px; font-size: 12px; color: #ff9a8a; }
+.transit-w .ic { width: 14px; height: 14px; }

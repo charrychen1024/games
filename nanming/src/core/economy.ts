@@ -26,9 +26,9 @@ export const POLICY_HINT: Record<Policy, string> = {
 /* 兵的月费按明季“本色（米）+ 折色（银）”：口粮连马料、家口每人每月四斗，饷银驻军四钱五分、出征七钱。
  * 合银约八钱（驻军）至一两一钱（出征），与旧值相当；只是粮、银的比例与收入（田粮、赋税约各半）相称，
  * 免得粮食年年堆积而银两入不敷出。 */
-export const GRAIN_PER_SOLDIER = 0.25; // 石/月
-export const SILVER_PER_SOLDIER = 0.6; // 两/月（驻军）
-export const SILVER_PER_FIELD_SOLDIER = 0.9; // 两/月（出征）
+export const GRAIN_PER_SOLDIER = 0.4; // 石/月
+export const SILVER_PER_SOLDIER = 0.45; // 两/月（驻军）
+export const SILVER_PER_FIELD_SOLDIER = 0.7; // 两/月（出征）
 /** 就地筹粮的比重：八旗有圈地与掳掠，流动作战的大顺、大西军就粮于地方；其余各家多赖粮台 */
 export function forageShare(s: GameState, faction: string): number {
   const pol = s.factions[faction]?.polity;
