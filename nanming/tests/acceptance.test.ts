@@ -1,12 +1,12 @@
 /* 制作要求第六节“十二回合试玩”的验收条件，逐条写成自动测试。 */
 import { describe, it, expect } from 'vitest';
-import { createSiege, stepSiege, aiCommands, toBattleResult, persuade } from '../src/core/siege';
+import { createSiege, stepSiege, aiCommands, toBattleResult, persuade, autoMomentS } from '../src/core/siege';
 import { createState1644 } from '../src/data/scenario1644';
 import { trialState, yangzhouSiegeState } from '../src/data/presets';
 import { runMonthAuto, resolveMonth, type Interrupt, type Answer } from '../src/core/turn';
 import { serialize, deserialize } from '../src/core/save';
 import { autoResolve, type BattleState } from '../src/core/battle';
-import { createField, stepField, aiField, toFieldResult } from '../src/core/field';
+import { createField, stepField, aiField, toFieldResult, autoMomentF } from '../src/core/field';
 import { persuadeChance, envoyScore, obedience } from '../src/core/orders';
 import { setStance, stance } from '../src/core/state';
 import { turnOf } from '../src/core/calendar';
@@ -119,7 +119,7 @@ describe('验收四：献城后改属', () => {
         const sim = createSiege(b);
         persuade(sim);
         let next = 0;
-        while (!sim.over && sim.t < 3600) { if (sim.t >= next) { aiCommands(sim, 'att'); aiCommands(sim, 'def'); next = sim.t + 2; } stepSiege(sim, 0.2); }
+        while (!sim.over && sim.t < 3600) { if (sim.t >= next) { aiCommands(sim, 'att'); aiCommands(sim, 'def'); next = sim.t + 2; } stepSiege(sim, 0.1); for (const sd of ['att', 'def'] as const) if (!sim.over) autoMomentS(sim, sd); }
         return { type: 'battle', result: toBattleResult(b, sim), manual: true };
       });
       if (s.battles.some(b => b.node === 'yangzhou' && b.summary.includes('开城出降'))) {
@@ -189,12 +189,12 @@ describe('验收七：手动战斗与自动结算在相同选择下结果一致'
       if (b.kind === 'siege') {
         // 攻城是即时模拟：逐步推进、每两秒照电脑之令下达，与快进结果一致
         const sim = createSiege(b); let next = 0;
-        while (!sim.over && sim.t < 3600) { if (sim.t >= next) { aiCommands(sim, 'att'); aiCommands(sim, 'def'); next = sim.t + 2; } stepSiege(sim, 0.2); }
+        while (!sim.over && sim.t < 3600) { if (sim.t >= next) { aiCommands(sim, 'att'); aiCommands(sim, 'def'); next = sim.t + 2; } stepSiege(sim, 0.1); for (const sd of ['att', 'def'] as const) if (!sim.over) autoMomentS(sim, sd); }
         return { type: 'battle', result: toBattleResult(b, sim), manual: false };
       }
       // 野战、水战同理
       const fs = createField(b); let nx = 0;
-      while (!fs.over && fs.t < 1000) { if (fs.t >= nx) { aiField(fs, 'att'); aiField(fs, 'def'); nx = fs.t + 2; } stepField(fs, 0.2); }
+      while (!fs.over && fs.t < 910) { if (fs.t >= nx) { aiField(fs, 'att', { hold: !!b.att.camp, eager: b.att.tactic === 'rush' }); aiField(fs, 'def', { hold: !!b.def.camp, eager: b.def.tactic === 'rush' }); nx = fs.t + 2; } stepField(fs, 0.1); for (const sd of ['att', 'def'] as const) if (!fs.over) autoMomentF(fs, sd); }
       return { type: 'battle', result: toFieldResult(b, fs), manual: false };
     });
     expect(JSON.stringify(viaManual)).toBe(JSON.stringify(viaAuto));

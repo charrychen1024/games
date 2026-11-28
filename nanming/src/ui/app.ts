@@ -22,7 +22,7 @@ import { POLITIES } from '../data/factions';
 import { isReduced, setReducedMotion, reducedSystem } from './motion';
 import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
-import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
+import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf, treasuryOf } from '../core/state';
 import { transitOf, etaText, type TransitItem } from '../core/transit';
 import { evacPlan } from '../core/evacuate';
 import { monthSummary, type Delta } from '../core/summary';
@@ -1094,6 +1094,7 @@ export class App {
         const KIND_IC: Record<string, string> = { income: which === 'grain' ? 'agri' : 'commerce', garrison: 'troops', army: 'army', policy: 'policy', remit: 'transfer', siege: 'siege' };
         sec.append(h('div', { class: 'cfc', id: 'city-forecast' },
           h('div', { class: 'cfc-h' }, ic(which), h('b', null, `本月预计 · ${which === 'grain' ? '仓粮' : '府库'}`), h('span', { class: f.net >= 0 ? 'up' : 'down' }, `${f.net >= 0 ? '+' : '−'}${fmt(Math.abs(f.net))} ${unit}`)),
+          fc.auto ? h('div', { class: 'cfc-q', id: 'city-auto-market' }, ic('grain'), (() => { const ag = fc.auto!.grain, as = fc.auto!.silver, d = which === 'grain' ? ag : as; return `另：月末将自动${ag > 0 ? '籴' : '粜'}粮 ${fmt(Math.abs(ag))} 石（${as >= 0 ? '得' : '费'}银 ${fmt(Math.abs(as))}），${which === 'grain' ? '仓粮' : '府库'}月末约余 ${fmt(Math.max(0, stock + f.net + d))} ${unit}`; })()) : null,
           base !== f.net ? h('div', { class: 'cfc-q' }, ic('appoint'), `按已排命令：本月由 ${base >= 0 ? '+' : '−'}${fmt(Math.abs(base))} 变为 ${f.net >= 0 ? '+' : '−'}${fmt(Math.abs(f.net))}，月末约余 ${fmt(Math.max(0, stock + f.net))} ${unit}`) : null,
           ...[...f.items].sort((a, b) => b.v - a.v).map(i => h('div', { class: 'cfc-r ' + (i.v >= 0 ? 'up' : 'down') }, ic(KIND_IC[i.kind] ?? 'info'), h('span', null, i.label), h('b', null, `${i.v >= 0 ? '+' : '−'}${wan(Math.abs(i.v))}`))),
           h('div', { class: 'cfc-f' },
@@ -1419,7 +1420,7 @@ export class App {
       res('ms-troops', 'troops', '兵力', '#7d1a12', sm.troops, wan, '人'), res('ms-pop', 'pop', '户口', '#3f6f8f', sm.pop, pop, '万口')];
     const people: ShowCard[] = sm.people.map(p => { const c = after.chars[p.id], fc = after.factions[c.faction]; return { id: 'p-' + p.id, title: c.name, sub: fc?.short ?? '', art: portrait(c, fc?.color ?? '#6a5a48', fc?.polity ?? 'none'), portrait: true, color: fc?.color, tip: `${c.name} · ${p.tag}`, dim: p.tag === '殁' || p.tag === '被执' || p.tag === '俘获', stamp: ({ 来投: '投', 殁: '殁', 被执: '执', 离去: '去', 俘获: '俘' } as const)[p.tag], stampTone: p.good ? 'good' : 'bad' }; });
     const cities: ShowCard[] = sm.cities.map(x => { const fc = after.factions[after.cities[x.id].controller]; return { id: 'c-' + x.id, title: nodeName(x.id), sub: fc?.short ?? '', art: cardArt('city', fc?.color ?? '#8c6a35', x.id.length), color: fc?.color, stamp: x.gained ? '得' : '失', stampTone: x.gained ? 'good' : 'bad' }; });
-    const war: ShowCard[] = sm.battlesWon || sm.battlesLost ? [{ id: 'ms-war', title: '战事', art: cardArt('war', '#7d1a12', 3), color: '#7d1a12', big: `${sm.battlesWon}胜 ${sm.battlesLost}负`, bigTone: sm.battlesWon >= sm.battlesLost ? 'up' : 'down' }] : [];
+    const war: ShowCard[] = sm.battlesWon || sm.battlesLost || sm.battlesDrawn ? [{ id: 'ms-war', title: '战事', art: cardArt('war', '#7d1a12', 3), color: '#7d1a12', big: `${sm.battlesWon}胜 ${sm.battlesLost}负${sm.battlesDrawn ? ` ${sm.battlesDrawn}平` : ''}`, bigTone: sm.battlesWon >= sm.battlesLost ? 'up' : 'down' }] : [];
     const band = (icon: string, label: string, el: HTMLElement) => h('div', { class: 'ms-band' }, h('div', { class: 'ms-tag' }, ic(icon), label), el);
     return new Promise(res2 => {
       this.modal('calendar', '本月得失', shortDate(before.turn), [
@@ -1757,7 +1758,7 @@ export class App {
 
   /** 赠礼：三档银两，越厚把握越高 */
   formGift(target: string) {
-    const s = this.s!, cap = s.cities[s.factions[s.player].capital];
+    const s = this.s!, tr = treasuryOf(s, s.player), cap = tr ? s.cities[tr] : undefined;
     const cards: GameCard[] = [5000, 20000, 50000].map((v, i) => ({ id: String(v), title: `${wan(v)} 两`, art: cardArt('silver', '#a8781f', i), color: '#a8781f',
       chips: [{ icon: 'envoy', text: `把握 +${giftBonus(v)}`, tone: 'good' }, { icon: 'war', text: `主战 −${Math.min(15, Math.round(v / 4000))}`, tone: 'good' }],
       disabled: !cap || cap.silver < v ? '治所府库不足' : undefined }));
@@ -2148,8 +2149,9 @@ export class App {
     const s = this.s!;
     const c = r.cat;
     const ctrl = r.node && s.cities[r.node] ? s.cities[r.node].controller : undefined;
-    const sk: SceneKind | null = c === '易主' ? (r.act === 'breach' || r.act === 'abandon' ? 'siege' : 'surrender') : c === '交涉' && r.from && r.to ? 'parley' : (r.act === 'battle' || r.act === 'siege') && r.from && r.to ? (r.act === 'siege' ? 'siege' : /水战|水师|江面/.test(r.text) ? 'naval' : 'battle') : null;
-    if (sk) return { kind: sk, opts: { a: this.party(c === '易主' ? r.to ?? ctrl : r.from), b: this.party(c === '易主' ? r.from : r.to), seed, ok: r.ok !== false } };
+    // 陷城才演破门换旗；弃城演移交；围城、守住演“围而未破”
+    const sk: SceneKind | null = c === '易主' ? (r.act === 'breach' ? 'siege' : 'surrender') : c === '交涉' && r.from && r.to ? 'parley' : (r.act === 'battle' || r.act === 'siege') && r.from && r.to ? (r.act === 'siege' ? 'siege' : /水战|水师|江面/.test(r.text) ? 'naval' : 'battle') : null;
+    if (sk) return { kind: sk, opts: { a: this.party(c === '易主' ? r.to ?? ctrl : r.from), b: this.party(c === '易主' ? r.from : r.to), seed, ok: r.ok !== false, hold: sk === 'siege' && c !== '易主' } };
     if (!broad) return null;
     if (c === '史事' || c === '线索' || r.src?.ref?.startsWith('inc:')) return this.eventScene(r.text.match(/【([^】]+)】/)?.[1] ?? '', r.text);
     const me = this.party(s.player), other = this.party(r.from ?? r.to ?? ctrl);

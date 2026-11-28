@@ -294,6 +294,8 @@ export interface BattleRecord {
   attacker: FactionId;
   defender: FactionId;
   winner: 'attacker' | 'defender';
+  /** 野战、水战日暮相持（不分胜负；winner 只记谁守住阵地） */
+  draw?: boolean;
   attLoss: number;
   defLoss: number;
   summary: string;

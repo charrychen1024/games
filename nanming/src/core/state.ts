@@ -35,6 +35,8 @@ export function friendly(s: GameState, a: FactionId, b: FactionId): boolean {
   return st === 'self' || st === 'alliance' || st === 'overlord' || st === 'vassal';
 }
 
+/** 玩家一方的军队/势力：玩家本家，或奉玩家号令的下属（玩家本身奉他人号令时，本家仍算玩家的；2026-11-28 审查：郑氏军令被电脑改回） */
+export const mineSide = (s: GameState, f: FactionId) => f === s.player || topOf(s, f) === s.player;
 export function setStance(s: GameState, a: FactionId, b: FactionId, st: Stance, until?: number) {
   const prev = s.relations[relKey(a, b)];
   // 有期限的停战：原本不在交战（中立、通好）者，期满回到原来的关系，而不是凭空开战

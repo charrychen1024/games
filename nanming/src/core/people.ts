@@ -18,7 +18,7 @@ export const TRAITS: Record<TraitId, Trait> = {
   lianbing: { name: '练兵', icon: 'recruit', desc: '主政之城每月可募兵数 +30%', tone: 'good' },
   biancai: { name: '辩才', icon: 'envoy', desc: '出使、劝降成功率 +8%', tone: 'good' },
   xiaoyong: { name: '骁勇', icon: 'charge', desc: '统兵作战时统军 +6', tone: 'good' },
-  zhimou: { name: '智谋', icon: 'ambush', desc: '统兵作战时多一道计策', tone: 'good' },
+  zhimou: { name: '智谋', icon: 'ambush', desc: '野战可用战法多一样', tone: 'good' },
   shuishi: { name: '水战', icon: 'navy', desc: '统领水师作战时统军 +8', tone: 'good' },
   tan: { name: '贪墨', icon: 'silver', desc: '主政之城赋税 −10%，吏治趋低（−10）', tone: 'bad' },
   kuli: { name: '严苛', icon: 'order', desc: '主政之城吏治趋高（+8）而民心趋低（−10）', tone: 'bad' },

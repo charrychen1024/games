@@ -5,8 +5,8 @@
 import type { GameState } from '../core/types';
 import type { BattleState } from '../core/battle';
 import { cardArt } from './cards';
-import { createSiege, stepSiege, aiCommands, command, drum, defDecision, attWithdraw, toBattleResult, runSiege, legal, segName, persuade, persuadeOdds, momentS, SEGMENTS, GATE_SEG, WALL_Y, type SUnit, type SOrder } from '../core/siege';
-import { createField, stepField, aiField, commandF, drumF, legalF, toFieldResult, runField, KIND_NAME, DUSK, momentF, useSkill, skillBlock, setFormation, SKILLS, FORMATIONS, type FUnit, type FOrder, type Formation } from '../core/field';
+import { createSiege, stepSiege, aiCommands, command, drum, defDecision, attWithdraw, toBattleResult, runSiege, legal, segName, persuade, persuadeOdds, momentS, autoMomentS, SEGMENTS, GATE_SEG, WALL_Y, type SUnit, type SOrder } from '../core/siege';
+import { createField, stepField, aiField, commandF, drumF, legalF, toFieldResult, runField, KIND_NAME, DUSK, momentF, autoMomentF, autoPick, useSkill, skillBlock, setFormation, SKILLS, FORMATIONS, type FUnit, type FOrder, type Formation } from '../core/field';
 import { SiegeView } from './siegeView';
 import { FieldView } from './fieldView';
 import { lookOf } from './battle';
@@ -219,7 +219,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
       const advice = ratio < need * 0.7 ? '城坚兵少：强攻多半折兵而无功，宜先围困断粮，或增兵再攻' : ratio < need ? '胜负难料：先炮击、擂鼓，城门一破再全军登城' : '兵力足以强攻：全军撞门登城，宜速战';
       const C = (id: string, icon: string, title: string, desc: string, fn: () => void, primary = false) => h('button', { class: 'dchoice' + (primary ? ' primary' : ''), id, onclick: () => { click(); fn(); } }, ic(icon), h('b', null, title), h('small', null, desc));
       ui.append(h('div', { class: 'dchoices' },
-        h('div', { class: 'dc-head' }, h('b', null, '攻城方略'), h('small', null, `我攻 ${wan(ssim!.att.start)}，敌守 ${wan(ssim!.def.start)}（约 ${ratio} 比 1），城防 ${wall} · ${advice}`)),
+        h('div', { class: 'dc-head' }, h('b', null, '攻城方略'), h('small', null, `我攻 ${wan(ssim!.att.start)}，敌守 ${wan(ssim!.def.start)}（约 ${ratio} 比 1），城防 ${wall} · ${advice}${b0.att.faction !== s.player ? ` · 城破归${b0.att.name}` : ''}`)),
         C('att-assault', 'battle', '亲自攻城', '你来指挥：选营撞门、登城、炮击、劝降', () => { start(); }, ratio >= need * 0.7),
         C('battle-auto', 'auto', '交部将攻城', '由部将按常法攻城，你只看战况', () => { autoMe = true; start(); }),
         C('att-blockade', 'wall', '围而不攻', '本月不攻，围城断粮；城中粮尽、军心渐衰，下月再定', () => { attWithdraw(ssim!); manual = true; ending(); }, ratio < need * 0.7)));
@@ -476,17 +476,18 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   function frame(now: number) {
     raf = requestAnimationFrame(frame);
     const dtReal = Math.min(0.1, (now - last) / 1000); last = now;
-    if (phase === 'fight' && !paused) {
+    // 战机卡在时，战局一律停住（不因按空格、点倍速而推进；2026-11-28 审查）
+    if (phase === 'fight' && !paused && !momentEl) {
       acc += dtReal * speed;
       while (acc >= 0.1 && !sim.over) {
         acc -= 0.1;
         if (sim.t >= aiNext) { ai(foe); if (autoMe) ai(side); aiNext = sim.t + 2; }
         step(0.1);
         view.harvest(now);
+        // 战机：与快算同一拍、同一次序检查——敌方的由敌将自择，我方的停下请你定夺（部将代打则代你择）
+        if (momentsAfterStep()) break;
       }
       for (; lastEv < sim.events.length; lastEv++) onEvent(sim.events[lastEv]);
-      // 战机：关键时刻停下来请你定夺（部将代打时也会）
-      if (!momentEl && !sim.over) { const m = ssim ? momentS(ssim, side) : momentF(fsim!, side); if (m) showMoment(m as unknown as { title: string; text: string; icon?: string; options: MOpt[] }); }
       if (now > sfxNext) { sfxNext = now + 1100; ambientSfx(); }
       if (sim.over && phase === 'fight') ending();
     }
@@ -541,9 +542,25 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   }
   let momentEl: HTMLElement | null = null;
   let momentPick: ((i: number) => void) | null = null;
+  /** 每拍之后：攻方、守方依次看有无战机。返回真表示停下等我方择策 */
+  function momentsAfterStep(from = 0): boolean {
+    const order = ['att', 'def'] as const;
+    for (let i = from; i < 2; i++) {
+      const sd = order[i];
+      if (sim.over) return false;
+      if (sd === side) {
+        const m = ssim ? momentS(ssim, sd) : momentF(fsim!, sd);
+        if (m) { showMoment(m as unknown as { title: string; text: string; icon?: string; options: MOpt[] }, () => { momentsAfterStep(i + 1); }); return true; }
+      } else {
+        const r = ssim ? autoMomentS(ssim, sd) : autoMomentF(fsim!, sd);
+        if (r) say(`敌军${r.m.title}：${r.m.options[r.k].label}${r.r ? (r.r.ok ? ' · 得手' : ' · 失手') : ''}`, r.r && !r.r.ok ? 'good' : 'bad');
+      }
+    }
+    return false;
+  }
   type MOpt = { label: string; desc: string; icon?: string; odds?: number; apply: (x: never) => { ok: boolean; text: string } | void };
   /** 战机：一手卡牌，每张一个对策，卡面写成算；选定后翻牌揭晓得手与否 */
-  function showMoment(m: { title: string; text: string; icon?: string; options: MOpt[] }) {
+  function showMoment(m: { title: string; text: string; icon?: string; options: MOpt[] }, after?: () => void) {
     const wasPaused = paused;
     paused = true;
     battleSfx.shout();
@@ -553,6 +570,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
       done = true;
       click();
       const r = (o.apply as (x: unknown) => { ok: boolean; text: string } | void)(sim);
+      after?.();
       const ok = r ? r.ok : true;
       const card = momentEl.querySelectorAll<HTMLElement>('.bm-card')[i];
       momentEl.querySelectorAll<HTMLElement>('.bm-card').forEach((c, k) => { if (k !== i) c.classList.add('dim'); });
@@ -588,9 +606,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     renderUi();
     // 部将代打：亮出战机给你看，你不选，部将片刻后自择——成算五成以上者冒险，否则取稳妥之策
     if (autoMe) {
-      const risky = m.options.map((o, i) => ({ i, p: o.odds ?? 1 })).filter(x => x.p < 1).sort((a, b) => b.p - a.p)[0];
-      const safe = m.options.findIndex(o => (o.odds ?? 1) >= 1);
-      const k = risky && (risky.p >= 0.5 || safe < 0) ? risky.i : Math.max(0, safe);
+      const k = autoPick(m.options);
       const res = momentEl.querySelector('.bm-result'); if (res) res.textContent = `部将将择“${m.options[k].label}”……（可抢先选）`;
       setTimeout(() => { if (!done && momentEl) pick(k); }, isReduced() ? 400 : 1800);
     }

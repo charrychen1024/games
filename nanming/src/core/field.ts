@@ -155,6 +155,8 @@ export function createField(b: BattleState): FieldSim {
     buff: { att: {}, def: {} }, twists, moments: [],
   };
   (sim.att as { mou?: number }).mou = b.att.mou; (sim.def as { mou?: number }).mou = b.def.mou;
+  // 智谋特长：合军时多记一策（stratagems 比按谋略应得者多）
+  for (const sd of ['att', 'def'] as const) (sim[sd] as { wits?: number }).wits = b[sd].stratagems > 1 + Math.floor((b[sd].mou ?? 30) / 40) ? 1 : 0;
   for (const sd of ['att', 'def'] as const) { sim.skills[sd] = skillsFor(sim, sd); setFormation(sim, sd, aiFormation(sim, sd)); }
   ev(sim, 'start', mode === 'naval' ? `${b.att.name}水师与${b.def.name}水师会于${b.nodeName}江面。` : `${b.att.name}与${b.def.name}列阵于${b.nodeName}。`);
   stratagemOpening(sim, b, fr);
@@ -404,7 +406,9 @@ function hurt(u: FUnit, dmg: number, shock = 1) {
   u.troops -= n; u.hit += n; u.engaged = true;
 }
 /** 一营之兵同时接敌者有限：人多也只能轮番上 */
-const frontage = (n: number) => (n <= 3000 ? n : 3000 + (n - 3000) * 0.35);
+export let FRONT = 3000, FRONT_K = 0.35;
+export function setFrontage(base: number, k: number) { FRONT = base; FRONT_K = k; }
+const frontage = (n: number) => (n <= FRONT ? n : FRONT + (n - FRONT) * FRONT_K);
 function meleeMult(sim: FieldSim, a: FUnit, d: FUnit): number {
   if (sim.mode === 'naval') return ({ inf: 1, cav: 0.8, gun: 0.6, art: 0.4, fire: 0 } as Record<FKind, number>)[a.kind];
   const steady = d.state === 'idle' || (d.state === 'melee' && d.order.t === 'hold');
@@ -429,16 +433,27 @@ function fightAll(sim: FieldSim, dt: number, rng: Rng) {
     if (a.state === 'rout' || a.kind === 'fire') continue;
     for (const d of all) if (d.side !== a.side && dist(a, d) < CONTACT) { const l = engagedBy.get(d.id) ?? []; l.push(a); engagedBy.set(d.id, l); }
   }
+  // 接敌正面按目标共享：同攻一营的各营合起来算一份正面，再按投入人数分摊——分几营都一样（2026-11-28 审查：分营门槛改胜负）
+  const foesOf = new Map<string, FUnit[]>(), committed = new Map<string, number>();
   for (const a of all) {
     if (a.state === 'rout' || a.kind === 'fire') continue;
     const foes = all.filter(d => d.side !== a.side && dist(a, d) < CONTACT);
+    foesOf.set(a.id, foes);
+    const tot = foes.reduce((n, d) => n + d.troops, 0);
+    for (const d of foes) committed.set(d.id, (committed.get(d.id) ?? 0) + a.troops * d.troops / Math.max(1, tot));
+  }
+  // 夹击：来攻之营真从不同方向包上来（方位相差七十度以上），不是同一面多挤几营
+  const pincer = (d: FUnit) => { const l = engagedBy.get(d.id) ?? []; if (l.length < 2) return false; const ang = l.map(a => Math.atan2(a.y - d.y, a.x - d.x)); for (let i = 0; i < ang.length; i++) for (let j = i + 1; j < ang.length; j++) { let g = Math.abs(ang[i] - ang[j]); if (g > Math.PI) g = 2 * Math.PI - g; if (g >= 1.22) return true; } return false; };
+  for (const a of all) {
+    if (a.state === 'rout' || a.kind === 'fire') continue;
+    const foes = foesOf.get(a.id) ?? [];
     if (!foes.length) continue;
     const tot = foes.reduce((n, d) => n + d.troops, 0);
     for (const d of foes) {
       const share = d.troops / tot;
       let m = meleeMult(sim, a, d);
       let shock = 1;
-      if ((engagedBy.get(d.id)?.length ?? 0) >= 2) { m *= 1.3 * fm(sim, a.side).flank; shock *= 1.25; }
+      if (pincer(d)) { m *= 1.3 * fm(sim, a.side).flank; shock *= 1.25; }
       if (fromRear(a, d) && d.state !== 'rout') {
         m *= 1.4 * fm(sim, a.side).flank; shock *= 1.4;
         const key = `rear${a.id}${d.id}`;
@@ -458,7 +473,8 @@ function fightAll(sim: FieldSim, dt: number, rng: Rng) {
       if (onRidge(sim, d.x, d.y) && !onRidge(sim, a.x, a.y)) m *= 0.55;      // 仰攻高地
       if (inRiver(sim, a.x, a.y)) m *= 0.7;
       if (inRiver(sim, d.x, d.y)) m *= 1.3;
-      hurt(d, frontage(a.troops) * power(sim, a) * 0.0036 * m * share * jit() * dt, shock);
+      const S = committed.get(d.id) ?? a.troops * share;
+      hurt(d, frontage(S) * (a.troops * share / Math.max(1, S)) * power(sim, a) * 0.0036 * m * jit() * dt, shock);
     }
     a.engaged = true;
     a.charge = Math.max(0, a.charge - dt);
@@ -669,8 +685,24 @@ export function runField(b: BattleState, opts: { maxT?: number; dt?: number } = 
   while (!sim.over && sim.t < maxT) {
     if (sim.t >= next) { aiField(sim, 'att', { hold: !!b.att.camp, eager: b.att.tactic === 'rush' }); aiField(sim, 'def', { hold: !!b.def.camp, eager: b.def.tactic === 'rush' }); next = sim.t + 2; }
     stepField(sim, TICK);
+    // 战机：双方部将按同一规矩自择——与进场后“交部将”完全一样（2026-11-28 审查：两种委任结果不同）
+    for (const sd of ['att', 'def'] as const) if (!sim.over) autoMomentF(sim, sd);
   }
   return sim;
+}
+
+/** 部将自择战机之策：成算五成以上者冒险，否则取稳妥（必行）之策；玩家界面的“部将代打”同用此法 */
+export function autoPick(opts: { odds?: number }[]): number {
+  const risky = opts.map((o, i) => ({ i, p: o.odds ?? 1 })).filter(x => x.p < 1).sort((a, b) => b.p - a.p)[0];
+  const safe = opts.findIndex(o => (o.odds ?? 1) >= 1);
+  return risky && (risky.p >= 0.5 || safe < 0) ? risky.i : Math.max(0, safe);
+}
+/** 某一方若逢战机，由部将自择并施行；返回所逢之战机与结果 */
+export function autoMomentF(sim: FieldSim, side: 'att' | 'def'): { m: Moment; k: number; r: { ok: boolean; text: string } | void } | null {
+  const m = momentF(sim, side);
+  if (!m) return null;
+  const k = autoPick(m.options);
+  return { m, k, r: m.options[k].apply(sim) };
 }
 
 /** 结果折回旧的战局格式，供战役层写回伤亡与胜负 */
@@ -757,8 +789,8 @@ export function skillsFor(sim: FieldSim, side: 'att' | 'def'): SkillId[] {
   if (mou >= 55) out.push('feint');
   if (sd.tong >= 55 || out.length < 2) out.push('laststand');
   if (out.length < 3 || mou >= 70) out.push('raid');
-  // 谋略出众者多一样战法
-  return out.slice(0, mou >= 75 ? 4 : 3);
+  // 谋略出众者多一样战法；有“智谋”特长者再多一样（2026-11-28 审查：特长写了却未生效）
+  return out.slice(0, (mou >= 75 ? 4 : 3) + ((sd as { wits?: number }).wits ?? 0));
 }
 /** 识破：用计一方谋略不及对方，对方可能看穿（谋差三十约三成，至多五成五；对方谋略平平则几乎不会） */
 export function seeThroughChance(sim: FieldSim, side: 'att' | 'def'): number {
@@ -948,16 +980,17 @@ const destined = (sim: FieldSim, id: string, p: number) => makeRng(sim.seed ^ [.
 const roll = (sim: FieldSim, id: string, p: number) => makeRng((sim.seed ^ Math.round(sim.t * 10) ^ [...id].reduce((n, c) => n * 17 + c.charCodeAt(0), 3)) >>> 0).next() < p;
 export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
   if (sim.over || sim.t < 5) return null;
-  const foe = foeOf(side), once = (id: string) => !sim.moments.includes(id);
+  // 双方各有各的战机（敌方的由敌将按同一规矩自择）
+  const foe = foeOf(side), once = (id: string) => !sim.moments.includes(side + ':' + id);
   const mine = sim.units.filter(u => u.side === side && active(u)), foes = sim.units.filter(u => u.side === foe && active(u));
-  const fire = (id: string, m: Omit<Moment, 'id'>): Moment => { sim.moments.push(id); return { id, ...m }; };
+  const fire = (id: string, m: Omit<Moment, 'id'>): Moment => { sim.moments.push(side + ':' + id); return { id, ...m }; };
   const all = (sd: 'att' | 'def', f: (u: FUnit) => void) => { for (const u of sim.units) if (u.side === sd && active(u)) f(u); };
   const sum = (list: FUnit[]) => list.reduce((n, u) => n + u.troops * (0.5 + u.morale / 200), 0);
   const tong = (sd: 'att' | 'def') => sim[sd].tong, mou = (sd: 'att' | 'def') => mouOf(sim, sd);
   const rain = sim.weather === 'rain';
   const sideY = (list: FUnit[]) => list.length ? list.reduce((n, u) => n + u.y, 0) / list.length : 500;
   // 情境类战机每场至多三件（危急类不计）
-  const situational = sim.moments.filter(m => !['flank', 'waver', 'chance', 'dusk'].includes(m)).length;
+  const situational = sim.moments.filter(m => m.startsWith(side + ':') && !['flank', 'waver', 'chance', 'dusk'].includes(m.slice(side.length + 1))).length;
   const room = situational < 3;
 
   // 一、敌骑抄我侧后
@@ -968,7 +1001,8 @@ export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
     const guns = mine.filter(u => u.kind === 'gun' || u.kind === 'art');
     const pG = guard ? pct(0.25 + sum([guard]) / Math.max(1, sum([raider])) * 0.35 + (guard.kind === 'cav' ? 0.1 : 0)) : 0.1;
     const pF = guns.length ? pct((0.35 + sum(guns) / Math.max(1, sum([raider])) * 0.2) * (rain ? 0.35 : 1)) : 0.05;
-    return fire('flank', { title: '敌骑抄我侧后', icon: 'cav', text: `${sim[foe].name}${raider.name}绕出侧翼，直扑我军${guns.length ? '火器、炮营' : '阵后'}！`, options: [
+    const naval = sim.mode === 'naval';
+    return fire('flank', { title: naval ? '敌快船抄我侧后' : '敌骑抄我侧后', icon: naval ? 'navy' : 'cav', text: `${sim[foe].name}${raider.name}绕出侧翼，直扑我军${guns.length ? (naval ? '炮船' : '火器、炮营') : '阵后'}！`, options: ([
       { label: guard ? `遣${guard.name}迎击` : '分兵迎击', icon: 'charge', odds: pG, desc: '截住则来骑大挫；截不住则迎击之营受冲', apply: s => {
         if (guard) commandF(s, { unit: guard.id, side, order: { t: 'attack', target: raider.id } });
         if (guard && roll(s, 'flankG', pG)) { raider.morale = Math.max(0, raider.morale - 22); raider.stamina = Math.max(0, raider.stamina - 20); return { ok: true, text: `${guard.name}截住来骑，敌骑锐气大挫` }; }
@@ -979,8 +1013,8 @@ export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
         if (roll(s, 'flankF', pF)) { hurt(raider, raider.troops * 0.14, 1.4); return { ok: true, text: '铳炮齐发，来骑人马翻倒' }; }
         for (const u of guns) u.morale = Math.max(0, u.morale - 10);
         return { ok: false, text: rain ? '火药受潮，铳多哑火' : '仓促转射，未能得中' }; } },
-      { label: '不予理会，专攻正面', icon: 'attack', odds: 1, desc: '正面擂鼓猛攻；侧后火器必受冲击', apply: s => { drumF(s, side); for (const u of guns) u.morale = Math.max(0, u.morale - 10); return { ok: true, text: '正面鼓声大作，侧后火器营受冲' }; } },
-    ] });
+      { label: '不予理会，专攻正面', icon: 'attack', odds: 1, desc: guns.length ? '正面擂鼓猛攻；侧后火器必受冲击' : '正面擂鼓猛攻；阵后受冲', apply: s => { drumF(s, side); for (const u of guns) u.morale = Math.max(0, u.morale - 10); return { ok: true, text: '正面鼓声大作，侧后受冲' }; } },
+    ] as MomentOption[]).filter((_, i) => (i !== 0 || !!guard) && (i !== 1 || guns.length > 0)) });
   }
   // 二、我军动摇
   if (sim.resolve[side] < 38 && once('waver')) {
@@ -999,7 +1033,7 @@ export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
     const weak = foes.slice().sort((a, b) => a.morale - b.morale)[0];
     const pA = pct(0.45 + (sim.resolve[side] - sim.resolve[foe]) / 100);
     const pC = cav.length && weak ? pct(0.3 + sum(cav) / Math.max(1, sum([weak])) * 0.3) : 0.05;
-    return fire('chance', { title: '敌阵松动', icon: 'capture', text: `${sim[foe].name}军心只剩 ${Math.round(sim.resolve[foe])}，阵脚已乱——乘胜之机！`, options: [
+    return fire('chance', { title: '敌阵松动', icon: 'capture', text: `${sim[foe].name}军心只剩 ${Math.round(sim.resolve[foe])}，阵脚已乱——乘胜之机！`, options: ([
       { label: '全军压上', icon: 'charge', odds: pA, desc: '成则敌阵崩溃在即；不成则我军疲惫', apply: s => {
         aiField(s, side, { eager: true }); drumF(s, side);
         if (roll(s, 'chanceA', pA)) { s.resolve[foe] = Math.max(0, s.resolve[foe] - 12); return { ok: true, text: '全军压上，敌阵大乱' }; }
@@ -1010,10 +1044,10 @@ export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
         if (cav.length && roll(s, 'chanceC', pC)) { weak.morale = 0; return { ok: true, text: `${weak.name}被铁骑冲垮` }; }
         for (const u of cav) u.morale = Math.max(0, u.morale - 8); return { ok: false, text: '骑兵冲阵受阻' }; } },
       { label: '稳扎稳打', icon: 'hold', odds: 1, desc: '不改部署，免得追击中阵形散乱', apply: () => ({ ok: true, text: '稳扎稳打' }) },
-    ] });
+    ] as MomentOption[]).filter((_, i) => i !== 1 || (cav.length > 0 && !!weak)) });
   }
   // 四、阵前搦战：敌将骁勇者出阵挑战
-  if (room && sim.t > 25 && sim.t < 200 && once('duel') && tong(foe) >= 60 && destined(sim, 'duel', 0.45)) {
+  if (room && sim.mode === 'field' && sim.t > 25 && sim.t < 200 && once('duel') && tong(foe) >= 60 && destined(sim, 'duel', 0.45)) {
     const pD = pct(0.5 + (tong(side) - tong(foe)) / 90), pS = pct(0.25 + (mou(side) - 50) / 90);
     return fire('duel', { title: '敌将阵前搦战', icon: 'battle', text: `${sim[foe].commanderName}匹马出阵，指名挑战！`, options: [
       { label: '遣将应战', icon: 'battle', odds: pD, desc: `比统军（我 ${tong(side)} · 彼 ${tong(foe)}）：胜则敌军夺气，败则我军丧胆`, apply: s => {
@@ -1027,7 +1061,7 @@ export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
   }
   // 五、雨湿火药
   const myGuns = mine.filter(u => u.kind === 'gun' || u.kind === 'art');
-  if (room && rain && myGuns.length && sim.t > 40 && once('rain') && destined(sim, 'rain', 0.7)) {
+  if (room && sim.mode === 'field' && rain && myGuns.length && sim.t > 40 && once('rain') && destined(sim, 'rain', 0.7)) {
     const inf = mine.filter(u => u.kind === 'inf' || u.kind === 'cav');
     const pB = pct(0.3 + sum(inf) / Math.max(1, sum(foes)) * 0.4);
     return fire('rain', { title: '大雨湿了火药', icon: 'event', text: '雨势转急，铳炮多半哑火。', options: [
@@ -1042,7 +1076,7 @@ export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
   const foeY = sideY(foes), myY = sideY(mine);
   const downwind = sim.wind !== 0 && Math.sign(foeY - myY) === sim.wind;
   const nearFeat = sim.features.find(f => foes.some(u => Math.hypot(u.x - f.x, u.y - f.y) < f.r + 80));
-  if (room && sim.wind !== 0 && nearFeat && once('blaze') && destined(sim, 'blaze', 0.75)) {
+  if (room && sim.mode === 'field' && sim.wind !== 0 && nearFeat && once('blaze') && destined(sim, 'blaze', 0.75)) {
     const pB = pct((downwind ? 0.6 : 0.2) + (mou(side) - 50) / 120);
     return fire('blaze', { title: '风起，可用火攻', icon: 'fire', text: `敌阵近${nearFeat.kind === 'woods' ? '林' : '村'}，风势正${downwind ? '顺' : '逆'}。`, options: [
       { label: '纵火焚之', icon: 'fire', odds: pB, desc: downwind ? '顺风纵火，敌近火者大乱' : '逆风纵火，恐反烧自身', apply: s => {

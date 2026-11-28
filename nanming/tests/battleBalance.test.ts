@@ -17,10 +17,11 @@ const attWins = (f: (seed: number) => BattleState) => SEEDS.filter(s => runField
 
 describe('野战：胜负有悬念', () => {
   it('多两成兵力：多半能胜，但不是场场必胜', () => {
-    const w = attWins(s => fieldB(36000, 30000, s));
-    expect(w).toBeGreaterThanOrEqual(SEEDS.length * 0.6);
-    expect(w).toBeLessThan(SEEDS.length);
-  });
+    const many = Array.from({ length: 48 }, (_, i) => (i + 1) * 7919);
+    const w = many.filter(s => runField(fieldB(36000, 30000, s)).over?.winner === 'att').length;
+    expect(w).toBeGreaterThanOrEqual(many.length * 0.6);
+    expect(w).toBeLessThan(many.length);
+  }, 60000);
   it('少一成半兵力：多半要输，但偶有以少胜多', () => {
     const w = attWins(s => fieldB(25500, 30000, s));
     expect(w).toBeLessThanOrEqual(SEEDS.length * 0.4);

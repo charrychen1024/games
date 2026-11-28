@@ -1,10 +1,10 @@
 /* 军事：行军（逐日推进）、遭遇、野战与攻城的战局构造、战后处置、易主。
  * 规则：野战失利只让城市失去屏障，只有陷城、献城、正式归附才改变控制权。 */
 import { isRuler } from './regime';
-import { armyRoute, ferryOk } from './route';
+import { armyRoute, ferryOk, closedTo } from './route';
 import type { Army, ArmyOrder, GameState, NodeId } from './types';
 import { NODE, routeBetween, shortestPath, neighbors } from '../data/geography';
-import { armiesAt, friendly, hostile, report, nodeName, factionName, charName, troopsText, bump, newId, topOf, adjustAtt, sideAndCommander } from './state';
+import { armiesAt, friendly, hostile, report, nodeName, factionName, charName, troopsText, bump, newId, topOf, adjustAtt, sideAndCommander, mineSide } from './state';
 import { createBattle, makeSide, sideTroops, type BattleSide, type BattleState, type Weather, type Terrain, outcomeText, lossesOf } from './battle';
 import { hasTrait } from './people';
 import { rngFor } from './rng';
@@ -33,7 +33,7 @@ export function marchToll(s: GameState, a: Army, days: number) {
   if (a.pace === 'forced') {
     const lost = Math.round(a.troops * 0.0015 * days);
     a.troops -= lost; a.morale = Math.max(10, Math.round(a.morale - 0.6 * days));
-    if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}急行 ${days} 日，掉队 ${lost} 人，士卒疲惫（士气 −${Math.round(0.6 * days)}）。`, src: { kind: 'order', ref: a.id } });
+    if (mineSide(s, a.faction)) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}急行 ${days} 日，掉队 ${lost} 人，士卒疲惫（士气 −${Math.round(0.6 * days)}）。`, src: { kind: 'order', ref: a.id } });
   } else if (a.pace === 'steady' && a.morale < 80) a.morale = Math.min(80, Math.round(a.morale + 0.3 * days));
 }
 
@@ -54,11 +54,17 @@ export function moveArmies(s: GameState): Contact[] {
       if (a.progress === 0 && r.kind === 'sea' && !canSea(a) && ferryOk(s, a.faction, a.location, next)) {
         // 征调民船渡海：集船登舟，士气稍挫
         a.morale = Math.max(10, a.morale - 5);
-        if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}在${nodeName(a.location)}征调民船，渡海往${nodeName(next)}（士气 −5；无战船护航，海上遇敌吃亏）。`, src: { kind: 'order', ref: a.id } });
+        if (mineSide(s, a.faction)) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}在${nodeName(a.location)}征调民船，渡海往${nodeName(next)}（士气 −5；无战船护航，海上遇敌吃亏）。`, src: { kind: 'order', ref: a.id } });
       } else if (a.progress === 0 && r.kind === 'sea' && !canSea(a)) {
         const tgt = a.order.kind !== 'hold' ? a.order.target : a.path[a.path.length - 1];
         const p = armyRoute(s, a.faction, a.location, tgt, false);
         a.path = p ?? [];
+        continue;
+      }
+      // 前方之城闭门（停战一方、无借道之约）：止步，不得入（途中才停战的也一样）
+      if (a.progress === 0 && closedTo(s, a.faction, next)) {
+        a.path = []; stopped.add(a.id);
+        if (mineSide(s, a.faction)) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}行至${nodeName(a.location)}，前方${nodeName(next)}（${factionName(s, s.cities[next].controller)}）停战中闭门不纳，止步待命。可遣使借道。`, src: { kind: 'order', ref: a.id } });
         continue;
       }
       const was = a.progress;
@@ -70,7 +76,7 @@ export function moveArmies(s: GameState): Contact[] {
         a.mix = { ...a.mix, inf: a.mix.inf + nv, navy: 0 };
         if (a.name.endsWith('水师')) a.name = a.name.slice(0, -2) + '部';
         a.morale = Math.max(10, a.morale - 4);
-        if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}行至${nodeName(a.location)}舍舟登岸，船只留泊，水师改为步卒。`, src: { kind: 'order', ref: a.id } });
+        if (mineSide(s, a.faction)) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}行至${nodeName(a.location)}舍舟登岸，船只留泊，水师改为步卒。`, src: { kind: 'order', ref: a.id } });
         // 余程按步卒重算：此后不再走海路
         if (a.order.kind !== 'hold') { const rest = armyRoute(s, a.faction, next, a.order.target, false); a.path = rest ? [next, ...rest] : [next]; }
       }
@@ -86,7 +92,7 @@ export function moveArmies(s: GameState): Contact[] {
         const c = contacts.get(at) ?? { node: at, arrivals: {} };
         c.arrivals[a.id] = day; c.arrivals[facing.id] = day;
         contacts.set(at, c);
-        if ([a, facing].some(x => topOf(s, x.faction) === s.player)) report(s, { cat: '军报', act: 'march', node: at, text: `${a.name}与${facing.name}相向而行，在${nodeName(at)}一带路上相遇。`, src: { kind: 'order', ref: a.id } });
+        if ([a, facing].some(x => mineSide(s, x.faction))) report(s, { cat: '军报', act: 'march', node: at, text: `${a.name}与${facing.name}相向而行，在${nodeName(at)}一带路上相遇。`, src: { kind: 'order', ref: a.id } });
         continue;
       }
       if (a.progress < r.days) continue;
@@ -107,7 +113,7 @@ export function moveArmies(s: GameState): Contact[] {
         // 敌城挡路：必须停下（攻城或绕行由下月命令决定）
         a.path = [];
         stopped.add(a.id);
-      } else if (city && a.path.length && topOf(s, a.faction) === s.player && !friendly(s, a.faction, city.controller) && !hostile(s, a.faction, city.controller)) {
+      } else if (city && a.path.length && mineSide(s, a.faction) && !friendly(s, a.faction, city.controller) && !hostile(s, a.faction, city.controller)) {
         report(s, { cat: '军报', act: 'march', from: a.faction, node: next, text: `${a.name}借道${nodeName(next)}（${factionName(s, city.controller)}），过境而去。`, src: { kind: 'order', ref: a.id } });
       }
     }
@@ -121,12 +127,12 @@ export function moveArmies(s: GameState): Contact[] {
         // 被途中敌城挡住：先攻此城，记住原定目标，拿下后接着去
         const then = a.order.target !== a.location ? a.order.target : undefined;
         // 玩家之军照令强攻；电脑之军量力：城下本方兵力不到守城之力（驻军连同城中之军，计城防）的一倍半，先围不攻
-        const ours = topOf(s, a.faction) === s.player;
+        const ours = mineSide(s, a.faction);
         const mine = armies.filter(x => s.armies[x.id] && x.location === a.location && x.faction === a.faction && x.progress === 0).reduce((n, x) => n + x.troops, 0);
         const inside = Object.values(s.armies).filter(x => x.location === a.location && x.progress === 0 && topOf(s, x.faction) === topOf(s, city.controller)).reduce((n, x) => n + x.troops, 0);
         const assault = ours || mine > (city.garrison + inside) * (1 + city.wall / 60) * 1.5 || city.wall < 30;
         a.order = then ? { kind: 'siege', target: a.location, assault, then } : { kind: 'siege', target: a.location, assault };
-        if (then && topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}开往${nodeName(then)}，为${nodeName(a.location)}所阻，先攻${nodeName(a.location)}；拿下后接着开往${nodeName(then)}。`, src: { kind: 'order', ref: a.id } });
+        if (then && mineSide(s, a.faction)) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}开往${nodeName(then)}，为${nodeName(a.location)}所阻，先攻${nodeName(a.location)}；拿下后接着开往${nodeName(then)}。`, src: { kind: 'order', ref: a.id } });
       }
       else if (a.location === a.order.target) a.order = { kind: 'hold' };
     }
@@ -235,6 +241,11 @@ export function buildSiegeBattle(s: GameState, node: string): BattleState | null
   const attArmies = storm.length ? storm : present;
   if (!attArmies.length || city.garrison <= 0) return null;
   const att = combineSide(s, attArmies, { foeFaction: city.controller });
+  // 城破归谁：出战诸军中出兵最多的一家（不是统军最高者、也不是城下驻扎最多者）
+  const byF = new Map<string, number>();
+  for (const a of attArmies) byF.set(a.faction, (byF.get(a.faction) ?? 0) + a.troops);
+  const owner = [...byF.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0]?.[0];
+  if (owner && owner !== att.faction) { att.faction = owner; att.name = factionName(s, owner); }
   const def = combineSide(s, [], { garrison: { node, troops: city.garrison }, foeFaction: siege.attacker });
   // 威慑：城外大军（围者也算）越压倒，守军开战时士气越低
   const hit = siegeAwe(s, node).morale;
@@ -269,8 +280,10 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
   const winnerSide = b.winner === 'att' ? b.att : b.def;
   const loserSide = b.winner === 'att' ? b.def : b.att;
   const summary = outcomeText(b);
+  // 野战日暮相持：不记一胜一负（2026-11-28 审查：同一场相持，攻方月底见一负、守方见一胜）
+  const draw = b.kind !== 'siege' && (b.outcome === 'stalemate' || (b.outcome === 'held' && b.verdict !== '小胜'));
   s.battles.push({ id: b.id, turn: s.turn, node: b.node, kind: b.kind, attacker: b.att.faction, defender: b.def.faction, winner: b.winner === 'att' ? 'attacker' : 'defender',
-    attLoss, defLoss, summary, manual });
+    ...(draw ? { draw: true } : {}), attLoss, defLoss, summary, manual });
   const involved = [b.att.faction, b.def.faction].some(f => topOf(s, f) === s.player || friendly(s, f, s.player));
   const direct = [b.att.faction, b.def.faction].includes(s.player) || b.att.armies.concat(b.def.armies).some(id => s.armies[id]?.faction === s.player);
   report(s, { cat: '军报', act: 'battle', from: b.att.faction, to: b.def.faction, urgent: direct, node: b.node, faction: involved ? undefined : b.att.faction,
@@ -289,7 +302,7 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
       capture(s, b.node, b.att.faction, b.outcome === 'surrender' ? '献城' : b.outcome === 'abandon' ? '弃城' : '陷城', b.att.commander);
     } else if (b.winner === 'def') {
       // 攻城不克：玩家之军改为围而不攻，不再每月自动强攻、白白折兵；要再攻须重新下令
-      const mine = attArmies.filter(a => s.armies[a.id] && topOf(s, a.faction) === s.player && a.order.kind === 'siege' && a.order.assault);
+      const mine = attArmies.filter(a => s.armies[a.id] && mineSide(s, a.faction) && a.order.kind === 'siege' && a.order.assault);
       for (const a of mine) a.order = { ...a.order, assault: false } as typeof a.order;
       if (mine.length) report(s, { cat: '军报', urgent: true, node: b.node, act: 'siege', from: b.att.faction, to: b.def.faction,
         text: attLoss + defLoss < 1 ? `${nodeName(b.node)}：各军围而不攻，断其粮道。要攻城时，请重新下令。` : `${nodeName(b.node)}攻城不克（攻方折损 ${troopsText(attLoss)}，守方折损 ${troopsText(defLoss)}）。各军改为围困，断其粮道；城防、城门的损坏留到下月。要再攻，请重新下令攻城。`, src: { kind: 'battle', ref: b.id } });
@@ -394,7 +407,7 @@ export function handover(s: GameState, a: Army) {
     pick.location = a.location;
     a.morale = Math.max(5, a.morale - 8);
     report(s, { cat: '人事', node: a.location, text: `军权交接：${old}不能视事，${a.name}由${pick.name}接掌，军心稍乱。`, faction: a.faction });
-    if (topOf(s, a.faction) === s.player) s.reports[s.reports.length - 1].faction = undefined;
+    if (mineSide(s, a.faction)) s.reports[s.reports.length - 1].faction = undefined;
   } else {
     report(s, { cat: '人事', node: a.location, text: `${old}不能视事，${a.name}无人统领，并入附近城池驻军。` });
     disband(s, a);
@@ -508,12 +521,12 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
     bump(s, node, 'minxin', -15, '城破遭兵燹', src);
     bump(s, node, 'wall', -10, '城破', src);
     // 攻方留兵驻守
-    const occupiers = armiesAt(s, node).filter(a => a.faction === newCtrl || friendly(s, a.faction, newCtrl)).sort((x, y) => y.troops - x.troops);
+    // 城归出战一方：留守、收降卒只用出战一方自己的军队；同城只是驻扎的友军不得城（2026-11-28 审查：高杰驻扎即领郑氏所破之城）
+    const occupiers = armiesAt(s, node).filter(a => a.faction === newCtrl).sort((x, y) => y.troops - x.troops);
     if (occupiers[0]) {
       const keep = Math.max(1000, Math.min(4000, Math.round(occupiers[0].troops * 0.1)));
       const k = Math.min(keep, occupiers[0].troops - 500);
       if (k > 0) { occupiers[0].troops -= k; bump(s, node, 'garrison', k, `${occupiers[0].name}分兵驻守`, src); }
-      if (occupiers[0].faction !== newCtrl) c.controller = occupiers[0].faction;
       // 战果：残卒投降——常例收两成入军；定了“收编”收三成五（新附士气低）；定了“释归”一概放还，得仁义之名
       const how2 = occupiers[0].captives;
       const surrender = Math.round(g0 * (how2 === 'absorb' ? 0.35 : how2 === 'release' ? 0 : 0.2));
@@ -620,7 +633,7 @@ export function siegeDone(s: GameState, a: Army) {
   if (a.order.kind !== 'siege') return;
   const then = a.order.then;
   if (then && s.cities[then] && hostile(s, a.faction, s.cities[then].controller) && setArmyOrder(s, a, { kind: 'move', target: then, attack: true })) {
-    if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}已过${nodeName(a.location)}，接着开往${nodeName(then)}。`, src: { kind: 'order', ref: a.id } });
+    if (mineSide(s, a.faction)) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}已过${nodeName(a.location)}，接着开往${nodeName(then)}。`, src: { kind: 'order', ref: a.id } });
   } else a.order = { kind: 'hold' };
 }
 

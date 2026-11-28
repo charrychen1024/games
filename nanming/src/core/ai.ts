@@ -1,6 +1,6 @@
 /* 电脑行为：规则 + 随时间变化的战略倾向。倾向只定大方向，用兵仍看局势。 */
 import type { Army, ArmyOrder, GameState, Order } from './types';
-import { armiesOf, armyPower, cityDefense, hostile, friendly, topOf, report, nodeName, adjustAtt, citiesOf, stance, setStance } from './state';
+import { armiesOf, armyPower, cityDefense, hostile, friendly, topOf, report, nodeName, adjustAtt, citiesOf, stance, setStance, mineSide } from './state';
 import { shortestPath, pathDays, neighbors, distancesFrom, NODE } from '../data/geography';
 import { canSea } from './military';
 import { maxRecruit } from './orders';
@@ -105,6 +105,9 @@ export function aiOrders(s: GameState, f: string): Order[] {
   for (const a of armiesOf(s, f).sort((x, y) => x.id.localeCompare(y.id))) {
     if (a.progress > 0) continue; // 在路上，继续走
     if (a.sortie) continue;       // 出城之兵：只与围城之军一战，战罢回城
+    // 奉玩家号令（三个月内、仍在执行）之军：电脑不改其令（2026-11-28 审查：付银令黄得功围困，当月却被改为强攻）
+    const cmd = s.flags['commanded_' + a.id];
+    if (typeof cmd === 'number' && cmd >= 0 && s.turn - cmd <= 3 && a.order.kind !== 'hold') continue;
     const power = armyPower(a, s);
     const sea = canSea(a);
     // 已在围城：继续
@@ -266,7 +269,7 @@ export function aiAttrition(s: GameState) {
   if (s.turn <= 10) for (const a of Object.values(s.armies)) if (a.faction === 'shun' && a.faction !== s.player) a.troops = Math.round(a.troops * 0.97);
   const fresh = (id: string) => { const c = s.cities[id]; return !!c && topOf(s, c.controller) === 'qing' && c.takenTurn !== undefined && s.turn - c.takenTurn <= 18; };
   for (const a of Object.values(s.armies).sort((x, y) => x.id.localeCompare(y.id))) {
-    if (topOf(s, a.faction) !== 'qing' || a.faction === s.player || topOf(s, a.faction) === s.player || a.hunger > 0 || (a.unpaid ?? 0) > 1 || a.troops >= 50000) continue;
+    if (topOf(s, a.faction) !== 'qing' || mineSide(s, a.faction) || a.hunger > 0 || (a.unpaid ?? 0) > 1 || a.troops >= 50000) continue;
     if (!fresh(a.location) && !neighbors(a.location).some(nb => fresh(nb.to) || neighbors(nb.to).some(x => fresh(x.to)))) continue;
     const sup = s.cities[a.supply];
     const add = Math.min(50000 - a.troops, Math.round(a.troops * 0.03 + 200));
@@ -609,7 +612,7 @@ export function aiIntrigue(s: GameState) {
  * 驻扎而邻近有敌军者坚守营垒。玩家之军不动。 */
 export function aiConduct(s: GameState) {
   for (const a of Object.values(s.armies)) {
-    if (topOf(s, a.faction) === s.player || a.sortie) continue;
+    if (mineSide(s, a.faction) || a.sortie) continue;
     const o = a.order;
     const tgt = o.kind !== 'hold' ? s.cities[o.target] : undefined;
     const rescue = o.kind === 'move' && !!tgt && !!s.sieges[tgt.id] && topOf(s, tgt.controller) === topOf(s, a.faction);
@@ -666,7 +669,7 @@ export function aiEvacuate(s: GameState) {
     const sieged = !!s.sieges[c.id];
     applyEvacuate(s, f.id, { id: `evac_${f.id}_${s.turn}_${c.id}`, node: c.id, to: dest.x.id, people, scorch });
     // 当面之敌是玩家：军情里知会一声
-    if (Object.values(s.armies).some(x => topOf(s, x.faction) === s.player && near(x)))
+    if (Object.values(s.armies).some(x => mineSide(s, x.faction) && near(x)))
       report(s, { cat: '军报', urgent: true, node: c.id, text: `${f.name}自度${nodeName(c.id)}难守，${sieged ? '突围' : '弃城'}而走，兵马钱粮退往${nodeName(dest.x.id)}${scorch ? '；临行焚仓拆城，只留一座空城' : people ? '，百姓多随之而去' : ''}。` });
   }
 }
@@ -691,7 +694,7 @@ export function aiDiscord(s: GameState) {
     s.flags['discord_' + f] = s.turn;
     applyOrder(s, f, o);
     if (rngFor(s.seed, 'intel2', s.turn, f).chance(0.6)) report(s, { cat: '急报', urgent: true, node: s.factions[P].capital, origin: s.factions[f].capital,
-      text: `【谍报】探得${s.factions[f].name}遣${env.name}潜入我方，欲行离间之计，挑拨我与盟友、下属。可厚赏下属、遣使固盟以防。`, src: { kind: 'diplomacy', ref: o.id } });
+      text: `【谍报】探得${s.factions[f].name}遣${env.name}潜入我方，欲行离间之计，挑拨我与盟友、下属。可厚赏下属、赠礼盟友以固其心。`, src: { kind: 'diplomacy', ref: o.id } });
     return;   // 每月至多一起
   }
 }

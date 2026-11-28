@@ -85,7 +85,8 @@ export function createSiege(b: BattleState): SiegeSim {
   else if (mix.gun > 0.03) parts.push({ kind: 'gun', name: '弓铳营', share: mix.gun });
   if (mix.cav > 0.05) parts.push({ kind: 'cav', name: '骑营', share: mix.cav });
   const infShare = 1 - parts.reduce((n, p) => n + p.share, 0);
-  const nInf = totA * infShare > 24000 ? 3 : totA * infShare > 9000 ? 2 : 1;
+  // 步营：一千五百人以上分两营、四千五百人以上分三营（撞门、两路攀城）——门槛放在小仗里，免得大仗多一人便多一路攻势（2026-11-28 审查）
+  const nInf = totA * infShare > 4500 ? 3 : totA * infShare > 1500 ? 2 : 1;
   const infNames = ['前营', '左营', '右营'];
   for (let k = 0; k < nInf; k++) parts.push({ kind: 'inf', name: infNames[k], share: infShare / nInf });
   let left = totA;
@@ -194,6 +195,11 @@ export function drum(sim: SiegeSim, side: 'att' | 'def'): boolean {
 /* ---------------- 推进一步 ---------------- */
 /** 演算的一拍（秒）：与野战相同，按固定一拍逐拍推进，结果与显示速度无关 */
 export const TICK = 0.1;
+/** 城门前可同时撞门者、一段城前可同时施放之炮手（人份）：各营共用 */
+export let GATE_RAM = 3000, SEG_GUNS = 4000, CROWD = 0.2;
+export function setSiegeCaps(r: number, g: number, k = CROWD) { GATE_RAM = r; SEG_GUNS = g; CROWD = k; }
+/** 人多施展不开：门前、城前容得下的人数以内全额，超出者只按两成计（与野战接敌正面同理） */
+const crowd = (n: number, cap: number) => (n <= cap ? n : cap + (n - cap) * CROWD);
 export function stepSiege(sim: SiegeSim, dt: number, cmds: SCommand[] = []) {
   if (sim.over) return sim;
   for (const c of cmds) command(sim, c);
@@ -330,15 +336,18 @@ function fight(sim: SiegeSim, dt: number, rng: Rng) {
     hurt(near, fire * bonus * dt);
     d.engaged = true;
   }
-  // 2. 炮击：毁城墙，兼伤城头
+  // 2. 炮击：毁城墙，兼伤城头。一段城前炮位有数（四千人份），各营共用、按人数分摊——分几营都一样（2026-11-28 审查：分营门槛改胜负）
+  const bombardOn = new Map<number, number>();
+  for (const a of att) if (a.state === 'bombard' && a.seg !== undefined) bombardOn.set(a.seg, (bombardOn.get(a.seg) ?? 0) + a.troops);
   for (const a of att) {
     if (a.state !== 'bombard' || a.seg === undefined) continue;
     const s = sim.segs[a.seg];
+    const tot = bombardOn.get(a.seg) ?? a.troops, eff = crowd(tot, SEG_GUNS) * a.troops / Math.max(1, tot);
     if (s.hp > 0) {
-      s.hp = Math.max(0, s.hp - Math.min(a.troops, 4000) * 0.000055 * (sim.flags.work ?? 1) * rain * jit() * dt * (0.8 + sim.att.tong / 300));
+      s.hp = Math.max(0, s.hp - eff * 0.000055 * (sim.flags.work ?? 1) * rain * jit() * dt * (0.8 + sim.att.tong / 300));
       if (s.hp <= 0) { ev(sim, 'breach', `${segName(a.seg)}城墙被轰塌，现出缺口！`, { side: 'att', seg: a.seg }); }
     }
-    spread(defOnSeg(sim, a.seg), Math.min(a.troops, 4000) * 0.0004 * dt);   // 一段城前炮位有数，炮多也只能轮番放
+    spread(defOnSeg(sim, a.seg), eff * 0.0004 * dt);
   }
   // 3. 火器压制城头
   for (const a of att) {
@@ -348,11 +357,12 @@ function fight(sim: SiegeSim, dt: number, rng: Rng) {
     spread(defOnSeg(sim, a.seg), a.troops * 0.003 * cover * rain * power(sim, a) * jit() * dt);
     a.engaged = true;
   }
-  // 4. 撞门
+  // 4. 撞门：门前容得下的人有限（三千人份），各营共用、按人数分摊
+  const ramTot = att.filter(a => a.state === 'ram').reduce((n, a) => n + a.troops, 0);
   for (const a of att) {
     if (a.state !== 'ram') continue;
     if (sim.gate.hp > 0) {
-      sim.gate.hp = Math.max(0, sim.gate.hp - Math.min(a.troops, 3000) * 0.00022 * (sim.flags.work ?? 1) * power(sim, a) * jit() * dt);
+      sim.gate.hp = Math.max(0, sim.gate.hp - crowd(ramTot, GATE_RAM) * a.troops / Math.max(1, ramTot) * 0.00022 * (sim.flags.work ?? 1) * power(sim, a) * jit() * dt);
       if (sim.gate.hp <= 0) ev(sim, 'gate', `城门被撞开！`, { side: 'att', seg: GATE_SEG });
     }
     a.engaged = true;
@@ -592,6 +602,7 @@ export function runSiege(b: BattleState, opts: { maxT?: number; dt?: number } = 
   while (!sim.over && sim.t < maxT) {
     if (sim.t >= next) { aiCommands(sim, 'att'); aiCommands(sim, 'def'); next = sim.t + 2; }
     stepSiege(sim, TICK);
+    for (const sd of ['att', 'def'] as const) if (!sim.over) autoMomentS(sim, sd);
   }
   // 安全阀（正常不会到）：攻方粮尽自退
   if (!sim.over) { for (const u of sim.units) if (u.side === 'att' && active(u)) u.state = 'gone'; end(sim, 'def', 'retreat', `${sim.att.name}粮尽，收兵回营，城未克。`); }
@@ -626,6 +637,15 @@ export function toBattleResult(b: BattleState, sim: SiegeSim): BattleState {
   return r;
 }
 
+/** 某一方若逢攻守城战机，由部将按同一规矩自择并施行 */
+export function autoMomentS(sim: SiegeSim, side: 'att' | 'def'): { m: SMoment; k: number; r: { ok: boolean; text: string } | void } | null {
+  const m = momentS(sim, side);
+  if (!m) return null;
+  const k = autoPickS(m.options);
+  return { m, k, r: m.options[k].apply(sim) };
+}
+const autoPickS = (opts: { odds?: number }[]) => { const risky = opts.map((o, i) => ({ i, p: o.odds ?? 1 })).filter(x => x.p < 1).sort((a, b) => b.p - a.p)[0]; const safe = opts.findIndex(o => (o.odds ?? 1) >= 1); return risky && (risky.p >= 0.5 || safe < 0) ? risky.i : Math.max(0, safe); };
+
 /* ---------------- 战机：攻守城的关键时刻请主帅定夺（部将代打时也会） ----------------
  * 2026-11-28：每个选项有成算（按兵力、士气、统谋算），得手失手后果不同，结果当场揭晓；另有掘地道、夜缒劫营两种情境战机，每场随机。 */
 export interface SMomentOption { label: string; desc: string; icon: string; odds?: number; apply: (sim: SiegeSim) => { ok: boolean; text: string } | void }
@@ -636,8 +656,8 @@ const destinedS = (sim: SiegeSim, id: string, p: number) => makeRng(sim.seed ^ h
 const rollS = (sim: SiegeSim, id: string, p: number) => makeRng((sim.seed ^ Math.round(sim.t * 10) ^ hashS(id)) >>> 0).next() < p;
 export function momentS(sim: SiegeSim, side: 'att' | 'def'): SMoment | null {
   if (sim.over || sim.t < 5) return null;
-  const once = (id: string) => !sim.flags['m_' + id];
-  const fire = (id: string, m: Omit<SMoment, 'id'>): SMoment => { sim.flags['m_' + id] = 1; return { id, ...m }; };
+  const once = (id: string) => !sim.flags['m_' + side + '_' + id];
+  const fire = (id: string, m: Omit<SMoment, 'id'>): SMoment => { sim.flags['m_' + side + '_' + id] = 1; return { id, ...m }; };
   const mine = sim.units.filter(u => u.side === side && active(u));
   const all = (sd: 'att' | 'def', f: (u: SUnit) => void) => { for (const u of sim.units) if (u.side === sd && active(u)) f(u); };
   const broke = sim.gate.hp <= 0 || sim.segs.some(s => s.hp <= 0);

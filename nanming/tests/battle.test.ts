@@ -1,7 +1,7 @@
 /* 战役层与即时战斗的接口：自动结算、战报措辞、跨月城防、阵前劝降、围城粮道 */
 import { describe, it, expect } from 'vitest';
 import { createBattle, makeSide, autoResolve, lossesOf, outcomeText, sideTroops } from '../src/core/battle';
-import { createSiege, stepSiege, aiCommands, toBattleResult, persuade, persuadeOdds, runSiege, GATE_SEG, SEGMENTS } from '../src/core/siege';
+import { createSiege, stepSiege, aiCommands, toBattleResult, persuade, persuadeOdds, runSiege, GATE_SEG, SEGMENTS, autoMomentS } from '../src/core/siege';
 import { supplyBlock } from '../src/core/economy';
 import { yangzhouSiegeState } from '../src/data/presets';
 
@@ -114,7 +114,8 @@ describe('部将代打攻城', () => {
   it('一步一步推进与快进结果相同', () => {
     const b = siege(30000, 9000, 70, 5);
     const sim = createSiege(b); let next = 0;
-    while (!sim.over && sim.t < 3600) { if (sim.t >= next) { aiCommands(sim, 'att'); aiCommands(sim, 'def'); next = sim.t + 2; } stepSiege(sim, 0.2); }
+    // 每拍之后双方部将自择战机（与快进同一规矩）
+    while (!sim.over && sim.t < 3600) { if (sim.t >= next) { aiCommands(sim, 'att'); aiCommands(sim, 'def'); next = sim.t + 2; } stepSiege(sim, 0.1); for (const sd of ['att', 'def'] as const) if (!sim.over) autoMomentS(sim, sd); }
     expect(JSON.stringify(toBattleResult(b, sim))).toBe(JSON.stringify(autoResolve(b)));
   });
 });

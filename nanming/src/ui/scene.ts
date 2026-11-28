@@ -9,7 +9,8 @@ export type Hat = 'ming' | 'qing' | 'shun' | 'plain' | 'crown';
 export interface Party { color: string; mark?: string; hat?: Hat }
 /** mode：loop 一直动（默认）；still 只画最要紧的一帧；hover 平时静止、鼠标移上（或 play()）才动 */
 /** hero：人物档案用，前景中央画一位骑马的主帅（a 方） */
-export interface SceneOpts { a?: Party; b?: Party; seed?: number; ok?: boolean; mode?: 'loop' | 'still' | 'hover'; hero?: boolean }
+/** hold：围而未破——城门不开、城头不换旗（围城、守住的军报用；2026-11-28 审查） */
+export interface SceneOpts { a?: Party; b?: Party; seed?: number; ok?: boolean; mode?: 'loop' | 'still' | 'hover'; hero?: boolean; hold?: boolean }
 
 /** 每种场景一个循环的长度（秒）与“最要紧的一刻”（减少动态时只画这一帧） */
 const LOOP: Record<SceneKind, [number, number]> = {
@@ -59,7 +60,7 @@ export function scene(kind: SceneKind, o: SceneOpts = {}): { el: HTMLElement; st
     // 很宽的窗口：人物布景只占中间一块舞台（宽不过高的 4.2 倍），纸底远山照样铺满
     const Wd = Math.min(W, H * 4.2), off = (W - Wd) / 2;
     g.save(); g.translate(off, 0);
-    draw(kind, g, Wd, H, t, (now - t0) / 1000, a, b, seed, o.ok !== false);
+    draw(kind, g, Wd, H, t, (now - t0) / 1000, a, b, seed, o.ok !== false, !!o.hold);
     if (o.hero) rider(g, Wd * 0.5, H * 0.97, H / 150 * 1.25, a, (now - t0) / 1000, kind === 'march');
     g.restore();
     agedEdges(g, W, H, 0.22);
@@ -313,7 +314,7 @@ function backdrop(kind: SceneKind, W0: number, H: number, dpr: number, seed: num
 }
 
 /* ================= 每帧 ================= */
-function draw(kind: SceneKind, g: CanvasRenderingContext2D, W: number, H: number, t: number, T: number, a: Required<Party>, b: Required<Party>, seed: number, ok: boolean) {
+function draw(kind: SceneKind, g: CanvasRenderingContext2D, W: number, H: number, t: number, T: number, a: Required<Party>, b: Required<Party>, seed: number, ok: boolean, hold = false) {
   const S = H / 150;   // 以 150 高为基准的比例
   const r: Rnd = mkRnd(seed + Math.floor(T * 4));
   switch (kind) {
@@ -340,7 +341,7 @@ function draw(kind: SceneKind, g: CanvasRenderingContext2D, W: number, H: number
     }
     case 'siege': case 'surrender': {
       const wy = H * 0.7, wh = H * 0.26, gx = W * 0.6;
-      const fall = kind === 'siege' ? seg(t, 3.8, 4.4) : seg(t, 2.6, 3.6);
+      const fall = kind === 'siege' ? (hold ? 0 : seg(t, 3.8, 4.4)) : seg(t, 2.6, 3.6);
       // 城门：被撞开（陷城）或缓缓打开（献城）
       const gw = 20 * S, gh = wh * 0.65;
       g.fillStyle = ink(0.95, 0.95); g.beginPath(); g.moveTo(gx - gw, wy); g.lineTo(gx - gw, wy - gh); g.arc(gx, wy - gh, gw, Math.PI, 0); g.lineTo(gx + gw, wy); g.closePath(); g.fill();

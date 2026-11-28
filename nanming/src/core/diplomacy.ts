@@ -196,8 +196,9 @@ export function applyOffer(s: GameState, o: Offer, idx: number): string {
   const cap = treasuryOf(s, P);
   /** 银两由 from 府库转入 to 府库：实付多少，对方就收多少 */
   const transfer = (from: string, to: string, v: number, outText: string, inText: string, ref: string) => {
+    if (!from || !s.cities[from]) return 0;   // 付款一方已无府库
     const paid = -bump(s, from, 'silver', -v, outText, { kind: 'diplomacy', ref });
-    if (paid > 0) bump(s, to, 'silver', paid, inText, { kind: 'diplomacy', ref });
+    if (paid > 0 && to && s.cities[to]) bump(s, to, 'silver', paid, inText, { kind: 'diplomacy', ref });
     return paid;
   };
   switch (o.kind) {
@@ -407,8 +408,10 @@ export function aiCommerceAndGifts(s: GameState) {
     if (st !== 'alliance' && Math.max(sa, sb) >= Math.min(sa, sb) * 2 && hawkOf(s, strong) >= 30 && capSilver(s, weak) > 30000 && !pactOn(s, 'goodwill', weak, strong) && rng.next() < 0.2) {
       s.flags[key] = s.turn; n++;
       const v = Math.round(Math.min(capSilver(s, weak) * 0.1, 30000) / 1000) * 1000;
-      const paid = -bump(s, treasuryOf(s, weak), 'silver', -v, `向${factionName(s, strong)}献礼`, { kind: 'diplomacy', ref: key });
-      if (paid > 0) bump(s, treasuryOf(s, strong), 'silver', paid, `${factionName(s, weak)}献礼`, { kind: 'diplomacy', ref: key });
+      const wt = treasuryOf(s, weak), st2 = treasuryOf(s, strong);
+      if (!wt) continue;
+      const paid = -bump(s, wt, 'silver', -v, `向${factionName(s, strong)}献礼`, { kind: 'diplomacy', ref: key });
+      if (paid > 0 && st2) bump(s, st2, 'silver', paid, `${factionName(s, weak)}献礼`, { kind: 'diplomacy', ref: key });
       s.flags[pactKey('goodwill', weak, strong)] = s.turn + PACT_MONTHS;
       const truce = st === 'war' && rng.next() < 0.3;
       if (truce) setStance(s, weak, strong, 'truce', s.turn + 6);

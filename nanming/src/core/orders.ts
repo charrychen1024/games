@@ -195,9 +195,11 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       return null;
     }
     case 'gift': {
-      const t = s.factions[o.target], cap = s.cities[s.factions[f].capital];
+      // 付款时按现任控制者核对：治所已失则无府库可支（2026-11-28 审查：失城仍能用他人之城府库赠礼）
+      const t = s.factions[o.target], tr = treasuryOf(s, f), cap = tr ? s.cities[tr] : undefined;
       if (!t || t.defunct || o.target === f) return '对象不对';
-      if (o.silver <= 0 || !cap || cap.silver < o.silver) return '治所府库不足';
+      if (!cap) return '治所已失，无府库可支';
+      if (o.silver <= 0 || cap.silver < o.silver) return '治所府库不足';
       return null;
     }
     case 'breakAlly': return stance(s, f, o.target) === 'alliance' ? null : '两家并无盟约';
@@ -386,9 +388,10 @@ export function applyOrder(s: GameState, f: string, o: Order) {
     }
     case 'evacuate': applyEvacuate(s, f, o); break;
     case 'gift': {
-      const cap = s.factions[f].capital, tc = s.factions[o.target].capital;
-      bump(s, cap, 'silver', -o.silver, `赠${factionName(s, o.target)}`, src);
-      if (s.cities[tc]?.controller === o.target) bump(s, tc, 'silver', o.silver, `${factionName(s, f)}所赠`, src);
+      const cap = treasuryOf(s, f), tc = treasuryOf(s, o.target);
+      if (!cap) break;
+      const paid = -bump(s, cap, 'silver', -o.silver, `赠${factionName(s, o.target)}`, src);
+      if (tc && paid > 0) bump(s, tc, 'silver', paid, `${factionName(s, f)}所赠`, src);
       s.flags[pactKey('goodwill', f, o.target)] = s.turn + PACT_MONTHS;
       s.flags[`goodwill_amt_${o.target}_${f}`] = o.silver;
       const lead = s.chars[s.factions[o.target].leader];

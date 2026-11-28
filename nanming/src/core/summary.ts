@@ -12,7 +12,7 @@ export interface MonthSummary {
   citiesGained: string[]; citiesLost: string[];
   peopleIn: string[]; peopleOut: string[]; prisoners: string[];
   people: PersonMove[]; cities: { id: string; gained: boolean }[];
-  battlesWon: number; battlesLost: number;
+  battlesWon: number; battlesLost: number; battlesDrawn: number;
 }
 
 const KIND_LABEL: Record<CauseSrc['kind'], string> = { income: '赋税田粮', upkeep: '粮饷开支', order: '政令', policy: '方针', event: '事件', battle: '战事', siege: '围城', remit: '起运', disaster: '灾异', diplomacy: '交涉' };
@@ -50,19 +50,19 @@ export function monthSummary(before: GameState, after: GameState, f = after.play
     if (wasMine && !isMine) { const tag = c.status === 'dead' ? '殁' : c.status === 'captured' ? '被执' : '离去'; peopleOut.push(`${c.name}（${tag}）`); people.push({ id: c.id, tag, good: false }); }
     if (c.status === 'captured' && c.captor === f && (!b || b.status !== 'captured')) { prisoners.push(c.name); people.push({ id: c.id, tag: '俘获', good: true }); }
   }
-  let battlesWon = 0, battlesLost = 0;
+  let battlesWon = 0, battlesLost = 0, battlesDrawn = 0;
   for (const r of after.battles) {
     if (r.turn !== t) continue;
     const side = topOf(after, r.attacker) === me ? 'attacker' : topOf(after, r.defender) === me ? 'defender' : null;
     if (!side) continue;
-    if (r.winner === side) battlesWon++; else battlesLost++;
+    if (r.draw) battlesDrawn++; else if (r.winner === side) battlesWon++; else battlesLost++;
   }
   return {
     silver: d(sum(before, 'silver'), sum(after, 'silver'), why('silver')),
     grain: d(sum(before, 'grain'), sum(after, 'grain'), why('grain')),
     troops: d(troops(before), troops(after)),
     pop: d(sum(before, 'pop'), sum(after, 'pop')),
-    citiesGained, citiesLost, peopleIn, peopleOut, prisoners, battlesWon, battlesLost, people,
+    citiesGained, citiesLost, peopleIn, peopleOut, prisoners, battlesWon, battlesLost, battlesDrawn, people,
     cities: [...[...now].filter(id => !was.has(id)).map(id => ({ id, gained: true })), ...[...was].filter(id => !now.has(id)).map(id => ({ id, gained: false }))],
   };
 }

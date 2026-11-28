@@ -5,7 +5,7 @@ import { nodeName, factionName, charName, friendly, topOf } from './state';
 import { describeOrder } from './orders';
 import { pathDays } from '../data/geography';
 import { paceOf } from './military';
-import { shortDate } from './calendar';
+import { shortDate, TOTAL_TURNS } from './calendar';
 
 export interface TransitItem {
   kind: 'convoy' | 'mission' | 'march' | 'delayed';
@@ -58,4 +58,4 @@ export function transitOf(s: GameState, f = s.player): TransitItem[] {
 }
 
 /** 约到的说法：本月结算时 / 某年某月 */
-export const etaText = (s: GameState, eta: number) => eta <= s.turn ? '本月结算时到' : `约 ${shortDate(eta)} 到`;
+export const etaText = (s: GameState, eta: number) => eta <= s.turn ? '本月结算时到' : eta >= TOTAL_TURNS ? '剧本终了前到不了' : `约 ${shortDate(eta)} 到`;

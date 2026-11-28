@@ -63,11 +63,15 @@ export function ferryOk(s: GameState, f: string, u: NodeId, v: NodeId): boolean 
 /** 行军路线（不含起点）。canSea：水师三成以上可走海路，陆路按两倍半计（尽量不舍舟）。
  * 无水师者只能从本方港口征调民船渡近海（四日以内），按一倍半再加两日计（集船、登船）。过不去返回 null */
 export function armyRoute(s: GameState, f: string, from: NodeId, to: NodeId, canSea: boolean): NodeId[] | null {
+  // 停战一方的城闭门不纳：途经不得，以之为终点也不得（2026-11-28 审查：拆成几段即可逐城穿过）
+  if (relOf(s, f, to) === 'truce') return null;
   return search(from, to,
     (u, v) => { const r = routeBetween(u, v)!; if (r.kind === 'sea' && !canSea) return ferryOk(s, f, u, v) ? r.days * 1.5 + 2 : null; return canSea && r.kind === 'land' ? r.days * 2.5 : r.days; },
     v => { const k = relOf(s, f, v); return k === 'truce' ? null : k === 'war' ? AVOID_HOSTILE : k === 'neutral' ? AVOID_NEUTRAL : 0; });
 }
 
+/** 此城对 f 闭门（停战一方、无借道之约） */
+export const closedTo = (s: GameState, f: string, node: NodeId) => relOf(s, f, node) === 'truce';
 /** 行军路线上的说明：哪些敌城会挡路（到城下即停）、哪些中立之城须借道 */
 export function routeNotes(s: GameState, f: string, path: NodeId[]): { stops: NodeId[]; via: NodeId[] } {
   const mid = path.slice(0, -1);
