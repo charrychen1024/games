@@ -316,7 +316,7 @@ try {
   const lensProbe = await page.evaluate(() => { const lg = document.querySelector('#lens .lens-lg')?.getBoundingClientRect(), pn = document.querySelector('#panel')?.getBoundingClientRect(); return { lens: NM.map.view.lens, overlap: !!(lg && pn && pn.width && lg.right > pn.left && lg.bottom > pn.top) }; });
   check('图层按钮在顶栏：开着城池面板也点得到，图例不压面板', lensProbe.lens === 'war' && !lensProbe.overlap, JSON.stringify(lensProbe));
   await page.click('[data-lens="faction"]').catch(() => {}); await page.keyboard.press('Escape'); await wait(200);
-  check('地图图层：点军情、按 L 换到钱粮并附图例、再按回到势力', lw === 'war' && le === 'econ' && legend >= 4 && (await page.evaluate(() => NM.map.view.lens)) === 'faction', `${lw} ${le} ${legend}`);
+  check('地图图层：点敌我、按 L 换到钱粮并附图例、再按回到势力', lw === 'war' && le === 'econ' && legend >= 4 && (await page.evaluate(() => NM.map.view.lens)) === 'faction', `${lw} ${le} ${legend}`);
   check('每条战报都有配声', !!probe.cardSound, JSON.stringify(probe));
   check('月末军队沿路行进有动画', m1.marched > 0, JSON.stringify(m1));
   await wait(300);

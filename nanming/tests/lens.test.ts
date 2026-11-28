@@ -1,17 +1,17 @@
-/* 地图图层：势力（默认）、军情、钱粮。只测分类逻辑，绘制在 map.ts。 */
+/* 地图图层：势力（默认）、敌我、钱粮。只测分类逻辑，绘制在 map.ts。 */
 import { describe, it, expect } from 'vitest';
 import { createGame } from '../src/data/scenario1644';
 import { relationTone, frontEdge, cityStores, storeTier, LENSES } from '../src/render/lens';
 import { setStance, citiesOf } from '../src/core/state';
 
 describe('图层定义', () => {
-  it('三种图层：势力、军情、钱粮', () => {
+  it('三种图层：势力、敌我、钱粮', () => {
     expect(LENSES.map(l => l.id)).toEqual(['faction', 'war', 'econ']);
-    expect(LENSES.map(l => l.name)).toEqual(['势力', '军情', '钱粮']);
+    expect(LENSES.map(l => l.name)).toEqual(['势力', '敌我', '钱粮']);
   });
 });
 
-describe('军情图层：按与我方的关系着色', () => {
+describe('敌我图层：按与我方的关系着色', () => {
   it('本方、同阵营、交战、停战、中立各有其色调', () => {
     const s = createGame('hongguang', 2);
     expect(relationTone(s, 'hongguang')).toBe('self');

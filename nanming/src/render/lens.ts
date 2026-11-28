@@ -1,5 +1,5 @@
 /* 地图图层：同一张舆图换三种看法，各自突出最要紧的信息。
- * 势力（默认）：各家疆域与城池；军情：敌我关系着色、前线、各城驻军；钱粮：本方各城粮银能撑几月、各军粮台。 */
+ * 势力（默认）：各家疆域与城池；敌我：敌我关系着色、前线、各城驻军；钱粮：本方各城粮银能撑几月、各军粮台。 */
 import type { GameState } from '../core/types';
 import { stance, topOf } from '../core/state';
 import { cityForecast } from '../core/economy';
@@ -7,7 +7,7 @@ import { cityForecast } from '../core/economy';
 export type LensId = 'faction' | 'war' | 'econ';
 export const LENSES: { id: LensId; name: string; icon: string; tip: string }[] = [
   { id: 'faction', name: '势力', icon: 'factions', tip: '各家疆域、城池与军队（L 键切换图层）' },
-  { id: 'war', name: '军情', icon: 'war', tip: '按与我方的关系着色：交战为红、同阵营为蓝、停战为黄；红色锯线为前线；各城标出驻军' },
+  { id: 'war', name: '敌我', icon: 'war', tip: '按与我方的关系着色：交战为红、同阵营为蓝、停战为黄；红色锯线为前线；各城标出驻军' },
   { id: 'econ', name: '钱粮', icon: 'grain', tip: '本方各城的粮、银按本月收支还能撑几个月：绿为一年以上、黄为半年以上、橙为三月以上、红为不足三月；“盈”为本月有结余；金线连到各军粮台' },
 ];
 

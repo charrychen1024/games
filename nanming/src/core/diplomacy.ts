@@ -7,8 +7,10 @@ import { rngFor } from './rng';
 import { capture, defectFaction } from './military';
 import { courtOf } from './regime';
 import { distanceKm, NODE, neighbors } from '../data/geography';
+import { pactKey, pactOn, PACT_MONTHS } from './orders';
+import { armyRoute } from './route';
 
-export type OfferKind = 'truce_ask' | 'alliance_offer' | 'summon' | 'tribute_demand' | 'goodwill';
+export type OfferKind = 'truce_ask' | 'alliance_offer' | 'summon' | 'tribute_demand' | 'goodwill' | 'passage_ask' | 'gift_in';
 export interface Offer {
   kind: OfferKind;
   from: string;
@@ -128,12 +130,40 @@ export function proposalsFor(s: GameState, all = false): Offer[] {
         ] });
       continue;
     }
+    // 借道：邻家要去打它的敌人，路要经过本方之城（或经本方之城近得多），遣使来借，献银为谢
+    if ((st === 'neutral' || st === 'truce') && !pactOn(s, 'pass', F, P) && (all || force || roll < 0.5)) {
+      const foeCity = passageNeed(s, F, P);
+      if (foeCity) {
+        const silver = Math.round(Math.min(capSilver(s, F) * 0.1, 20000) / 1000) * 1000;
+        const odds = clamp(0.4 + (50 - hawk) / 150, 0.2, 0.7);
+        out.push({ kind: 'passage_ask', from: F, silver, city: foeCity, odds, title: `${factionName(s, F)}遣使借道`,
+          text: `${factionName(s, F)}欲攻${nodeName(foeCity)}，路经贵方城池，${leaderName(s, F)}遣使借道一年${silver ? `，献银 ${silver} 两为谢` : ''}。`,
+          options: [
+            { label: `允借${silver ? `，受银 ${silver} 两` : ''}`, desc: '一年之内其军可经本方之城行军运粮（也须防其假道伐虢）。' },
+            { label: '索要重酬', desc: `成算约 ${Math.round(odds * 100)}%：成则得银加倍并借道；不成则使者而去。` },
+            { label: '拒绝', desc: '闭关不纳；对方或绕路，或心生怨望。' },
+          ] });
+        continue;
+      }
+    }
+    // 献礼：弱邻畏我兵威，遣使送银结好
+    if (st !== 'war' && st !== 'alliance' && pS > fS * 2 && hawk < 40 && capSilver(s, F) > 20000 && !pactOn(s, 'goodwill', F, P) && (all || force || roll < 0.3)) {
+      const silver = Math.round(Math.min(capSilver(s, F) * 0.08, 20000) / 1000) * 1000;
+      out.push({ kind: 'gift_in', from: F, silver, title: `${factionName(s, F)}遣使献礼`,
+        text: `${factionName(s, F)}畏贵方兵威，${leaderName(s, F)}遣使献银 ${silver} 两，愿永结和好。`,
+        options: [
+          { label: '受礼，约互不相犯一年', desc: `得银 ${silver} 两；两家停战一年。` },
+          { label: '受礼不许约', desc: `得银 ${silver} 两；不立约（对方心生疑惧，主战 +5）。` },
+          { label: '却礼', desc: '原物退回，维持现状。' },
+        ] });
+      continue;
+    }
     // 通好互市：不交兵、兵力相当或较弱的邻家来约
-    if (st === 'neutral' && fS <= pS * 1.5 && hawk < 50 && (all || force || roll < 0.25)) {
+    if (st === 'neutral' && fS <= pS * 1.5 && hawk < 50 && !pactOn(s, 'trade', F, P) && (all || force || roll < 0.25)) {
       out.push({ kind: 'goodwill', from: F, title: `${factionName(s, F)}来使通好`,
         text: `${leaderName(s, F)}遣使来约通好：两家边境互市，各守疆界，互不相犯。`,
         options: [
-          { label: '通好互市', desc: '两家约两年互不相犯；互市之利，两家治所各得银八千两。' },
+          { label: '通好互市', desc: '互市一年（两家赋税各 +5%），两年互不相犯。' },
           { label: '婉拒', desc: '维持现状。' },
         ] });
       continue;
@@ -153,7 +183,7 @@ export function proposalsFor(s: GameState, all = false): Offer[] {
     }
   }
   if (all) return out;
-  const pri: Record<OfferKind, number> = { summon: 0, tribute_demand: 1, truce_ask: 2, alliance_offer: 3, goodwill: 4 };
+  const pri: Record<OfferKind, number> = { summon: 0, tribute_demand: 1, truce_ask: 2, passage_ask: 3, alliance_offer: 4, gift_in: 5, goodwill: 6 };
   return out.sort((a, b) => pri[a.kind] - pri[b.kind]).slice(0, 1);
 }
 
@@ -217,10 +247,26 @@ export function applyOffer(s: GameState, o: Offer, idx: number): string {
     case 'goodwill':
       if (idx === 0) {
         setStance(s, P, F, 'truce', s.turn + 24);
-        bump(s, cap, 'silver', 8000, `与${factionName(s, F)}互市`, { kind: 'diplomacy', ref: 'goodwill:' + F });
-        bump(s, treasuryOf(s, F), 'silver', 8000, `与${factionName(s, P)}互市`, { kind: 'diplomacy', ref: 'goodwill:' + F });
-        text = `与${factionName(s, F)}通好互市，两年互不相犯，得互市之利银八千两。`;
+        s.flags[pactKey('trade', P, F)] = s.turn + PACT_MONTHS;
+        text = `与${factionName(s, F)}通好互市：一年之内两家赋税各增五分，两年互不相犯。`;
       } else { ok = false; text = `婉拒${factionName(s, F)}通好之约。`; }
+      break;
+    case 'passage_ask':
+      if (idx === 0) {
+        s.flags[pactKey('pass', P, F)] = s.turn + PACT_MONTHS;
+        if (o.silver) transfer(treasuryOf(s, F), cap, o.silver, `向${factionName(s, P)}借道之谢`, `${factionName(s, F)}借道之谢`, 'pass:' + F);
+        text = `允${factionName(s, F)}借道一年${o.silver ? `，受银 ${o.silver} 两` : ''}。`;
+      } else if (idx === 1) {
+        if (rng.next() < (o.odds ?? 0.4)) { s.flags[pactKey('pass', P, F)] = s.turn + PACT_MONTHS; const v = transfer(treasuryOf(s, F), cap, Math.max(10000, (o.silver ?? 5000) * 2), `向${factionName(s, P)}借道之谢`, `${factionName(s, F)}借道之谢`, 'pass:' + F); text = `${factionName(s, F)}加倍酬谢 ${v} 两，借道一年。`; }
+        else { ok = false; adjustAtt(s, s.factions[F].leader, 'hawk', 5, '借道不成'); text = `${leaderName(s, F)}嫌所索过多，使者而去。`; }
+      } else { ok = false; adjustAtt(s, s.factions[F].leader, 'hawk', 5, '借道被拒'); text = `闭关不纳${factionName(s, F)}之军。`; }
+      break;
+    case 'gift_in':
+      if (idx <= 1) {
+        transfer(treasuryOf(s, F), cap, o.silver ?? 0, `向${factionName(s, P)}献礼`, `${factionName(s, F)}献礼`, 'gift:' + F);
+        if (idx === 0) { setStance(s, P, F, 'truce', s.turn + 12); text = `受${factionName(s, F)}献银 ${o.silver} 两，约互不相犯一年。`; }
+        else { adjustAtt(s, s.factions[F].leader, 'hawk', 5, '献礼而不得约'); text = `受${factionName(s, F)}献银 ${o.silver} 两，不许立约。`; }
+      } else { ok = false; text = `却${factionName(s, F)}之礼。`; }
       break;
     case 'alliance_offer':
       if (idx === 0) { setStance(s, P, F, 'alliance'); text = `与${factionName(s, F)}结为盟好。`; }
@@ -315,6 +361,58 @@ export function aiBreakAlliances(s: GameState) {
     if (age >= 12 && !common && A !== me && B !== me && rng.next() < 0.25) {
       setStance(s, A, B, 'neutral'); delete s.flags[key];
       report(s, { cat: '交涉', node: s.factions[A].capital, origin: s.factions[B].capital, text: `【动向】${factionName(s, A)}与${factionName(s, B)}共同之敌已不足为患，盟约名存实亡，各自为谋。` });
+    }
+  }
+}
+
+/** F 要不要向 P 借道：F 的敌城中，最近一座若经 P 之城才去得了、或经 P 之城近得多，返回该城 */
+export function passageNeed(s: GameState, F: string, P: string): string | undefined {
+  const cap = s.factions[F]?.capital;
+  if (!cap || !s.cities[cap]) return undefined;
+  const foes = Object.values(s.cities).filter(c => hostile(s, F, c.controller) && topOf(s, c.controller) !== topOf(s, P));
+  const key = pactKey('pass', F, P);
+  const len = (p: string[] | null) => p ? p.length : 99;
+  let best: { id: string; d: number } | undefined;
+  for (const c of foes.sort((a, b) => distanceKm(NODE[a.id], NODE[cap]) - distanceKm(NODE[b.id], NODE[cap])).slice(0, 4)) {
+    const without = armyRoute(s, F, cap, c.id, false);
+    const old = s.flags[key]; s.flags[key] = s.turn + 1;
+    const withP = armyRoute(s, F, cap, c.id, false);
+    if (old === undefined) delete s.flags[key]; else s.flags[key] = old;
+    if (!withP) continue;
+    const viaP = withP.slice(0, -1).some(n => s.cities[n]?.controller === P);
+    if (viaP && len(without) - len(withP) >= 2 && (!best || len(withP) < best.d)) best = { id: c.id, d: len(withP) };
+  }
+  return best?.id;
+}
+
+/* ---------- 电脑之间：互市、献礼求安（2026-11-28 玩家：增强电脑的自主性） ----------
+ * 互市：未交兵（中立或停战）的邻家、主将不甚好战，月两成机会订互市一年；
+ * 献礼：弱者畏邻家兵威（两倍以上、好战），送银结好，交战中则有三成机会换来半年停战。 */
+export function aiCommerceAndGifts(s: GameState) {
+  const me = s.factions[s.player] ? topOf(s, s.player) : s.player;
+  const heads = Object.keys(s.factions).filter(f => live(s, f) && !s.factions[f].overlord && topOf(s, f) !== me).sort();
+  let n = 0;
+  for (let i = 0; i < heads.length && n < 2; i++) for (let j = i + 1; j < heads.length && n < 2; j++) {
+    const A = heads[i], B = heads[j], key = `aicm_${A}_${B}`;
+    if (!cooled(s, key, 6) || !nearby(s, A, B)) continue;
+    const rng = rngFor(s.seed, 'aicm', s.turn, key);
+    const st = stance(s, A, B), sa = strengthOf(s, A), sb = strengthOf(s, B);
+    if ((st === 'neutral' || st === 'truce') && !pactOn(s, 'trade', A, B) && hawkOf(s, A) < 65 && hawkOf(s, B) < 65 && rng.next() < 0.2) {
+      s.flags[key] = s.turn; n++;
+      s.flags[pactKey('trade', A, B)] = s.turn + PACT_MONTHS;
+      report(s, { cat: '交涉', node: s.factions[A].capital, origin: s.factions[B].capital, text: `【动向】${factionName(s, A)}与${factionName(s, B)}开关互市，商旅往来。` });
+      continue;
+    }
+    const [weak, strong] = sa < sb ? [A, B] : [B, A];
+    if (st !== 'alliance' && Math.max(sa, sb) >= Math.min(sa, sb) * 2 && hawkOf(s, strong) >= 30 && capSilver(s, weak) > 30000 && !pactOn(s, 'goodwill', weak, strong) && rng.next() < 0.2) {
+      s.flags[key] = s.turn; n++;
+      const v = Math.round(Math.min(capSilver(s, weak) * 0.1, 30000) / 1000) * 1000;
+      const paid = -bump(s, treasuryOf(s, weak), 'silver', -v, `向${factionName(s, strong)}献礼`, { kind: 'diplomacy', ref: key });
+      if (paid > 0) bump(s, treasuryOf(s, strong), 'silver', paid, `${factionName(s, weak)}献礼`, { kind: 'diplomacy', ref: key });
+      s.flags[pactKey('goodwill', weak, strong)] = s.turn + PACT_MONTHS;
+      const truce = st === 'war' && rng.next() < 0.3;
+      if (truce) setStance(s, weak, strong, 'truce', s.turn + 6);
+      report(s, { cat: '交涉', node: s.factions[strong].capital, origin: s.factions[weak].capital, text: `【动向】${factionName(s, weak)}畏${factionName(s, strong)}兵威，献银 ${paid} 两${truce ? '，换得半年停战' : '结好'}。` });
     }
   }
 }

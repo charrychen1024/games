@@ -417,7 +417,7 @@ export class MapRenderer {
     if (this.lens === 'econ') return f === s.player ? TIER_COLOR[storeTier(this.stores(s, id).worst)] : null;
     return s.factions[f]?.color ?? '#999';
   }
-  /** 军情图层：我方阵营与交战之敌之间的前线，红色锯线并缓缓明灭 */
+  /** 敌我图层：我方阵营与交战之敌之间的前线，红色锯线并缓缓明灭 */
   drawFront(g: CanvasRenderingContext2D, s: GameState) {
     const z = this.cam.z, pulse = 0.65 + 0.35 * Math.sin(this.lastTime / 380);
     for (const e of this.edges) {
@@ -464,7 +464,7 @@ export class MapRenderer {
       g.beginPath(); g.arc(dx, dy, 5 / z, 0, Math.PI * 2); g.fillStyle = '#f0cf86'; g.fill();
     }
   }
-  /** 城名下的副行：军情图层标各城驻军，钱粮图层标本方粮银月数，近看时标驻军 */
+  /** 城名下的副行：敌我图层标各城驻军，钱粮图层标本方粮银月数，近看时标驻军 */
   subLine(s: GameState, id: string): SubPart[] | null {
     const c = s.cities[id], own = topOfSafe(s, c.controller) === s.player;
     const garrison = (col: string): SubPart[] => [{ t: `驻 ${own || c.controller === s.player ? fmtTroops(c.garrison) : roughT(c.garrison)}`, col }];

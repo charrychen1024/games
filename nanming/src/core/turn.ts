@@ -5,10 +5,10 @@ import type { GameState, Order } from './types';
 import type { BattleState } from './battle';
 import { autoResolve } from './battle';
 import { applyOrder, validateOrder, describeOrder, resolveMissions, orderBudget, orderCost, answerCounter } from './orders';
-import { proposalsFor, applyOffer, aiDiplomacyTalks, aiBreakAlliances } from './diplomacy';
+import { proposalsFor, applyOffer, aiDiplomacyTalks, aiBreakAlliances, aiCommerceAndGifts } from './diplomacy';
 import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects, tidyPeople, unrest } from './military';
 import { runEconomy, arriveConvoys } from './economy';
-import { aiOrders, aiFixSupply, aiPayArmies, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy, aiSorties, aiMusters, aiOpportunism, aiConduct, aiEvacuate, aiIntrigue, aiRegarrison } from './ai';
+import { aiOrders, aiFixSupply, aiPayArmies, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy, aiSorties, aiMusters, aiOpportunism, aiConduct, aiEvacuate, aiDiscord, aiIntrigue, aiRegarrison } from './ai';
 import { dueEvents, fireEvent, choiceFor, applyChoice, type EventDef, type PendingChoice } from './events';
 import { EVENTS } from '../data/events';
 import { pruneLedger, topOf, report, citiesOf, armiesOf, nodeName, factionName } from './state';
@@ -106,6 +106,8 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   }
   aiDiplomacyTalks(s);
   aiBreakAlliances(s);
+  aiCommerceAndGifts(s);
+  aiDiscord(s);
   aiDefections(s);
   aiIntrigue(s);
   // 翻脸宣战放在本月用兵之后：先有急报，下月才动兵，玩家有一个月补防

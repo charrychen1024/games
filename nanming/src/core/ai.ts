@@ -8,7 +8,7 @@ import { defectFaction, disband } from './military';
 import { RECRUIT_SILVER, SILVER_PER_SOLDIER, supplyChoiceError, supplyBlock, GRAIN_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER } from './economy';
 import { rngFor } from './rng';
 import { genLocal } from './people';
-import { applyOrder, validateOrder, persuadeChance } from './orders';
+import { applyOrder, validateOrder, persuadeChance, envoyScore } from './orders';
 import { evacPlan, applyEvacuate } from './evacuate';
 
 /** 各家各军的目标序列（开局几年的史实倾向；依次取第一个尚未到手的） */
@@ -668,5 +668,30 @@ export function aiEvacuate(s: GameState) {
     // 当面之敌是玩家：军情里知会一声
     if (Object.values(s.armies).some(x => topOf(s, x.faction) === s.player && near(x)))
       report(s, { cat: '军报', urgent: true, node: c.id, text: `${f.name}自度${nodeName(c.id)}难守，${sieged ? '突围' : '弃城'}而走，兵马钱粮退往${nodeName(dest.x.id)}${scorch ? '；临行焚仓拆城，只留一座空城' : people ? '，百姓多随之而去' : ''}。` });
+  }
+}
+
+/** 电脑离间玩家：与玩家为敌之家，见玩家有盟友或下属，遣多谋之士行离间（一阵营八个月至多一回，把握 45 以上才遣）；
+ * 六成能被谍报探到。 */
+export function aiDiscord(s: GameState) {
+  const P = s.player, pTop = topOf(s, P);
+  if (!s.factions[P] || s.factions[P].defunct) return;
+  const heads = Object.keys(s.factions).filter(f => !passive(s, f) && !s.factions[f].overlord).sort();
+  const pick = (f: string) => Object.values(s.chars).filter(ch => ch.faction === f && ch.status === 'active' && ch.ab.mou >= 60 && ch.id !== s.factions[f].leader && !Object.values(s.armies).some(a => a.commander === ch.id) && !s.missions.some(m => (m.order as { char?: string }).char === ch.id)).sort((x, y) => y.ab.mou - x.ab.mou)[0];
+  for (const f of heads) {
+    if (topOf(s, f) === pTop || !cooledFlag(s, 'discord_' + f, 8)) continue;
+    // 先看玩家：有盟友或下属，且两家为敌
+    const target = hostile(s, f, P) && (Object.keys(s.factions).some(x => x !== P && x !== f && !s.factions[x].defunct && stance(s, P, x) === 'alliance') || Object.values(s.factions).some(x => x.overlord === P && !x.defunct)) ? P : undefined;
+    if (!target) continue;
+    const env = pick(f);
+    if (!env) continue;
+    const o = { id: `ai-disc-${f}-${s.turn}`, kind: 'envoy' as const, char: env.id, target, aim: 'discord' as const };
+    if (validateOrder(s, f, o) || envoyScore(s, f, o).score < 45) continue;
+    if (!rngFor(s.seed, 'aidisc', s.turn, f).chance(0.35)) continue;
+    s.flags['discord_' + f] = s.turn;
+    applyOrder(s, f, o);
+    if (rngFor(s.seed, 'intel2', s.turn, f).chance(0.6)) report(s, { cat: '急报', urgent: true, node: s.factions[P].capital, origin: s.factions[f].capital,
+      text: `【谍报】探得${s.factions[f].name}遣${env.name}潜入我方，欲行离间之计，挑拨我与盟友、下属。可厚赏下属、遣使固盟以防。`, src: { kind: 'diplomacy', ref: o.id } });
+    return;   // 每月至多一起
   }
 }

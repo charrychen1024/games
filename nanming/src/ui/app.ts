@@ -717,7 +717,7 @@ export class App {
   /* ================= 顶栏 ================= */
   renderAll() { this.renderTop(); this.renderOrders(); this.refreshPanel(); this.updatePlanned(); this.renderArmyBar(); this.renderLens(); }
 
-  /** 地图图层：顶栏里三枚分段按钮，位置固定、不随右侧弹窗移动；军情、钱粮两层在按钮下方垂一条图例横签（向左展开，不压右侧弹窗）；L 键轮换 */
+  /** 地图图层：顶栏里三枚分段按钮，位置固定、不随右侧弹窗移动；敌我、钱粮两层在按钮下方垂一条图例横签（向左展开，不压右侧弹窗）；L 键轮换 */
   private lensBox?: HTMLElement;
   get lensEl() { return this.lensBox ??= $('#lens'); }
   lens: LensId = (() => { try { const v = localStorage.getItem('nanming:lens'); return v === 'war' || v === 'econ' ? v : 'faction'; } catch { return 'faction'; } })();

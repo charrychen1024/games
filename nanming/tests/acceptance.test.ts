@@ -137,6 +137,7 @@ describe('验收五：结盟后双方仍保有控制权', () => {
     setStance(s, 'qing', 'hongguang', 'war');
     setStance(s, 'shun', 'hongguang', 'neutral');
     s.chars.lizicheng.att.hawk = -60;
+    for (const f of Object.keys(s.factions)) s.flags['discord_' + f] = 9999;   // 本条只验控制权，不让别家离间来搅
     const sc = envoyScore(s, 'hongguang', { id: 'e', kind: 'envoy', char: 'zuomaodi', target: 'shun', aim: 'alliance' });
     expect(sc.score).toBeGreaterThanOrEqual(65);
     s = runMonthAuto(s, [{ id: 'e1', kind: 'envoy', char: 'zuomaodi', target: 'shun', aim: 'alliance' }]);
