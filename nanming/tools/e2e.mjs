@@ -83,7 +83,7 @@ async function nextMonth(manualBattle = false, probe = null) {
       await page.click('#fall', { timeout: 1000 }).catch(() => {}); await wait(500); continue;
     }
     if (await visible('#summary-ok')) {
-      if (!summary) summary = { tiles: await page.locator('#month-summary .ms-tile').count(), text: await text('#modal') };
+      if (!summary) summary = { tiles: await page.locator('#month-summary .res .gcard').count(), text: await text('#modal'), tips: await page.evaluate(() => [...document.querySelectorAll('#month-summary .gc-chip')].map(e => e.dataset.tip).join(',')) };
       await page.click('#summary-ok', { timeout: 1000 }).catch(() => {}); await wait(200); continue;
     }
     // 结算、翻月动画、要闻都过去之后才算这个月结束
@@ -270,7 +270,7 @@ try {
   const probe = {};
   const m1 = await nextMonth(false, probe);
   check('第一个月结算后日期前进', m1.after !== m1.before, `${m1.before} → ${m1.after}`);
-  check('结算之后弹出“本月得失”：钱粮兵民四项与来由', m1.summary && m1.summary.tiles === 4 && /府库/.test(m1.summary.text) && /赋税田粮|粮饷/.test(m1.summary.text), JSON.stringify(m1.summary)?.slice(0, 200));
+  check('结算之后弹出“本月得失”游戏卡：钱粮兵民四张，来由为小图示（悬停见名）', m1.summary && m1.summary.tiles === 4 && /府库/.test(m1.summary.text) && /赋税田粮|粮饷/.test(m1.summary.tips), JSON.stringify(m1.summary)?.slice(0, 200));
   check('第一个月有史事抉择（高杰争扬州）', m1.choices >= 1);
   check('强制决断：按 Esc 不关闭', probe.esc === true, JSON.stringify(probe));
   check('强制决断：Tab 焦点留在弹窗内', probe.focusIn === true, JSON.stringify(probe));

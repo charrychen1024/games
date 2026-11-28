@@ -26,6 +26,7 @@ import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName,
 import { transitOf, etaText, type TransitItem } from '../core/transit';
 import { evacPlan } from '../core/evacuate';
 import { monthSummary, type Delta } from '../core/summary';
+import { cardShow, type ShowCard } from './cards';
 import { popTip, devTip, devStep, reached, MILESTONE_NAME, policyOutlook, advisePolicy, recruitSilverOf, type DevKey } from '../core/develop';
 import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, supplyLegOf, RECRUIT_SILVER, DISBAND_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
 import { projectOrders, validateQueued, cascadeInvalid, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
@@ -1401,39 +1402,40 @@ export class App {
     done?.();
   }
 
-  /** 本月得失：钱粮兵民总数从上月滚到本月，旁列主要来由；城池、人物、俘获、战事得失。看完才开始新的一月 */
+  /** 本月得失：一排资源卡（卡面大字是增减，下附来由小图示）、人物头像卡（落印：来投、殁、被执、俘获）、城池卡（得、失）、战事卡。看完才开始新的一月 */
   showSummary(before: GameState, after: GameState): Promise<void> {
     const sm = monthSummary(before, after);
     const fast = isReduced();
-    const tile = (icon: string, label: string, d: Delta, unit: string, fmtv: (n: number) => string, id: string) => {
+    const WHY_IC: Record<string, string> = { income: 'commerce', upkeep: 'troops', order: 'appoint', policy: 'policy', event: 'event', battle: 'war', siege: 'siege', disaster: 'urgent', diplomacy: 'envoy', market: 'grain', spoil: 'urgent', remit: 'transfer' };
+    const sign = (n: number, f: (x: number) => string) => n > 0 ? `+${f(n)}` : n < 0 ? `−${f(-n)}` : '持平';
+    const res = (id: string, icon: string, title: string, color: string, d: Delta, f: (x: number) => string, unit: string): ShowCard => {
       const diff = d.after - d.before;
-      const num = h('b', { class: 'ms-num' }, fmtv(fast ? d.after : d.before));
-      const tag = h('span', { class: 'ms-d ' + (diff > 0 ? 'up' : diff < 0 ? 'down' : '') }, diff ? `${diff > 0 ? '+' : '−'}${fmtv(Math.abs(diff))}` : '持平');
-      if (!fast && diff) { const o = { v: d.before }; gsap.to(o, { v: d.after, duration: 1.4, delay: 0.35, ease: 'power2.out', onUpdate: () => { num.textContent = fmtv(o.v); } }); }
-      const why = [...d.up.map(x => h('span', { class: 'ms-why up' }, `${x.label} +${fmtv(x.v)}`)), ...d.down.map(x => h('span', { class: 'ms-why down' }, `${x.label} −${fmtv(-x.v)}`))];
-      return h('div', { class: 'ms-tile', id }, h('div', { class: 'ms-h' }, ic(icon), h('small', null, label)), h('div', { class: 'ms-v' }, num, h('small', null, unit), tag), why.length ? h('div', { class: 'ms-whys' }, ...why) : null);
+      return { id, title, art: cardArt(icon, color, id.length), color, big: sign(diff, f), bigTone: diff > 0 ? 'up' : diff < 0 ? 'down' : '', sub: `${f(d.after)} ${unit}`,
+        chips: [...d.up, ...d.down].map(w => ({ icon: WHY_IC[w.kind] ?? 'info', text: sign(w.v, f), tone: w.v > 0 ? 'good' : 'bad', tip: w.label })) as Chip[] };
     };
-    const list = (icon: string, label: string, good: string[], bad: string[], goodLabel: string, badLabel: string) => (good.length || bad.length)
-      ? h('div', { class: 'ms-row' }, ic(icon), h('small', null, label),
-        good.length ? h('span', { class: 'ms-why up' }, `${goodLabel} ${good.join('、')}`) : null,
-        bad.length ? h('span', { class: 'ms-why down' }, `${badLabel} ${bad.join('、')}`) : null) : null;
-    const rows = [
-      list('city', '城池', sm.citiesGained, sm.citiesLost, '得', '失'),
-      list('chars', '人物', sm.peopleIn, sm.peopleOut, '来投', '失去'),
-      sm.prisoners.length ? list('prisoner', '俘获', sm.prisoners, [], '执', '') : null,
-      sm.battlesWon || sm.battlesLost ? h('div', { class: 'ms-row' }, ic('war'), h('small', null, '战事'), sm.battlesWon ? h('span', { class: 'ms-why up' }, `胜 ${sm.battlesWon} 阵`) : null, sm.battlesLost ? h('span', { class: 'ms-why down' }, `负 ${sm.battlesLost} 阵`) : null) : null,
-    ].filter(Boolean) as HTMLElement[];
-    return new Promise(res => {
-      this.modal('calendar', '本月得失', `${shortDate(before.turn)} · 结算已毕`, [
-        h('div', { class: 'ms-grid', id: 'month-summary' },
-          tile('silver', '府库', sm.silver, '两', wan, 'ms-silver'), tile('grain', '仓粮', sm.grain, '石', wan, 'ms-grain'),
-          tile('troops', '兵力', sm.troops, '人', wan, 'ms-troops'), tile('pop', '户口', sm.pop, '万口', n => (Math.round(n * 10) / 10).toString(), 'ms-pop')),
-        rows.length ? h('div', { class: 'ms-rows' }, ...rows) : h('div', { class: 'note' }, '本月城池、人物无得失，未有战事。')],
+    const pop = (n: number) => String(Math.round(n * 10) / 10);
+    const resCards = [res('ms-silver', 'silver', '府库', '#b0702a', sm.silver, wan, '两'), res('ms-grain', 'grain', '仓粮', '#5f8a3a', sm.grain, wan, '石'),
+      res('ms-troops', 'troops', '兵力', '#7d1a12', sm.troops, wan, '人'), res('ms-pop', 'pop', '户口', '#3f6f8f', sm.pop, pop, '万口')];
+    const people: ShowCard[] = sm.people.map(p => { const c = after.chars[p.id], fc = after.factions[c.faction]; return { id: 'p-' + p.id, title: c.name, sub: fc?.short ?? '', art: portrait(c, fc?.color ?? '#6a5a48', fc?.polity ?? 'none'), portrait: true, color: fc?.color, tip: `${c.name} · ${p.tag}`, stamp: ({ 来投: '投', 殁: '殁', 被执: '执', 离去: '去', 俘获: '俘' } as const)[p.tag], stampTone: p.good ? 'good' : 'bad' }; });
+    const cities: ShowCard[] = sm.cities.map(x => { const fc = after.factions[after.cities[x.id].controller]; return { id: 'c-' + x.id, title: nodeName(x.id), sub: fc?.short ?? '', art: cardArt('city', fc?.color ?? '#8c6a35', x.id.length), color: fc?.color, stamp: x.gained ? '得' : '失', stampTone: x.gained ? 'good' : 'bad' }; });
+    const war: ShowCard[] = sm.battlesWon || sm.battlesLost ? [{ id: 'ms-war', title: '战事', art: cardArt('war', '#7d1a12', 3), color: '#7d1a12', big: `${sm.battlesWon}胜 ${sm.battlesLost}负`, bigTone: sm.battlesWon >= sm.battlesLost ? 'up' : 'down' }] : [];
+    const band = (icon: string, label: string, el: HTMLElement) => h('div', { class: 'ms-band' }, h('div', { class: 'ms-tag' }, ic(icon), label), el);
+    return new Promise(res2 => {
+      this.modal('calendar', '本月得失', shortDate(before.turn), [
+        h('div', { class: 'ms-wrap', id: 'month-summary' },
+          band('silver', '钱粮', cardShow(resCards, 'res')),
+          people.length ? band('chars', '人物', cardShow(people, 'ppl')) : null,
+          cities.length || war.length ? band('city', '城池', cardShow([...cities, ...war], 'cty')) : null)],
         [{ label: '开始新的一月', icon: 'next', primary: true, id: 'summary-ok', onclick: () => {} }], 'wide');
-      this.modalDone = () => res();
-      if (!fast) gsap.from('#month-summary .ms-tile, #modal .ms-row', { opacity: 0, y: 14, duration: 0.35, stagger: 0.08, ease: 'back.out(1.6)' });
+      this.modalDone = () => res2();
+      if (!fast) {
+        gsap.from('#month-summary .gcard', { y: 60, rotateY: 90, opacity: 0, duration: 0.45, stagger: 0.07, ease: 'back.out(1.5)', clearProps: 'transform,opacity' });
+        gsap.from('#month-summary .gc-stamp', { scale: 3, opacity: 0, rotate: -30, duration: 0.3, stagger: 0.08, delay: 0.6, ease: 'back.out(2)', onStart: () => stampSfx() });
+        gsap.from('#month-summary .gc-big', { scale: 1.8, opacity: 0, duration: 0.35, stagger: 0.07, delay: 0.35, ease: 'back.out(2)' });
+      }
     });
   }
+
   cancelBtn() { return { label: '取消', icon: 'close', onclick: () => {} }; }
 
   gauge(score: number, factors: string[], label: string, marks = ['抗命', '打折扣', '拖延', '照办']): HTMLElement {
