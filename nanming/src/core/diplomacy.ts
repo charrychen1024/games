@@ -47,6 +47,8 @@ export function nearby(s: GameState, a: string, b: string, hops = 2): boolean {
   for (let k = 0; k < hops; k++) { const next: string[] = []; for (const n of frontier) for (const { to } of neighbors(n)) if (!near.has(to)) { near.add(to); next.push(to); } frontier = next; }
   return Object.values(s.cities).some(c => c.controller === a && near.has(c.id)) || Object.values(s.armies).some(x => x.faction === a && near.has(x.location));
 }
+/** 一个阵营（宗主连同下属）是否挨着另一家 */
+const nearBloc = (s: GameState, head: string, b: string) => Object.keys(s.factions).some(f => live(s, f) && topOf(s, f) === head && nearby(s, f, b));
 /** 一个阵营（宗主及其下属）的兵力 */
 export function blocStrength(s: GameState, head: string): number {
   return Object.keys(s.factions).filter(f => live(s, f) && topOf(s, f) === head).reduce((n, f) => n + strengthOf(s, f), 0);
@@ -241,6 +243,17 @@ export function aiDiplomacyTalks(s: GameState) {
     if (!cooled(s, key, 8)) continue;
     const sa = strengthOf(s, A), sb = strengthOf(s, B);
     const rng = rngFor(s.seed, 'aidip', s.turn, key);
+    // 共御玩家：两家虽在交战，却都与玩家为敌、都挨着玩家，而玩家一方兵力已不在两家之下，便暂息干戈（2026-11-27）
+    const pB = blocStrength(s, me);
+    if (hostile(s, A, B) && live(s, me) && hostile(s, A, me) && hostile(s, B, me) && nearBloc(s, A, me) && nearBloc(s, B, me) && pB >= Math.max(sa, sb) * 0.8 && (force || rng.next() < 0.35)) {
+      s.flags[key] = s.turn; talks++;
+      const ok = rng.next() < clamp(0.45 + (pB / Math.max(1, Math.max(sa, sb)) - 1) * 0.3, 0.3, 0.8);
+      if (ok) setStance(s, A, B, 'truce', s.turn + 12);
+      report(s, { cat: '交涉', ok, urgent: ok, node: s.factions[A].capital, origin: s.factions[B].capital,
+        text: ok ? `${factionName(s, A)}与${factionName(s, B)}见${factionName(s, me)}势大，暂息干戈，约停战一年，各自掉头共御${factionName(s, me)}。`
+          : `【动向】${factionName(s, A)}遣使赴${factionName(s, B)}，欲暂息干戈、共御${factionName(s, me)}，未成。` });
+      continue;
+    }
     if (hostile(s, A, B)) {
       // 弱者求和；强者主将越不好战越肯允
       const [weak, strong] = sa < sb ? [A, B] : [B, A];

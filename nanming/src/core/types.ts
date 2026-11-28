@@ -169,6 +169,8 @@ export interface Army {
   /** 积欠饷银（两）与连续欠饷月数：短期挪用无大碍，久欠则军心低落、士卒逃散，补发可挽回 */
   arrears?: number;
   unpaid?: number;
+  /** 守城出击之兵：战罢回城并入驻军 */
+  sortie?: boolean;
 }
 export interface Siege {
   node: NodeId;

@@ -6,6 +6,7 @@
  * 纯逻辑：同一战局、同一组命令，结果完全相同（随机数只来自种子）。 */
 import type { BattleState, BattleSide } from './battle';
 import { makeRng, type Rng } from './rng';
+import { tongPower, tongPoise } from './field';
 
 export const SEGMENTS = 5;
 export const GATE_SEG = Math.floor(SEGMENTS / 2);
@@ -37,10 +38,14 @@ export interface SUnit {
   hit: number;
   /** 正在交战（不回士气） */
   engaged: boolean;
+  /** 临阵镇定（主将统军高则受创时士气掉得慢） */
+  poise?: number;
+  /** 临阵运势（全军将运乘各营状态，约 0.8—1.2）：同样兵力的攻城不再开战即定 */
+  luck?: number;
   /** 出击计时 */
   timer?: number;
 }
-export interface SEvent { t: number; kind: 'start' | 'gate' | 'breach' | 'scale' | 'enter' | 'rout' | 'shaky' | 'waver' | 'supply' | 'drum' | 'retreat' | 'end'; side?: 'att' | 'def'; seg?: number; unit?: string; text: string }
+export interface SEvent { t: number; kind: 'start' | 'gate' | 'breach' | 'scale' | 'enter' | 'rout' | 'shaky' | 'waver' | 'supply' | 'drum' | 'retreat' | 'end' | 'sortie'; side?: 'att' | 'def'; seg?: number; unit?: string; text: string }
 export interface SCommand { unit: string | 'all'; side: 'att' | 'def'; order: SOrder }
 export interface SiegeSim {
   t: number; seed: number;
@@ -112,6 +117,10 @@ export function createSiege(b: BattleState): SiegeSim {
     def: { name: b.def.name, commanderName: b.def.commanderName, tong: b.def.tong, mix: b.def.mix, wai: b.def.wai, surrender: b.def.surrender, start: totD, morale0: mD },
     weather: b.weather, flags: { work: clamp(Math.sqrt(10000 / Math.max(1, totD)), 0.8, 3) }, drum: { att: 0, def: 0, cdAtt: 0, cdDef: 0 },
   };
+  const lr = makeRng(b.seed ^ 0x3c11);
+  const fortune = { att: 0.85 + lr.next() * 0.3, def: 0.85 + lr.next() * 0.3 };
+  for (const u of units) { u.poise = tongPoise(b[u.side].tong); u.luck = fortune[u.side] * (0.94 + lr.next() * 0.12); }
+  (sim.def as { mou?: number }).mou = b.def.mou; (sim.att as { mou?: number }).mou = b.att.mou;
   // 上一战（同一场围城）留下的缺口与残墙
   sim.segs.forEach((s, i) => { s.hp = b.segs && b.segs.length === SEGMENTS ? clamp(b.segs[i], 0, s.max) : wall; });
   ev(sim, 'start', `${b.att.name}兵临${b.nodeName}城下。`);
@@ -287,12 +296,12 @@ export const segName = (s: number) => (s === GATE_SEG ? '城门' : s < GATE_SEG 
 function power(sim: SiegeSim, u: SUnit) {
   const side = sim[u.side];
   const drum = sim.drum[u.side] > 0 ? 1.12 : 1;
-  return (0.5 + u.morale / 200) * (0.55 + 0.45 * u.stamina / 100) * (0.85 + side.tong / 400) * drum;
+  return (0.5 + u.morale / 200) * (0.55 + 0.45 * u.stamina / 100) * tongPower(side.tong) * drum * (u.luck ?? 1);
 }
 function hurt(u: SUnit, dmg: number) {
   if (dmg <= 0 || u.troops < 1) return;
   const n = Math.min(u.troops, dmg);
-  u.morale -= n / Math.max(1, u.troops) * 115;
+  u.morale -= n / Math.max(1, u.troops) * 115 * (u.poise ?? 1);
   u.troops -= n;
   u.hit += n;
   u.engaged = true;
@@ -550,6 +559,16 @@ export function aiCommands(sim: SiegeSim, side: 'att' | 'def', opts: { eager?: b
       }
     }
     void worst;
+    // 开门突击：敌兵挤在门前撞门，城内预备尚厚，守将有胆略（统六十或谋五十五以上）就开门冲杀一阵，冲散撞门之兵（一战一次）
+    const dm = (sim.def as { mou?: number }).mou ?? 50;
+    const rammers = att.filter(a => a.state === 'ram').reduce((n, a) => n + a.troops, 0);
+    // 出城的是城内预备，预备已上城则由城门一段的守军出击
+    const res = [...reserve, ...mine.filter(u => u.state === 'wall' && u.seg === GATE_SEG)].sort((x, y) => y.troops - x.troops)[0];
+    if (!sim.flags.sortieAi && !attIn.length && sim.gate.hp > 0 && rammers > 0 && res && res.troops >= 1500 && res.troops * (1 + (dm - 50) / 100) >= rammers * 0.6 && (sim.def.tong >= 60 || dm >= 55)) {
+      sim.flags.sortieAi = 1;
+      set(res, { t: 'sortie' });
+      ev(sim, 'sortie', `${sim.def.commanderName}开门突击，冲杀撞门之兵！`, { side: 'def', unit: res.id });
+    }
     // 守方：敌已攀城、撞门或入城而军心见低，擂鼓激励
     if (sim.resolve.def < 55 && att.some(a => a.state === 'climb' || a.state === 'ram' || a.state === 'inside')) drum(sim, 'def');
     for (const u of mine) {

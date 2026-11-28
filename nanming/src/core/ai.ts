@@ -7,6 +7,8 @@ import { maxRecruit } from './orders';
 import { defectFaction, disband } from './military';
 import { RECRUIT_SILVER, supplyChoiceError, supplyBlock, GRAIN_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER } from './economy';
 import { rngFor } from './rng';
+import { genLocal } from './people';
+import { applyOrder, validateOrder, persuadeChance } from './orders';
 
 /** 各家各军的目标序列（开局几年的史实倾向；依次取第一个尚未到手的） */
 function doctrineTargets(s: GameState, a: Army): string[] {
@@ -101,6 +103,7 @@ export function aiOrders(s: GameState, f: string): Order[] {
 
   for (const a of armiesOf(s, f).sort((x, y) => x.id.localeCompare(y.id))) {
     if (a.progress > 0) continue; // 在路上，继续走
+    if (a.sortie) continue;       // 出城之兵：只与围城之军一战，战罢回城
     const power = armyPower(a, s);
     const sea = canSea(a);
     // 已在围城：继续
@@ -147,15 +150,6 @@ export function aiOrders(s: GameState, f: string): Order[] {
     if (a.order.kind === 'move' && a.path.length) continue;
     if (underPlayer) continue;
     const { dist } = distancesFrom(a.location, sea);
-    // 补员：在本方城中抽驻军补足；兵少则先回大城休整
-    if (here && here.controller === f && a.troops < 24000 && here.garrison > 6000 && !s.sieges[here.id]) {
-      const take = Math.min(here.garrison - 4000, 30000 - a.troops);
-      if (take >= 1000) { orders.push({ id: id(), kind: 'reinforce', node: here.id, army: a.id, troops: -take }); continue; }
-    }
-    if (a.troops < 6000) {
-      const depot = citiesOf(s, f).filter(c => c.garrison > 12000 && dist[c.id] !== undefined && c.id !== a.location).sort((x, y) => dist[x.id] - dist[y.id])[0];
-      if (depot) { orders.push({ id: id(), kind: 'army', army: a.id, order: { kind: 'move', target: depot.id, attack: false } }); continue; }
-    }
     // 救援：本方受威胁的城（近者优先）；敌弱则就地出击
     const help = danger.find(d => !claimed.has(d.node) && dist[d.node] !== undefined && dist[d.node] <= 20 && (d.node === capNode || dist[d.node] <= 12));
     if (help && help.at && help.at !== a.location && power > help.foe * 1.5 && dist[help.at] !== undefined && dist[help.at] <= 12) {
@@ -169,6 +163,27 @@ export function aiOrders(s: GameState, f: string): Order[] {
       continue;
     }
     if (help && help.node === a.location && power < help.foe * 1.5) { claimed.add(help.node); continue; }
+    // 乘虚：近处（十五日内）有空虚的敌城（守城之力不及我四成、城下无敌军），先取之，不论平日用兵偏重（清军南下之前不越界）
+    if (a.troops >= 3000 && !(here && s.sieges[here.id])) {
+      const soft = Object.keys(dist).filter(t => dist[t] > 0 && dist[t] <= 15 && !claimed.has(t)).map(t => s.cities[t])
+        .filter(c => c && hostile(s, f, c.controller) && c.controller !== 'helan' && (areaWeight(s, f, NODE[c.id].area) > 0 || topOf(s, c.controller) === topOf(s, s.player))
+          && holdStrength(s, c.id) < power * 0.4 && !Object.values(s.armies).some(x => x.location === c.id && hostile(s, f, x.faction) && x.troops >= 1000))
+        .sort((x, y) => cityValue(s, y.id) / (dist[y.id] + 5) - cityValue(s, x.id) / (dist[x.id] + 5))[0];
+      if (soft) {
+        claimed.add(soft.id);
+        if (!(a.order.kind === 'move' && a.order.target === soft.id && a.path.length)) orders.push({ id: id(), kind: 'army', army: a.id, order: { kind: 'move', target: soft.id, attack: true } });
+        continue;
+      }
+    }
+    // 补员：在本方城中抽驻军补足；兵少则先回大城休整
+    if (here && here.controller === f && a.troops < 24000 && here.garrison > 6000 && !s.sieges[here.id]) {
+      const take = Math.min(here.garrison - 4000, 30000 - a.troops);
+      if (take >= 1000) { orders.push({ id: id(), kind: 'reinforce', node: here.id, army: a.id, troops: -take }); continue; }
+    }
+    if (a.troops < 6000) {
+      const depot = citiesOf(s, f).filter(c => c.garrison > 12000 && dist[c.id] !== undefined && c.id !== a.location).sort((x, y) => dist[x.id] - dist[y.id])[0];
+      if (depot) { orders.push({ id: id(), kind: 'army', army: a.id, order: { kind: 'move', target: depot.id, attack: false } }); continue; }
+    }
     // 战略倾向（史实开局）
     const targets = doctrineTargets(s, a).filter(t => canTake(s, a, t));
     if (targets.length) {
@@ -360,5 +375,214 @@ export function aiDiplomacy(s: GameState) {
     if (!touching || f.overlord) continue;
     setStance(s, 'qing', f.id, 'war');
     report(s, { cat: '军报', urgent: f.id === s.player, text: `清廷视${f.name}为敌，两家交兵。`, node: f.capital });
+  }
+}
+
+
+/* ================= 主动出手（2026-11-27）：守城出击、会集出征、乘虚翻脸、暗中劝降 ================= */
+
+/** 不由电脑自主行事的势力：玩家、玩家的下属、地方豪强、荷兰 */
+const passive = (s: GameState, f: string) => !s.factions[f] || s.factions[f].defunct || f === s.player || s.factions[f].overlord === s.player || f === 'local' || f === 'helan';
+
+/** 统兵之人：本方闲着的武将（统军四十以上、不在出使）优先；没有就由本城主官领兵；再没有就从本地拔一位营将 */
+function pickLeader(s: GameState, f: string, node: string, allowGovernor: boolean): string {
+  const leading = new Set(Object.values(s.armies).map(a => a.commander));
+  const govs = new Set(Object.values(s.cities).map(c => c.governor));
+  const busy = (id: string) => leading.has(id) || s.missions.some(m => (m.order as { char?: string }).char === id);
+  const free = Object.values(s.chars).filter(c => c.faction === f && c.status === 'active' && !c.royal && c.id !== s.factions[f].leader && !busy(c.id) && !govs.has(c.id) && c.ab.tong >= 40)
+    .sort((x, y) => (x.location === node ? 0 : 1) - (y.location === node ? 0 : 1) || y.ab.tong - x.ab.tong)[0];
+  if (free) return free.id;
+  const gov = s.cities[node]?.governor;
+  if (allowGovernor && gov && s.chars[gov]?.status === 'active' && !busy(gov)) return gov;
+  const rng = rngFor(s.seed, 'leader', s.turn, node);
+  const ch = genLocal(s, f, node, rng, s.cities[node]?.edu ?? 50);
+  ch.title = '守备'; ch.ab.tong = Math.max(ch.ab.tong, 42 + Math.floor(rng.next() * 16)); ch.bio = `${nodeName(node)}营将，以守土有功擢守备，统兵出战。`;
+  s.chars[ch.id] = ch;
+  return ch.id;
+}
+function newArmy(s: GameState, f: string, node: string, cmd: string, troops: number, name: string): Army {
+  const id = `a_${f}_${s.nextId++}`;
+  const mix = f === 'qing' ? { inf: 0.45, cav: 0.4, gun: 0.15, navy: 0 } : { inf: 0.7, cav: 0.18, gun: 0.12, navy: 0 };
+  const a: Army = { id, name, faction: f, commander: cmd, troops, mix, morale: 62, location: node, path: [], progress: 0, order: { kind: 'hold' }, supply: node, hunger: 0 };
+  s.armies[id] = a;
+  if (s.chars[cmd]) s.chars[cmd].location = node;
+  return a;
+}
+/** 本城至少要留的守兵：人口越多留得越多；邻近有敌军则再按敌势加留 */
+function keepOf(s: GameState, f: string, node: string): number {
+  const c = s.cities[node];
+  const foe = Object.values(s.armies).filter(a => hostile(s, a.faction, f) && (a.location === node || neighbors(node).some(nb => nb.to === a.location))).reduce((n, a) => n + armyPower(a, s), 0);
+  return Math.max(1500 + c.pop * 50, Math.min(c.garrison, foe / (1 + c.wall / 60)));
+}
+
+/** 守城出击：被围之城的守军（减去留守）比围城之军强，守将开门出城，与围城之军野战（下一步行军时两军相遇即战）。
+ *  出城之兵记作“出城”，战罢回城（aiRegarrison） */
+export function aiSorties(s: GameState) {
+  for (const [node, sg] of Object.entries(s.sieges).sort(([a], [b]) => a.localeCompare(b))) {
+    const c = s.cities[node];
+    if (!c || passive(s, c.controller)) continue;
+    const f = c.controller;
+    if (Object.values(s.armies).some(a => a.location === node && a.faction === f && a.progress === 0)) continue;   // 城中有野战军，自会与围城之军交战
+    const besiegers = sg.armies.map(id => s.armies[id]).filter(a => a && a.location === node && a.progress === 0 && hostile(s, a.faction, f));
+    if (!besiegers.length) continue;
+    const bp = besiegers.reduce((n, a) => n + armyPower(a, s), 0);
+    const spare = c.garrison - Math.max(1000, Math.round(c.garrison * 0.2));
+    const gov = c.governor ? s.chars[c.governor] : undefined;
+    const tong = gov?.ab.tong ?? 45;
+    // 出城之兵（士气按民心折算）须与围城之军相当；守将越能战越敢出（统七十者九成即出，统四十者须一倍二）
+    const mine = spare * (0.5 + Math.min(80, c.minxin + 10) / 200) * (0.8 + tong / 250);
+    const need = bp * (1.35 - tong / 200);
+    if (spare < 2000 || mine < need) continue;
+    // 优势越大越肯出城（相当时约四成，强出一半以上几乎必出）
+    if (!rngFor(s.seed, 'sortie', s.turn, node).chance(Math.min(0.95, 0.4 + (mine / need - 1)))) continue;
+    const cmd = pickLeader(s, f, node, true);
+    const a = newArmy(s, f, node, cmd, spare, `${nodeName(node)}出城兵`);
+    a.morale = Math.round(Math.max(45, Math.min(80, c.minxin + 15)));
+    a.sortie = true;
+    c.garrison -= spare;
+    s.ledger.push({ turn: s.turn, node, field: 'garrison', delta: -spare, text: `守军出城迎战`, src: { kind: 'order', ref: a.id } });
+    const vsPlayer = besiegers.some(b => topOf(s, b.faction) === topOf(s, s.player));
+    report(s, { cat: vsPlayer ? '急报' : '军报', urgent: vsPlayer, node, act: 'march', from: f,
+      text: `${nodeName(node)}守将${charName0(s, cmd)}开门出城，率 ${Math.round(spare / 100) * 100} 人冲击${besiegers.map(b => b.name).join('、')}的围城营垒！`,
+      faction: vsPlayer ? undefined : f, src: { kind: 'order', ref: a.id } });
+  }
+}
+const charName0 = (s: GameState, id: string) => s.chars[id]?.name ?? '守将';
+
+/** 出城之兵战罢回城：围已解、或已在本方城中而近处无敌，就并回驻军 */
+export function aiRegarrison(s: GameState) {
+  for (const a of Object.values(s.armies)) {
+    if (!a.sortie || a.faction === s.player || a.progress > 0) continue;
+    const c = s.cities[a.location];
+    if (!c || !friendly(s, c.controller, a.faction)) continue;
+    const foe = Object.values(s.armies).some(x => hostile(s, x.faction, a.faction) && x.location === a.location);
+    if (foe) continue;
+    c.garrison += a.troops;
+    s.ledger.push({ turn: s.turn, node: c.id, field: 'garrison', delta: a.troops, text: `出城之兵回城`, src: { kind: 'order', ref: a.id } });
+    delete s.armies[a.id];
+  }
+}
+
+/** 会集出征：各城驻军有余，邻近（陆路十五日内）有空虚的敌城，就从附近几城抽兵，会于一城，择将出征。
+ *  “各省明官府”这类只有驻军、没有野战军的势力，靠这个才会反攻（史实：曾英复重庆、杨展败西军于江口）。每家每月至多一次。 */
+export function aiMusters(s: GameState) {
+  for (const f of Object.keys(s.factions).sort()) {
+    if (passive(s, f)) continue;
+    const mine = citiesOf(s, f);
+    if (!mine.length) continue;
+    const field = armiesOf(s, f).filter(a => !a.sortie).length;
+    if (field >= Math.max(2, Math.ceil(mine.length / 6))) continue;
+    if (!cooledFlag(s, 'muster_' + f, 2)) continue;
+    const spareOf = (id: string) => s.sieges[id] ? 0 : Math.max(0, s.cities[id].garrison - keepOf(s, f, id));
+    let best: { at: string; target: string; need: number; donors: { id: string; n: number }[]; score: number } | null = null;
+    for (const c of mine) {
+      if (spareOf(c.id) < 1500) continue;
+      const { dist } = distancesFrom(c.id, false);
+      // 附近可抽兵之城（十日内）
+      const pool = mine.filter(x => dist[x.id] !== undefined && dist[x.id] <= 10).map(x => ({ id: x.id, n: spareOf(x.id) })).filter(x => x.n >= 800).sort((x, y) => (x.id === c.id ? -1 : y.id === c.id ? 1 : dist[x.id] - dist[y.id]));
+      const avail = pool.reduce((n, x) => n + x.n, 0);
+      for (const { to: t } of neighbors(c.id)) {
+        const tc = s.cities[t];
+        if (!tc || !hostile(s, f, tc.controller) || tc.controller === 'helan' || dist[t] === undefined || dist[t] > 15) continue;
+        if (areaWeight(s, f, NODE[t].area) <= 0 && !(topOf(s, tc.controller) === topOf(s, s.player))) continue;
+        const foeArmy = Object.values(s.armies).filter(x => x.location === t && hostile(s, f, x.faction)).reduce((n, x) => n + armyPower(x, s), 0);
+        const need = Math.round(holdStrength(s, t) * 1.6 + foeArmy * 1.3 + 1500);
+        if (avail < need) continue;
+        const score = cityValue(s, t) / (dist[t] + 5) * (avail / need);
+        if (!best || score > best.score) {
+          let left = need; const donors: { id: string; n: number }[] = [];
+          for (const x of pool) { if (left <= 0) break; const n = Math.min(x.n, left); donors.push({ id: x.id, n }); left -= n; }
+          best = { at: c.id, target: t, need, donors, score };
+        }
+      }
+    }
+    if (!best) continue;
+    const hawk = s.chars[s.factions[f].leader]?.att.hawk ?? 30;
+    if (!rngFor(s.seed, 'muster', s.turn, f).chance(Math.min(0.85, 0.45 + hawk / 150))) continue;
+    s.flags['muster_' + f] = s.turn;
+    const total = best.donors.reduce((n, d) => n + d.n, 0);
+    for (const d of best.donors) {
+      s.cities[d.id].garrison -= d.n;
+      s.ledger.push({ turn: s.turn, node: d.id, field: 'garrison', delta: -d.n, text: d.id === best.at ? `会集出征` : `抽兵会于${nodeName(best.at)}`, src: { kind: 'order', ref: 'muster:' + f } });
+    }
+    const cmd = pickLeader(s, f, best.at, false);
+    const a = newArmy(s, f, best.at, cmd, total, `${charName0(s, cmd)}部`);
+    a.order = { kind: 'move', target: best.target, attack: true };
+    const path = shortestPath(best.at, best.target, false);
+    if (path) a.path = path;
+    const tgt = s.cities[best.target];
+    const vsPlayer = topOf(s, tgt.controller) === topOf(s, s.player);
+    const from = best.donors.map(d => nodeName(d.id)).join('、');
+    report(s, { cat: vsPlayer ? '急报' : '军报', urgent: vsPlayer, node: best.target, origin: best.at, act: 'march', from: f,
+      text: `${s.factions[f].name}会集${from}兵马 ${Math.round(total / 100) * 100} 人，由${charName0(s, cmd)}统领，出${nodeName(best.at)}来攻${nodeName(best.target)}！${vsPlayer ? `（${nodeName(best.target)}现有守军 ${tgt.garrison}）` : ''}`,
+      faction: vsPlayer ? undefined : f, src: { kind: 'order', ref: a.id } });
+  }
+}
+const cooledFlag = (s: GameState, key: string, months: number) => s.turn - Number(s.flags[key] ?? -999) >= months;
+
+/** 乘虚翻脸：与玩家相安（中立）的邻家，主将好战，见玩家边城空虚而己方近处兵多（三倍以上），便宣战来攻。
+ *  停战、结盟、通好期内不翻脸；每家一年至多一回；先有急报，好让玩家补防 */
+export function aiOpportunism(s: GameState) {
+  const P = s.player;
+  if (!s.factions[P] || s.factions[P].defunct) return;
+  const pTop = topOf(s, P);
+  for (const f of Object.keys(s.factions).sort()) {
+    if (passive(s, f) || topOf(s, f) === pTop || s.factions[f].overlord) continue;
+    if (stance(s, f, P) !== 'neutral' || s.relations[[f, P].sort().join('|')]?.until !== undefined) continue;
+    if (!cooledFlag(s, 'opp_' + f, 12)) continue;
+    const hawk = s.chars[s.factions[f].leader]?.att.hawk ?? 0;
+    if (hawk < 35) continue;
+    // 玩家边城：与此家之城或军队相邻
+    let weakest: { node: string; ratio: number } | null = null;
+    for (const c of Object.values(s.cities)) {
+      if (topOf(s, c.controller) !== pTop) continue;
+      const nb = neighbors(c.id).map(n => n.to);
+      const force = Object.values(s.armies).filter(a => a.faction === f && a.progress === 0 && (nb.includes(a.location) || a.location === c.id)).reduce((n, a) => n + armyPower(a, s), 0)
+        + nb.filter(n => s.cities[n]?.controller === f).reduce((m, n) => m + s.cities[n].garrison * 0.5, 0);
+      if (!force) continue;
+      const ratio = force / Math.max(500, holdStrength(s, c.id));
+      if (!weakest || ratio > weakest.ratio) weakest = { node: c.id, ratio };
+    }
+    if (!weakest || weakest.ratio < 3) continue;
+    if (!rngFor(s.seed, 'opp', s.turn, f).chance(Math.min(0.6, (hawk - 25) / 100))) continue;
+    s.flags['opp_' + f] = s.turn;
+    setStance(s, f, P, 'war');
+    report(s, { cat: '急报', urgent: true, node: weakest.node, origin: s.factions[f].capital,
+      text: `${s.factions[f].name}见${nodeName(weakest.node)}守备空虚，背盟翻脸，宣战来攻！${nodeName(weakest.node)}守军仅 ${s.cities[weakest.node].garrison}，宜速增援。`,
+      src: { kind: 'diplomacy', ref: 'opp:' + f } });
+  }
+}
+
+/** 暗中劝降：敌军压境、而守将降意高或城中人心离散的玩家之城，邻家遣能言之士潜往劝降（与玩家劝降同一套成算，跨月回报）。
+ *  谍报有时能探知，给玩家换将、增兵、安民的余地 */
+export function aiIntrigue(s: GameState) {
+  const P = s.player, pTop = topOf(s, P);
+  if (!s.factions[P] || s.factions[P].defunct) return;
+  // 一个阵营（宗主连同下属）三个月至多一回，同一座城半年内只遣一回
+  const blocs = [...new Set(Object.keys(s.factions).filter(f => !passive(s, f)).map(f => topOf(s, f)))].filter(b => b !== pTop).sort();
+  for (const bloc of blocs) {
+    if (!cooledFlag(s, 'intrigue_' + bloc, 3)) continue;
+    const members = Object.keys(s.factions).filter(f => !passive(s, f) && topOf(s, f) === bloc);
+    let best: { f: string; env: string; node: string; p: number } | null = null;
+    for (const c of Object.values(s.cities)) {
+      if (topOf(s, c.controller) !== pTop || !hostile(s, bloc, c.controller) || !cooledFlag(s, 'intr_at_' + c.id, 6)) continue;
+      if (s.missions.some(m => m.order.kind === 'persuade' && m.order.node === c.id)) continue;
+      // 只对近处之城下手：本阵营的城或军队就在邻近
+      const nb = [c.id, ...neighbors(c.id).map(n => n.to)];
+      const f = members.find(m => nb.some(n => s.cities[n]?.controller === m) || Object.values(s.armies).some(a => a.faction === m && nb.includes(a.location)));
+      if (!f) continue;
+      const env = Object.values(s.chars).filter(ch => ch.faction === f && ch.status === 'active' && ch.ab.wai >= 50 && ch.id !== s.factions[f].leader && !Object.values(s.armies).some(a => a.commander === ch.id) && !s.missions.some(m => (m.order as { char?: string }).char === ch.id))
+        .sort((x, y) => y.ab.wai - x.ab.wai)[0];
+      if (!env) continue;
+      const { p } = persuadeChance(s, f, env.id, c.id);
+      if (p >= 0.3 && (!best || p > best.p)) best = { f, env: env.id, node: c.id, p };
+    }
+    if (!best) continue;
+    const o = { id: `ai-intr-${best.f}-${s.turn}`, kind: 'persuade' as const, char: best.env, node: best.node };
+    if (validateOrder(s, best.f, o)) continue;
+    s.flags['intrigue_' + bloc] = s.turn; s.flags['intr_at_' + best.node] = s.turn;
+    applyOrder(s, best.f, o);
+    if (rngFor(s.seed, 'intel', s.turn, best.f).chance(0.6)) report(s, { cat: '急报', urgent: true, node: best.node, origin: s.factions[best.f].capital,
+      text: `【谍报】探得${s.factions[best.f].name}遣${s.chars[best.env].name}潜赴${nodeName(best.node)}，欲劝守将献城。可换守将、增兵或安抚民心以防。`, src: { kind: 'diplomacy', ref: o.id } });
   }
 }

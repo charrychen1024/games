@@ -95,7 +95,7 @@ describe('验收四：献城后改属', () => {
     for (let k = 0; k < 5; k++) {
       let s = structuredClone(base);
       s = runMonthAuto(s, [{ id: 'persuade-' + k, kind: 'persuade', char: 'zuomaodi', node: 'xuzhou' }]);
-      expect(s.missions.length).toBe(1); // 跨月：本月出发
+      expect(s.missions.filter(m => m.faction === s.player).length).toBe(1); // 跨月：本月出发（电脑各家也可能遣使劝降，不算在内）
       expect(s.cities.xuzhou.controller).toBe('qing');
       s = runMonthAuto(s, []);
       if (s.cities.xuzhou.controller !== 'hongguang') continue;
