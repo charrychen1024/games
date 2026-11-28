@@ -8,17 +8,18 @@ import { neighbors, NODE, shortestPath, pathDays } from '../data/geography';
 import { lunarOf } from './calendar';
 import { shortDate } from './calendar';
 import { govEffects } from './people';
+import { devStep, garrisonGrainMul, noteMilestone, popGrowth } from './develop';
 
 export const POLICY_NAME: Record<Policy, string> = {
   balanced: '均衡', agri: '劝农', commerce: '通商', fortify: '整军修城', relief: '赈济', edu: '兴学', levy: '加派',
 };
 export const POLICY_HINT: Record<Policy, string> = {
   balanced: '不偏不倚，按常例征收。',
-  agri: '每月花些银两，农业缓慢上升，田粮随之增加。',
-  commerce: '每月花些银两，商业缓慢上升，赋税随之增加。',
+  agri: '每月花些银两，农业上升：田粮增加、户口生息加快；七十“沃野”后驻军口粮省二成。',
+  commerce: '每月花些银两，商业上升：赋税增加、市面扩大；七十“商贾辐辏”后募兵省银、出兵多火器。',
   fortify: '每月花较多银两，城防上升。',
   relief: '开仓放粮，民心上升，消耗仓粮。',
-  edu: '每月花些银两，文教缓慢上升，长期影响人才。',
+  edu: '每月花些银两，文教上升：主官整饬吏治更高、士绅守节难被劝降、招贤多能吏；七十“文风鼎盛”后士人来投。',
   levy: '赋税加征五成，民心与吏治每月下降。',
 };
 
@@ -69,7 +70,7 @@ export function monthlyIncome(s: GameState, c: City): { silver: number; grain: n
 }
 
 export function upkeepOf(s: GameState, c: City): { grain: number; silver: number } {
-  let grain = c.garrison * GRAIN_PER_SOLDIER, silver = c.garrison * SILVER_PER_SOLDIER;
+  let grain = c.garrison * GRAIN_PER_SOLDIER * garrisonGrainMul(c), silver = c.garrison * SILVER_PER_SOLDIER;
   for (const a of Object.values(s.armies)) if (a.supply === c.id) { const k = 1 - forageShare(s, a.faction); const keep = supplyLegOf(s, a).keep || 1; grain += a.troops * GRAIN_PER_SOLDIER * k / keep; silver += a.troops * SILVER_PER_FIELD_SOLDIER * k; }
   if (s.sieges[c.id]) grain += c.garrison * GRAIN_PER_SOLDIER * 0.5;
   return { grain: Math.round(grain), silver: Math.round(silver) };
@@ -111,7 +112,7 @@ export function cityForecast(s: GameState, c: City): CityForecast {
   if (pc?.silver) S.push({ label: `方针“${POLICY_NAME[c.policy]}”开销`, v: -pc.silver, kind: 'policy' });
   if (pc?.grain) G.push({ label: `方针“${POLICY_NAME[c.policy]}”放粮`, v: -pc.grain, kind: 'policy' });
   if (c.garrison) {
-    G.push({ label: `驻军 ${troopsText(c.garrison)} 人口粮`, v: -Math.round(c.garrison * GRAIN_PER_SOLDIER), kind: 'garrison' });
+    G.push({ label: `驻军 ${troopsText(c.garrison)} 人口粮${garrisonGrainMul(c) < 1 ? '（沃野军屯，省二成）' : ''}`, v: -Math.round(c.garrison * GRAIN_PER_SOLDIER * garrisonGrainMul(c)), kind: 'garrison' });
     S.push({ label: `驻军 ${troopsText(c.garrison)} 人月饷`, v: -Math.round(c.garrison * SILVER_PER_SOLDIER), kind: 'garrison' });
     if (sieged) G.push({ label: '守城加给', v: -Math.round(c.garrison * GRAIN_PER_SOLDIER * 0.5), kind: 'siege' });
   }
@@ -280,7 +281,7 @@ export function runEconomy(s: GameState) {
   }
   // 2. 驻军与军队粮饷
   for (const c of cities) {
-    bump(s, c.id, 'grain', -Math.round(c.garrison * GRAIN_PER_SOLDIER), `驻军 ${troopsText(c.garrison)} 人口粮`, { kind: 'upkeep', ref: 'garrison' });
+    bump(s, c.id, 'grain', -Math.round(c.garrison * GRAIN_PER_SOLDIER * garrisonGrainMul(c)), `驻军 ${troopsText(c.garrison)} 人口粮${garrisonGrainMul(c) < 1 ? '（沃野军屯）' : ''}`, { kind: 'upkeep', ref: 'garrison' });
     bump(s, c.id, 'silver', -Math.round(c.garrison * SILVER_PER_SOLDIER), `驻军 ${troopsText(c.garrison)} 人月饷`, { kind: 'upkeep', ref: 'garrison' });
     if (s.sieges[c.id]) bump(s, c.id, 'grain', -Math.round(c.garrison * GRAIN_PER_SOLDIER * 0.5), '守城加给', { kind: 'siege', ref: c.id });
   }
@@ -398,7 +399,7 @@ export function runEconomy(s: GameState) {
       bump(s, c.id, 'garrison', -lost, '断粮，士卒逃散', { kind: 'upkeep', ref: 'garrison' });
       bump(s, c.id, 'minxin', -6, '城中断粮', { kind: 'upkeep', ref: 'garrison' });
     }
-    if (c.minxin >= 50 && !s.sieges[c.id]) bump(s, c.id, 'pop', Math.round(c.pop * 0.001 * 100) / 100, '生息', { kind: 'income' });
+    popGrowth(s, c);
     checkShortage(s, c);
   }
 }
@@ -407,11 +408,11 @@ function applyPolicy(s: GameState, c: City) {
   const src = { kind: 'policy' as const, ref: c.policy };
   const p = c.pop;
   switch (c.policy) {
-    case 'agri': if (c.silver > p * 20) { bump(s, c.id, 'silver', -Math.round(p * 20), '劝农开销', src); bump(s, c.id, 'agri', 1, '劝农', src); } break;
-    case 'commerce': if (c.silver > p * 15) { bump(s, c.id, 'silver', -Math.round(p * 15), '通商开销', src); bump(s, c.id, 'commerce', 1, '通商', src); } break;
+    case 'agri': if (c.silver > p * 20) { bump(s, c.id, 'silver', -Math.round(p * 20), '劝农开销', src); const b = c.agri; bump(s, c.id, 'agri', Math.min(100 - c.agri, devStep(c.agri)), '劝农', src); noteMilestone(s, c, 'agri', b); } break;
+    case 'commerce': if (c.silver > p * 15) { bump(s, c.id, 'silver', -Math.round(p * 15), '通商开销', src); const b = c.commerce; bump(s, c.id, 'commerce', Math.min(100 - c.commerce, devStep(c.commerce)), '通商', src); noteMilestone(s, c, 'commerce', b); } break;
     case 'fortify': if (c.silver > p * 40 + 2000) { bump(s, c.id, 'silver', -Math.round(p * 40 + 2000), '修城开销', src); bump(s, c.id, 'wall', 3, '整军修城', src); } break;
     case 'relief': if (c.grain > reliefGrain(p)) { bump(s, c.id, 'grain', -reliefGrain(p), '开仓赈济', src); bump(s, c.id, 'minxin', 3, '赈济', src); } break;
-    case 'edu': if (c.silver > p * 25) { bump(s, c.id, 'silver', -Math.round(p * 25), '兴学开销', src); bump(s, c.id, 'edu', 0.6, '兴学', src); } break;
+    case 'edu': if (c.silver > p * 25) { bump(s, c.id, 'silver', -Math.round(p * 25), '兴学开销', src); const b = c.edu; bump(s, c.id, 'edu', Math.min(100 - c.edu, devStep(c.edu)), '兴学', src); noteMilestone(s, c, 'edu', b); } break;
     case 'levy': bump(s, c.id, 'minxin', -3, '加派', src); bump(s, c.id, 'order', -1, '加派', src); break;
     default: break;
   }

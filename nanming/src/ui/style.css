@@ -1072,6 +1072,10 @@ html.reduced .bh-pips i.now { animation: none; }
 .cpip .ic { width: 18px; height: 18px; color: var(--gold); }
 .cpip .k { font-weight: 900; color: var(--dim); font-size: 13px; }
 .cpip b { text-align: right; font-size: 14px; }
+.cpip.top { grid-template-columns: 18px 18px 1fr 26px auto; }
+.cpip .ms-tag { font-style: normal; font-size: 11px; font-weight: 900; color: #1a1208; background: linear-gradient(180deg, #f5d58c, #b98a3c); padding: 1px 6px; border-radius: 8px; white-space: nowrap; }
+.pips i.ms { box-shadow: inset -2px 0 0 rgba(245, 213, 140, 0.55); }
+.cpip.top .pips i.ms { box-shadow: 0 0 8px rgba(245, 213, 140, 0.7); }
 .pips { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; }
 .pips i { height: 10px; border-radius: 2px; background: rgba(255, 255, 255, 0.07); transform: skewX(-12deg); }
 .pips i.on { background: linear-gradient(180deg, #f5d58c, #b98a3c); box-shadow: 0 0 6px rgba(240, 207, 134, 0.35); }

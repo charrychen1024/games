@@ -70,7 +70,7 @@ export function govEffects(s: GameState, c: City): GovEffects {
   const has = (x: TraitId) => t.includes(x);
   const silverMul = base * (has('licai') ? 1.12 : 1) * (has('tan') ? 0.9 : 1);
   const grainMul = base * (has('tuntian') ? 1.12 : 1);
-  const orderTarget = Math.round(25 + g.ab.zheng * 0.55 + (has('lianzheng') ? 10 : 0) + (has('kuli') ? 8 : 0) - (has('tan') ? 10 : 0));
+  const orderTarget = Math.round(25 + g.ab.zheng * 0.55 + (has('lianzheng') ? 10 : 0) + (has('kuli') ? 8 : 0) - (has('tan') ? 10 : 0) + Math.round((c.edu - 50) / 5));
   const minxinTarget = Math.round(25 + g.ab.wang * 0.45 + g.ab.zheng * 0.1 + (has('fumin') ? 12 : 0) - (has('kuli') ? 10 : 0));
   const wallRepair = (g.ab.tong >= 60 ? 1 : 0) + (has('shanshou') ? 2 : 0);
   return { silverMul, grainMul, orderTarget, minxinTarget, wallRepair, recruitMul: has('lianbing') ? 1.3 : 1 };

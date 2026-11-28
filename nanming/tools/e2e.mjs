@@ -121,8 +121,11 @@ try {
   check('点南京打开城池详情', (await text('#city-name')).includes('南京'), await text('#city-name'));
   check('详情写明实控者与所奉政权', (await text('#city-controller')).includes('弘光朝廷') && (await text('#city-polity')).includes('明'));
 
+  check('农商文刻度带提示：写明现效与下一阶', /田粮/.test(await page.getAttribute('#city-dev-agri', 'data-tip') ?? '') && /商贾辐辏/.test(await page.getAttribute('#city-dev-commerce', 'data-tip') ?? ''));
+  check('人口提示写明赋税的算法', /赋税 ≈ 人口/.test(await page.getAttribute('#city-pop', 'data-tip') ?? ''));
   console.log('下达命令');
   await page.click('#act-policy');
+  check('方针弹窗有幕僚建议，卡上写一年之效', (await text('#policy-advice')).includes('幕僚建议') && (await text('[data-card="commerce"]')).includes('一年后'));
   check('方针以卡牌呈现（七张，带插画）', (await page.locator('#modal .gcard').count()) === 7 && (await page.locator('#modal .gcard img').count()) === 7);
   await page.click('[data-card="agri"]');
   await wait(800);

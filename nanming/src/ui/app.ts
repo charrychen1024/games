@@ -23,6 +23,7 @@ import { isReduced, setReducedMotion, reducedSystem } from './motion';
 import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
+import { popTip, devTip, devStep, reached, MILESTONE_NAME, policyOutlook, advisePolicy, recruitSilverOf, type DevKey } from '../core/develop';
 import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, supplyLegOf, RECRUIT_SILVER, DISBAND_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
 import { projectOrders, validateQueued, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
@@ -1088,13 +1089,15 @@ export class App {
         this.ring('minxin', '民心', known ? c.minxin : -1, known ? String(Math.round(c.minxin)) : c.minxin > 60 ? '稳' : c.minxin > 40 ? '浮' : '散'),
         this.ring('order', '吏治', known ? c.order : -1, known ? String(Math.round(c.order)) : '?')));
       if (known) {
-        const pips = (icon: string, k: string, v: number) => h('div', { class: 'cpip' }, ic(icon), h('span', { class: 'k' }, k),
-          h('div', { class: 'pips' }, ...Array.from({ length: 10 }, (_, i) => h('i', { class: v >= (i + 1) * 10 ? 'on' : v > i * 10 ? 'half' : '' }))), h('b', null, String(Math.round(v))));
-        sec.append(h('div', { class: 'cpips' }, pips('agri', '农', c.agri), pips('commerce', '商', c.commerce), pips('edu', '文', c.edu)));
+        const pips = (key: DevKey, k: string) => { const v = c[key], top = reached(c, key);
+          return h('div', { class: 'cpip' + (top ? ' top' : ''), id: 'city-dev-' + key, 'data-tip': devTip(s, c, key) }, ic(key), h('span', { class: 'k' }, k),
+            h('div', { class: 'pips' }, ...Array.from({ length: 10 }, (_, i) => h('i', { class: (v >= (i + 1) * 10 ? 'on' : v > i * 10 ? 'half' : '') + (i === 6 ? ' ms' : '') }))), h('b', null, String(Math.round(v))),
+            top ? h('em', { class: 'ms-tag' }, MILESTONE_NAME[key]) : null); };
+        sec.append(h('div', { class: 'cpips' }, pips('agri', '农'), pips('commerce', '商'), pips('edu', '文')));
         const pol = ((this.orders.find(o => o.kind === 'policy' && o.node === id) as any)?.policy ?? c.policy) as Policy;
         sec.append(h('div', { class: 'cchips' },
           h('span', { class: 'cseal', 'data-tip': POLICY_HINT[pol] }, ic(POLICY_ICON[pol]), h('small', null, '方针'), h('b', null, POLICY_NAME[pol])),
-          h('span', { class: 'cchip' }, ic('pop'), h('b', null, String(Math.round(c.pop))), h('small', null, '万口')),
+          h('span', { class: 'cchip', id: 'city-pop', 'data-tip': popTip(s, c) }, ic('pop'), h('b', null, String(Math.round(c.pop))), h('small', null, '万口')),
           h('span', { class: 'cchip', id: 'city-price', 'data-tip': `粮价随地区、季节、战事与本城存粮浮动；粮贱时籴、粮贵时粜。市面每月可容 ${wan(marketCap(s, c))} 石` }, ic('commerce'), h('b', null, grainPrice(s, c).toFixed(2)), h('small', null, '两/石')),
           c.trade ? h('span', { class: 'cchip' }, ic('port'), h('b', null, `×${c.trade}`), h('small', null, '海贸')) : null));
       } else sec.append(h('div', { class: 'cfog' }, ic('info'), '非我方之城 · 钱粮虚实难知'));
@@ -1379,11 +1382,11 @@ export class App {
     const COL: Record<Policy, string> = { balanced: '#8c6a35', agri: '#5f8a3a', commerce: '#b0702a', fortify: '#6d6f75', relief: '#b5342a', edu: '#3f6f8f', levy: '#7d1a12' };
     const CH: Record<Policy, Chip[]> = {
       balanced: [{ icon: 'order', text: '按常例征收' }],
-      agri: [{ icon: 'silver', text: `−${wan(p * 20)}/月`, tone: 'bad' }, { icon: 'agri', text: '农业 +1/月', tone: 'good' }],
-      commerce: [{ icon: 'silver', text: `−${wan(p * 15)}/月`, tone: 'bad' }, { icon: 'commerce', text: '商业 +1/月', tone: 'good' }],
+      agri: [{ icon: 'silver', text: `−${wan(p * 20)}/月`, tone: 'bad' }, { icon: 'agri', text: `农业 +${devStep(c.agri)}/月`, tone: 'good' }],
+      commerce: [{ icon: 'silver', text: `−${wan(p * 15)}/月`, tone: 'bad' }, { icon: 'commerce', text: `商业 +${devStep(c.commerce)}/月`, tone: 'good' }],
       fortify: [{ icon: 'silver', text: `−${wan(p * 40 + 2000)}/月`, tone: 'bad' }, { icon: 'wall', text: '城防 +3/月', tone: 'good' }],
       relief: [{ icon: 'grain', text: `−${wan(reliefGrain(p))}/月`, tone: 'bad' }, { icon: 'minxin', text: '民心 +3/月', tone: 'good' }],
-      edu: [{ icon: 'silver', text: `−${wan(p * 25)}/月`, tone: 'bad' }, { icon: 'edu', text: '文教 +0.6/月', tone: 'good' }],
+      edu: [{ icon: 'silver', text: `−${wan(p * 25)}/月`, tone: 'bad' }, { icon: 'edu', text: `文教 +${devStep(c.edu)}/月`, tone: 'good' }],
       levy: [{ icon: 'silver', text: '赋税 +50%', tone: 'good' }, { icon: 'minxin', text: '民心 −3/月', tone: 'bad' }, { icon: 'order', text: '吏治 −1/月', tone: 'bad' }],
     };
     // 每张卡写明：按已排的其他命令，选它之后本城本月粮、银结余各变成多少
@@ -1391,8 +1394,9 @@ export class App {
     const ps = projectOrders(s, others), pc = ps.cities[node];
     const net = (k: Policy) => cityForecast({ ...ps, cities: { ...ps.cities, [node]: { ...pc, policy: k } } }, { ...pc, policy: k });
     const sg = (v: number) => `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v))}`;
-    const cards: GameCard[] = (Object.keys(POLICY_NAME) as Policy[]).map((k, i) => { const f = net(k); return { id: k, title: POLICY_NAME[k], art: cardArt(POLICY_ICON[k], COL[k], i), chips: [...CH[k], { icon: 'grain', text: `本月结余 ${sg(f.grain.net)}`, tone: f.grain.net >= 0 ? 'good' : 'bad' }, { icon: 'silver', text: `本月结余 ${sg(f.silver.net)}`, tone: f.silver.net >= 0 ? 'good' : 'bad' }], note: POLICY_HINT[k], on: k === cur, color: COL[k] }; });
-    this.modal('policy', '方针', `${nodeName(node)} · 选一张，此后每月持续执行`, [cardHand(cards, k => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'policy', node, policy: k as Policy }); }, { stampText: '令' })], [this.cancelBtn()], 'wide');
+    const adv = advisePolicy(s, c);
+    const cards: GameCard[] = (Object.keys(POLICY_NAME) as Policy[]).map((k, i) => { const f = net(k); return { id: k, title: POLICY_NAME[k], art: cardArt(POLICY_ICON[k], COL[k], i), chips: [...CH[k], { icon: 'grain', text: `本月结余 ${sg(f.grain.net)}`, tone: f.grain.net >= 0 ? 'good' : 'bad' }, { icon: 'silver', text: `本月结余 ${sg(f.silver.net)}`, tone: f.silver.net >= 0 ? 'good' : 'bad' }], note: (policyOutlook(s, c, k) ? policyOutlook(s, c, k) + '。' : '') + POLICY_HINT[k], on: k === cur, color: COL[k], badge: k === adv.policy ? '幕僚荐' : undefined }; });
+    this.modal('policy', '方针', `${nodeName(node)} · 选一张，此后每月持续执行`, [h('div', { class: 'cnote', id: 'policy-advice' }, ic('appoint'), h('span', null, `幕僚建议“${POLICY_NAME[adv.policy]}”：${adv.why}。可不从。`)), cardHand(cards, k => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'policy', node, policy: k as Policy }); }, { stampText: '令' })], [this.cancelBtn()], 'wide');
   }
 
 
@@ -1476,10 +1480,11 @@ export class App {
     // 以排令后的局面为底：已排的募兵、劝捐、调拨、方针都算在内
     const ps = this.proj(), pc = ps.cities[node];
     const left = recruitLeft(ps, node);
-    const max = Math.min(left, Math.floor(pc.silver / RECRUIT_SILVER / 100) * 100);
+    const unit = recruitSilverOf(pc, RECRUIT_SILVER);
+    const max = Math.min(left, Math.floor(pc.silver / unit / 100) * 100);
     if (max < 100) { this.toast(left < 100 ? `${nodeName(node)}本月名额已满` : `${nodeName(node)}府库不足，募不到兵`, 'close'); return; }
     /** 再募 n 人之后的此城（与正式执行同一算法：募银、驻军、人口、民心） */
-    const after = (n: number) => ({ ...pc, silver: pc.silver - n * RECRUIT_SILVER, garrison: pc.garrison + n, pop: Math.round((pc.pop - n / 10000) * 100) / 100, minxin: Math.max(0, Math.round((pc.minxin - Math.round(n / 1500 * 10) / 10) * 10) / 10) });
+    const after = (n: number) => ({ ...pc, silver: pc.silver - n * unit, garrison: pc.garrison + n, pop: Math.round((pc.pop - n / 10000) * 100) / 100, minxin: Math.max(0, Math.round((pc.minxin - Math.round(n / 1500 * 10) / 10) * 10) / 10) });
     const stateWith = (n: number) => { const c2 = after(n); return { st: { ...ps, cities: { ...ps.cities, [node]: c2 } } as GameState, c2 }; };
     const fc = cityForecast(ps, pc);
     const ol0 = yearOutlook(ps, pc);
@@ -1500,7 +1505,7 @@ export class App {
       const { st, c2 } = stateWith(n);
       const f1 = cityForecast(st, c2), ol = yearOutlook(st, c2);
       clear(costs).append(
-        h('span', { class: 'cost bad' }, ic('silver'), `募银 −${fmt(n * RECRUIT_SILVER)}`),
+        h('span', { class: 'cost bad' }, ic('silver'), `募银 −${fmt(n * unit)}${unit < RECRUIT_SILVER ? '（商贾辐辏）' : ''}`),
         h('span', { class: 'cost bad' }, ic('pop'), `−${(n / 10000).toFixed(2)} 万口`),
         h('span', { class: 'cost bad' }, ic('minxin'), `民心 −${(n / 1500).toFixed(1)}`),
         h('span', { class: 'cost good' }, ic('troops'), `驻军 +${fmt(n)}`));

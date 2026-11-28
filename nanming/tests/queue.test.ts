@@ -50,7 +50,7 @@ describe('按排令后的局面校验', () => {
   });
   it('先劝捐再募兵：按劝捐之后的府库校验，可以募', () => {
     const s = createGame('zheng', 1);
-    s.cities.quanzhou.silver = 3832;
+    s.cities.quanzhou.silver = 3832; s.cities.quanzhou.commerce = 60;
     const loan: Order = { id: 'l', kind: 'loan', node: 'quanzhou' };
     const rec: Order = { id: 'r', kind: 'recruit', node: 'quanzhou', troops: 1500 };
     expect(validateQueued(s, [], rec)).toMatch(/府库/);

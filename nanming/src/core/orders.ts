@@ -3,6 +3,7 @@ import { supplyRoute, armyRoute, noRouteReason } from './route';
 import type { ArmyOrder, City, GameState, Order } from './types';
 import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance, treasuryOf } from './state';
 import { setArmyOrder, capture } from './military';
+import { recruitSilverOf, gunBonusOf, eduSteadfast } from './develop';
 import { RECRUIT_SILVER, DISBAND_SILVER, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
 import { rngFor } from './rng';
 import { seekTalent, seekError, prisonerError, handlePrisoner, SEEK_SILVER, govEffects, hasTrait } from './people';
@@ -111,7 +112,7 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       if (s.sieges[o.node]) return '城被围，募不到兵';
       const left = recruitLeft(s, o.node);
       if (o.troops <= 0 || o.troops > left) return `本城本月最多再募 ${left} 人`;
-      if (c.silver < o.troops * RECRUIT_SILVER) return '府库不足';
+      if (c.silver < o.troops * recruitSilverOf(c, RECRUIT_SILVER)) return '府库不足';
       return null;
     }
     case 'army': {
@@ -317,7 +318,7 @@ export function applyOrder(s: GameState, f: string, o: Order) {
     }
     case 'recruit': {
       const c = s.cities[o.node];
-      bump(s, o.node, 'silver', -o.troops * RECRUIT_SILVER, `募兵 ${o.troops} 人`, src);
+      bump(s, o.node, 'silver', -o.troops * recruitSilverOf(c, RECRUIT_SILVER), `募兵 ${o.troops} 人${recruitSilverOf(c, RECRUIT_SILVER) < RECRUIT_SILVER ? '（商贾辐辏，省银）' : ''}`, src);
       if (c.recruitTurn !== s.turn) { c.recruitTurn = s.turn; c.recruitN = 0; }
       c.recruitN = (c.recruitN ?? 0) + o.troops;
       bump(s, o.node, 'garrison', o.troops, `募兵 ${o.troops} 人`, src);
@@ -386,6 +387,8 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       const c = s.cities[o.node], ch = s.chars[o.char];
       const pol = s.factions[f].polity;
       const mix = o.navy ? { inf: 0.4, cav: 0, gun: 0.2, navy: 0.4 } : pol === 'qing' ? { inf: 0.45, cav: 0.4, gun: 0.15, navy: 0 } : pol === 'shun' || pol === 'xi' ? { inf: 0.6, cav: 0.3, gun: 0.1, navy: 0 } : { inf: 0.65, cav: 0.15, gun: 0.2, navy: 0 };
+      const gb = o.navy ? 0 : gunBonusOf(c);
+      if (gb) { mix.inf = Math.round((mix.inf - gb) * 100) / 100; mix.gun = Math.round((mix.gun + gb) * 100) / 100; }
       const aid = `a_${f}_${s.nextId++}`;
       s.armies[aid] = { id: aid, name: `${ch.name}${o.navy ? '水师' : '部'}`, faction: f, commander: ch.id, troops: o.troops, mix, morale: Math.round(45 + c.minxin * 0.25), location: o.node, path: [], progress: 0, order: { kind: 'hold' }, supply: o.node, hunger: 0 };
       ch.location = o.node;
@@ -628,6 +631,8 @@ export function persuadeChance(s: GameState, f: string, charId: string, node: st
   // 威慑随兵力之比渐增（至多 +25%）
   if (near > city.garrison) { const r = Math.round(near / Math.max(1, city.garrison) * 10) / 10, b = Math.min(0.25, (r - 1) * 0.05); p += b; factors.push(`我军压境（兵力 ${r} 比 1）+${Math.round(b * 100)}%`); }
   if (city.minxin < 40) { p += 0.08; factors.push('城中人心离散 +8%'); }
+  const st = eduSteadfast(city);
+  if (Math.abs(st) >= 0.01) { p += st; factors.push(st < 0 ? `文教 ${Math.round(city.edu)}，士绅守节 −${Math.round(-st * 100)}%` : `文教 ${Math.round(city.edu)}，士风浮薄 +${Math.round(st * 100)}%`); }
   const ctrl = s.factions[city.controller];
   if (ctrl && ctrl.polity === s.factions[f].polity) { p += 0.1; factors.push('同奉一朝 +10%'); }
   if (ctrl && ctrl.capital === node) { p *= 0.6; factors.push('治所重地 ×0.6'); }

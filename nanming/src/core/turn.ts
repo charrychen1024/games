@@ -16,6 +16,7 @@ import { TOTAL_TURNS, dateLabel } from './calendar';
 import { VICTORY_AREAS, NODE } from '../data/geography';
 import { runTalent } from './talent';
 import { incidentDue, pickIncident, markTale, worldOmen } from './incidents';
+import { scholarsArrive, migration } from './develop';
 import { governorDrift, aiAppoint, aiSeek, aiPrisoners } from './people';
 import { pendingSuccessions, successionOptions, applySuccession, autoSuccession, courtOf, transferCourt, polityOf } from './regime';
 
@@ -139,6 +140,7 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
 
   // 六、内政与钱粮
   runEconomy(s);
+  migration(s);
   unrest(s);
 
   // 七、史事与线索
@@ -178,6 +180,7 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   // 人才出仕；主官治城；电脑各家补派主官、处置俘虏
   runTalent(s);
   governorDrift(s);
+  scholarsArrive(s);
   for (const f of Object.keys(s.factions).sort()) if (f !== s.player && !s.factions[f].defunct) { aiAppoint(s, f); aiSeek(s, f); }
   aiPrisoners(s);
 
