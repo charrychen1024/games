@@ -1407,23 +1407,29 @@ export class App {
   conductPanel(a: Army) {
     const s = this.s!;
     const pend = this.orders.filter(o => o.kind === 'conduct' && o.army === a.id) as Extract<Order, { kind: 'conduct' }>[];
-    const cur = { pace: a.pace ?? null, forage: a.forage ?? null, camp: !!a.camp } as { pace: 'steady' | 'forced' | null; forage: 'forage' | 'plunder' | null; camp: boolean };
-    for (const o of pend) { if (o.pace !== undefined) cur.pace = o.pace; if (o.forage !== undefined) cur.forage = o.forage; if (o.camp !== undefined) cur.camp = o.camp; }
-    const set = (k: 'pace' | 'forage' | 'camp', v: unknown) => {
+    type K = 'pace' | 'forage' | 'camp' | 'tactic' | 'captives';
+    const cur: Record<K, unknown> = { pace: a.pace ?? null, forage: a.forage ?? null, camp: !!a.camp, tactic: a.tactic ?? null, captives: a.captives ?? null };
+    for (const o of pend) for (const k of Object.keys(cur) as K[]) if ((o as any)[k] !== undefined) cur[k] = (o as any)[k];
+    const set = (k: K, v: unknown) => {
       this.orders = this.orders.filter(o => !(o.kind === 'conduct' && o.army === a.id && (o as any)[k] !== undefined));
-      const now = k === 'pace' ? a.pace ?? null : k === 'forage' ? a.forage ?? null : !!a.camp;
+      const now = k === 'camp' ? !!a.camp : (a as any)[k] ?? null;
       if (now !== v) this.addOrder({ id: this.newOrderId(), kind: 'conduct', army: a.id, [k]: v } as Order);
       else { this.renderAll(); }
     };
     const fs = Math.round(forageShare(s, a.faction) * 100);
     const here = s.cities[a.location];
     const inFoe = !!here && hostile(s, a.faction, here.controller);
-    const row = (label: string, opts: [unknown, string, string, string][], k: 'pace' | 'forage' | 'camp', v: unknown) =>
+    const row = (label: string, opts: [unknown, string, string, string][], k: K, v: unknown) =>
       h('div', { class: 'conduct-row' }, h('span', { class: 'k' }, label), h('div', { class: 'seg' }, ...opts.map(([val, icon, name, tip]) =>
         h('button', { class: 'segb' + (v === val ? ' on' : ''), id: `conduct-${k}-${String(val)}`, 'data-tip': tip, onclick: () => set(k, val) }, ic(icon), name))));
     return h('div', { class: 'conduct', id: 'army-conduct' },
       h('div', { class: 'sec-title' }, ic('policy'), '军略', h('small', null, ' · 不占政令，下月起照行')),
       row('行军', [['steady', 'hold', '稳进', '每日行程七成五；沿途休整，每走一日士气 +0.3（至多 80）'], [null, 'move', '常行', '常例'], ['forced', 'charge', '急行', '每日行程一倍半，先敌而至；每走一日士气 −0.6、掉队千分之一点五']], 'pace', cur.pace),
+      row('战法', [[null, 'event', '应变', '临阵应变，由部将按敌情指挥'], ['rush', 'charge', '强攻', '各营战力 +10%、全军压上不轻退；阵脚稍易动摇。撞上坚守营垒之敌则吃亏（营垒更坚），也易中诱敌之计'],
+        ['lure', 'ambush', '诱敌', `佯败诱敌入伏：谋略不逊于敌便有成算（主将谋 ${s.chars[a.commander]?.ab.mou ?? '?'}），敌若强攻更易中计；敌将谋略高出十点以上则被识破，反致阵脚松动`],
+        ['night', 'night', '夜袭', '为攻方时乘夜劫营：谋略、骑兵多、雾天成算高，雨天低；得手敌军士气体力大挫，失手己方疲惫。敌坚守营垒则多半有备']], 'tactic', cur.tactic),
+      row('降卒', [[null, 'troops', '常例', '野战不收降卒；破城收残卒两成'], ['absorb', 'recruit', '收编', '野战得胜收败兵一成余至四分之一、破城收残卒三成五，并入本军；新附之卒士气低，拉低全军士气'],
+        ['release', 'minxin', '释归', '降卒一概放还乡里：所在城民心上升，仁义之名一年内各城劝降 +8%']], 'captives', cur.captives),
       row('粮秣', [[null, 'grain', '粮台', `由粮台支粮饷（本家常例 ${fs}% 取于地方）`], ['forage', 'agri', '就粮', `取于地方增至 ${Math.min(90, fs + 35)}%，省粮台；分兵征敛行军慢一成五，所在城民心多降`],
         ['plunder', 'storm', '抄掠', `${inFoe ? '' : '（须在敌城下才抄掠，否则同就粮）'}在敌城：粮饷全取于敌，掳银解回粮台，士气 +4；敌城户口、民心大坏；纵掠之名一年内各城更不肯降`]], 'forage', cur.forage),
       row('营垒', [[false, 'move', '不扎营', '随时可动'], [true, 'wall', '坚守营垒', '驻扎不动时，敌来攻则据营而守：所受伤损八成、阵脚更稳，部将不轻出；行军之月不生效']], 'camp', cur.camp));

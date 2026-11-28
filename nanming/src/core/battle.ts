@@ -28,6 +28,8 @@ export interface BattleSide {
   reserve?: number;
   /** 坚守营垒：本月未动、扎营以待 */
   camp?: boolean;
+  /** 战法 */
+  tactic?: 'rush' | 'lure' | 'night';
 }
 export type Terrain = 'plain' | 'river' | 'hills' | 'city' | 'water';
 export type Weather = 'clear' | 'rain' | 'wind' | 'fog';

@@ -618,5 +618,16 @@ export function aiConduct(s: GameState) {
     if ((pol === 'shun' || pol === 'xi') && o.kind === 'siege' && here && hostile(s, a.faction, here.controller)) a.forage = 'plunder'; else delete a.forage;
     const threat = o.kind === 'hold' && a.path.length === 0 && Object.values(s.armies).some(b => hostile(s, a.faction, b.faction) && b.troops >= a.troops * 0.6 && (b.location === a.location || neighbors(a.location).some(n => n.to === b.location)));
     if (threat) a.camp = true; else delete a.camp;
+    // 战法：谋高者诱敌；骑兵多而谋略可者夜袭；兵多势众者强攻；其余临阵应变
+    const ch = s.chars[a.commander];
+    const mou = ch?.ab.mou ?? 40;
+    const foeNear = Object.values(s.armies).filter(b => hostile(s, a.faction, b.faction) && (b.location === a.location || neighbors(a.location).some(n => n.to === b.location)));
+    const foeT = foeNear.reduce((n, b) => n + b.troops, 0);
+    if (mou >= 70) a.tactic = 'lure';
+    else if (a.mix.cav >= 0.3 && mou >= 55 && !threat) a.tactic = 'night';
+    else if (foeT && a.troops >= foeT * 1.5) a.tactic = 'rush';
+    else delete a.tactic;
+    // 降卒：清军收编（绿营多出降卒）；其余按常例
+    if (topOf(s, a.faction) === 'qing') a.captives = 'absorb'; else delete a.captives;
   }
 }

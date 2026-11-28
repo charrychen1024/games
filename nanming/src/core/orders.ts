@@ -43,11 +43,15 @@ export function describeOrder(s: GameState, o: Order): string {
 
 export const PACE_NAME = { steady: '稳进', normal: '常行', forced: '急行' } as const;
 export const FORAGE_NAME = { depot: '粮台', forage: '就粮', plunder: '抄掠' } as const;
+export const TACTIC_NAME = { none: '临阵应变', rush: '强攻', lure: '诱敌', night: '夜袭' } as const;
+export const CAPTIVE_NAME = { none: '常例', absorb: '收编', release: '释归' } as const;
 function conductText(o: Extract<Order, { kind: 'conduct' }>): string {
   const parts: string[] = [];
   if (o.pace !== undefined) parts.push(`改为${PACE_NAME[o.pace ?? 'normal']}`);
   if (o.forage !== undefined) parts.push(`粮秣改为${FORAGE_NAME[o.forage ?? 'depot']}`);
   if (o.camp !== undefined) parts.push(o.camp ? '坚守营垒' : '撤去营垒');
+  if (o.tactic !== undefined) parts.push(`战法改为${TACTIC_NAME[o.tactic ?? 'none']}`);
+  if (o.captives !== undefined) parts.push(`降卒${o.captives === 'absorb' ? '收编入伍' : o.captives === 'release' ? '释归乡里' : '按常例'}`);
   return parts.join('，') || '军略不变';
 }
 
@@ -366,6 +370,8 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       if (o.pace !== undefined) { if (o.pace) a.pace = o.pace; else delete a.pace; }
       if (o.forage !== undefined) { if (o.forage) a.forage = o.forage; else delete a.forage; }
       if (o.camp !== undefined) { if (o.camp) a.camp = true; else delete a.camp; }
+      if (o.tactic !== undefined) { if (o.tactic) a.tactic = o.tactic; else delete a.tactic; }
+      if (o.captives !== undefined) { if (o.captives) a.captives = o.captives; else delete a.captives; }
       if (isPlayer) report(s, { cat: '军报', node: a.location, text: `${describeOrder(s, o)}。`, src });
       break;
     }
@@ -667,6 +673,8 @@ export function persuadeChance(s: GameState, f: string, charId: string, node: st
   // 威慑随兵力之比渐增（至多 +25%）
   if (near > city.garrison) { const r = Math.round(near / Math.max(1, city.garrison) * 10) / 10, b = Math.min(0.25, (r - 1) * 0.05); p += b; factors.push(`我军压境（兵力 ${r} 比 1）+${Math.round(b * 100)}%`); }
   if (city.minxin < 40) { p += 0.08; factors.push('城中人心离散 +8%'); }
+  const mercy = s.flags['mercy_' + topOf(s, f)];
+  if (typeof mercy === 'number' && s.turn - mercy < 12) { p += 0.08; factors.push('我军释归降卒，仁义之名在外 +8%'); }
   const inf = s.flags['plunder_' + topOf(s, f)];
   if (typeof inf === 'number' && s.turn - inf < PLUNDER_INFAMY) { p -= 0.15; factors.push('我军纵掠之名在外，人皆死守 −15%'); }
   const st = eduSteadfast(city);

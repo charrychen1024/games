@@ -209,6 +209,7 @@ try {
   await page.evaluate(() => NM.selectArmy('a_shi'));
   await wait(200);
   check('本方军队面板有军略（行军、粮秣、营垒）', await visible('#army-conduct') && await visible('#conduct-pace-forced') && await visible('#conduct-forage-plunder') && await visible('#conduct-camp-true'));
+  check('军略有战法与降卒', await visible('#conduct-tactic-night') && await visible('#conduct-captives-absorb'));
   const used0 = await page.evaluate(() => NM.orders.length);
   await page.click('#conduct-pace-forced');
   await wait(200);

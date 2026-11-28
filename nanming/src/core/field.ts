@@ -140,7 +140,7 @@ export function createField(b: BattleState): FieldSim {
   for (let k = 0; k < nT; k++) { const t = Math.round(110 + fr.next() * 520), kind = kinds[Math.floor(fr.next() * kinds.length)], r = fr.next(); twists.push({ t, kind, side: kind === 'wound' || kind === 'mutiny' ? (r < pAtt ? 'att' : 'def') : kind === 'relief' ? (r < 1 - pAtt ? 'att' : 'def') : r < 0.5 ? 'att' : 'def' }); }
   twists.sort((a, b2) => a.t - b2.t);
   // 临阵状态：全军将运 ±9%，各营再 ±8%（种子定，读档重打不变）
-  for (const side of ['att', 'def'] as const) { const fortune = 0.8 + rng.next() * 0.4; for (const u of units) if (u.side === side) { u.luck = fortune * (0.92 + rng.next() * 0.16); u.poise = tongPoise(b[side].tong) * (b[side].camp ? 0.9 : 1); u.guard = b[side].camp ? 0.8 : 1; } }
+  for (const side of ['att', 'def'] as const) { const fortune = 0.8 + rng.next() * 0.4; for (const u of units) if (u.side === side) { u.luck = fortune * (0.92 + rng.next() * 0.16); u.poise = tongPoise(b[side].tong) * (b[side].camp ? 0.9 : 1); u.guard = b[side].camp ? (b[foeOf(side)].tactic === 'rush' ? 0.7 : 0.8) : 1; if (b[side].tactic === 'rush') { u.luck *= 1.1; u.poise *= 1.12; } } }
   // 临阵尚有余勇：军心再低，开战时全军军心不低于 25（各营士气在 compose 里不低于 22），免得未见敌便全线崩溃
   const mA = Math.max(25, avgMorale(b.att)), mD = Math.max(25, avgMorale(b.def));
   const tot = (s: BattleSide) => s.lanes.reduce((n, l) => n + l.troops, 0) + (s.reserve ?? 0);
@@ -158,7 +158,40 @@ export function createField(b: BattleState): FieldSim {
   for (const sd of ['att', 'def'] as const) { sim.skills[sd] = skillsFor(sim, sd); setFormation(sim, sd, aiFormation(sim, sd)); }
   ev(sim, 'start', mode === 'naval' ? `${b.att.name}水师与${b.def.name}水师会于${b.nodeName}江面。` : `${b.att.name}与${b.def.name}列阵于${b.nodeName}。`);
   stratagemOpening(sim, b, fr);
+  tacticOpening(sim, b);
   return sim;
+}
+
+/** 战法开场：夜袭（攻方，谋略、骑兵、天候定成算；敌扎营则多半有备）；诱敌之计为谋高者识破则反受其害。
+ * 强攻在 compose 之后已加于各营（战力 +10%、阵脚更易动摇）；诱敌之成算加在 openingChance。 */
+export function nightChance(b: Pick<BattleState, 'att' | 'def' | 'weather'>): number {
+  let p = 0.45 + ((b.att.mou ?? 50) - (b.def.mou ?? 50)) / 100 + b.att.mix.cav * 0.3;
+  if (b.weather === 'rain') p -= 0.15;
+  if (b.weather === 'fog') p += 0.1;
+  if (b.def.camp) p *= 0.4;
+  return clamp(p, 0.05, 0.85);
+}
+function tacticOpening(sim: FieldSim, b: BattleState) {
+  const rng = makeRng(b.seed ^ 0x7ac7);
+  if (b.att.tactic === 'night' && sim.mode === 'field') {
+    if (rng.next() < nightChance(b)) {
+      for (const u of sim.units) if (u.side === 'def') { u.morale = Math.max(0, u.morale - 12); u.stamina = Math.max(30, u.stamina - 25); }
+      sim.resolve.def = Math.max(0, sim.resolve.def - 8);
+      ev(sim, 'ambush', `${b.att.commanderName}乘夜衔枚劫营，${b.def.name}营中大乱！`, { side: 'att' });
+    } else {
+      for (const u of sim.units) if (u.side === 'att') u.morale = Math.max(0, u.morale - 8);
+      sim.resolve.att = Math.max(0, sim.resolve.att - 5);
+      ev(sim, 'twist', `${b.att.name}夜袭为${b.def.name}所觉${b.def.camp ? '（营垒有备）' : ''}，无功而返，士卒疲惫。`, { side: 'def' });
+    }
+  }
+  for (const side of ['att', 'def'] as const) {
+    if (b[side].tactic !== 'lure' || sim.flags['opening' + side]) continue;
+    const foe = foeOf(side);
+    if ((b[foe].mou ?? 50) - (b[side].mou ?? 50) >= 10) {
+      for (const u of sim.units) if (u.side === side) u.morale = Math.max(0, u.morale - 6);
+      ev(sim, 'twist', `${b[side].commanderName}佯败诱敌，为${b[foe].commanderName}识破，反致阵脚松动。`, { side: foe });
+    }
+  }
 }
 function avgMorale(s: BattleSide) { const t = s.lanes.reduce((n, l) => n + l.troops, 0); return t ? s.lanes.reduce((n, l) => n + l.morale * l.troops, 0) / t : 60; }
 
@@ -634,7 +667,7 @@ export function runField(b: BattleState, opts: { maxT?: number; dt?: number } = 
   void opts.dt;
   let next = 0;
   while (!sim.over && sim.t < maxT) {
-    if (sim.t >= next) { aiField(sim, 'att', { hold: !!b.att.camp }); aiField(sim, 'def', { hold: !!b.def.camp }); next = sim.t + 2; }
+    if (sim.t >= next) { aiField(sim, 'att', { hold: !!b.att.camp, eager: b.att.tactic === 'rush' }); aiField(sim, 'def', { hold: !!b.def.camp, eager: b.def.tactic === 'rush' }); next = sim.t + 2; }
     stepField(sim, TICK);
   }
   return sim;
@@ -844,8 +877,14 @@ export function openingChance(b: Pick<BattleState, 'att' | 'def' | 'kind'>, side
   if (b.kind === 'naval') return 0;
   const foe = side === 'att' ? 'def' : 'att';
   const gap = (b[side].mou ?? 50) - (b[foe].mou ?? 50);
-  if (gap < 20) return 0;
   const fewer = b[side].lanes.reduce((n, l) => n + l.troops, 0) < b[foe].lanes.reduce((n, l) => n + l.troops, 0) ? 0.1 : 0;
+  // 定了诱敌之法：谋略不逊于敌（差不到十）便有成算，敌若强攻冒进更易中计
+  if (b[side].tactic === 'lure') {
+    if (gap <= -10) return 0;
+    const base = gap >= 20 ? (gap - 20) / 60 + 0.05 + fewer : 0.05 + fewer + Math.max(0, gap) / 200;
+    return clamp(base + 0.2 + (b[foe].tactic === 'rush' ? 0.3 : 0), 0, 0.75);
+  }
+  if (gap < 20) return 0;
   return clamp((gap - 20) / 60 + 0.05 + fewer, 0, 0.5);
 }
 function stratagemOpening(sim: FieldSim, b: BattleState, rng: Rng) {
@@ -862,8 +901,10 @@ function stratagemOpening(sim: FieldSim, b: BattleState, rng: Rng) {
     pick.x = pick.x < 500 ? 70 : 930;
     pick.y = clamp(fy + (foe === 'att' ? 90 : -90), 40, 960);
     pick.hidden = true;
-    for (const u of foes) u.morale = Math.max(0, u.morale - 8);
-    sim.resolve[foe] = Math.max(0, sim.resolve[foe] - 6);
+    // 敌方强攻冒进：中伏更深
+    const rash = b[foe].tactic === 'rush' ? 2.5 : 1;
+    for (const u of foes) u.morale = Math.max(0, u.morale - 8 * rash);
+    sim.resolve[foe] = Math.max(0, sim.resolve[foe] - 6 * rash);
     sim.flags['opening' + side] = 1;
     ev(sim, 'ambush', side === 'def'
       ? `${b.def.commanderName}佯退诱敌，${b.att.name}追入伏地——${pick.name}已潜伏在侧后！`

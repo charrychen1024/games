@@ -207,6 +207,11 @@ export function buildFieldBattle(s: GameState, c: Contact): BattleState | null {
   const camped = (list: Army[]) => list.length > 0 && list.every(a => a.camp && !c.arrivals[a.id] && a.order.kind === 'hold');
   if (camped(defArmies)) def.camp = true;
   if (camped(attArmies)) att.camp = true;
+  // 战法：取兵最多一军所定（守方扎营则不出夜袭之类，夜袭只攻方可用）
+  const lead = (list: Army[]) => [...list].sort((x, y) => y.troops - x.troops)[0]?.tactic;
+  const ta = lead(attArmies), td = lead(defArmies);
+  if (ta) att.tactic = ta;
+  if (td && td !== 'night') def.tactic = td;
   // 港口、渡口，或江边相遇而两军多为水师：水战
   const n = NODE[c.node];
   const watery = n.kind === 'port' || n.kind === 'ferry' || neighbors(c.node).some(x => x.route.kind === 'river' || x.route.kind === 'sea');
@@ -273,6 +278,8 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
     const losers = (b.winner === 'att' ? defArmies : attArmies).filter(a => s.armies[a.id]);
     if (b.outcome === 'rout' || b.outcome === 'repulsed' || b.outcome === 'collapse' || b.outcome === 'retreat') for (const a of losers) retreat(s, a, b.outcome === 'rout' || b.outcome === 'collapse');
     maybeCapture(s, b, loserSide);
+    if (b.outcome === 'rout' || b.outcome === 'collapse' || b.outcome === 'retreat' || b.outcome === 'repulsed')
+      takeCaptives(s, (b.winner === 'att' ? attArmies : defArmies).filter(a => s.armies[a.id]), b.winner === 'att' ? defLoss : attLoss, b.outcome === 'rout' || b.outcome === 'collapse', b.node);
   } else {
     if (b.winner === 'att' && (b.outcome === 'breach' || b.outcome === 'surrender' || b.outcome === 'abandon')) {
       capture(s, b.node, b.att.faction, b.outcome === 'surrender' ? '献城' : b.outcome === 'abandon' ? '弃城' : '陷城', b.att.commander);
@@ -285,6 +292,29 @@ export function applyBattle(s: GameState, b: BattleState, manual: boolean) {
     }
   }
   void winnerSide;
+}
+
+/** 野战得胜之后的降卒：败兵中有一部分被俘（大胜约四分之一、小胜约八分之一）。
+ * 收编：并入得胜之军最多的一支，新附之卒士气低（按三十计入，拉低全军士气）；
+ * 释归：放归乡里，所在城民心 +3，仁义之名一年之内使劝降各城 +8%；
+ * 常例：野战不收。 */
+export function takeCaptives(s: GameState, winners: Army[], loserLoss: number, big: boolean, node: string) {
+  const w = [...winners].sort((x, y) => y.troops - x.troops)[0];
+  if (!w || !w.captives || loserLoss < 400) return;
+  const n = Math.round(loserLoss * (big ? 0.25 : 0.12) / 100) * 100;
+  if (n < 100) return;
+  const mine = topOf(s, w.faction) === s.player;
+  if (w.captives === 'absorb') {
+    if (w.troops >= 50000) return;
+    w.morale = Math.round((w.morale * w.troops + 30 * n) / (w.troops + n));
+    w.troops += n;
+    if (mine) report(s, { cat: '军报', node, text: `${w.name}收编降卒 ${troopsText(n)}，兵力增至 ${troopsText(w.troops)}；新附之卒未经训练、人心未附，全军士气降至 ${w.morale}。`, src: { kind: 'order', ref: w.id } });
+  } else {
+    const c = s.cities[node];
+    if (c) bump(s, node, 'minxin', 3, `${w.name}释归降卒`, { kind: 'order', ref: w.id });
+    s.flags['mercy_' + topOf(s, w.faction)] = s.turn;
+    if (mine) report(s, { cat: '军报', node, text: `${w.name}释归降卒 ${troopsText(n)}，发给路费遣还乡里。仁义之名传开，一年之内各城更肯归附。`, src: { kind: 'order', ref: w.id } });
+  }
 }
 
 function distribute(armies: Army[], loss: number, morale: number) {
@@ -480,9 +510,14 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
       const k = Math.min(keep, occupiers[0].troops - 500);
       if (k > 0) { occupiers[0].troops -= k; bump(s, node, 'garrison', k, `${occupiers[0].name}分兵驻守`, src); }
       if (occupiers[0].faction !== newCtrl) c.controller = occupiers[0].faction;
-      // 战果：残卒约两成投降、收编入军；得胜之师士气上扬
-      const surrender = Math.round(g0 * 0.2);
-      if (surrender >= 100) { occupiers[0].troops += surrender; spoils.troops = surrender; }
+      // 战果：残卒投降——常例收两成入军；定了“收编”收三成五（新附士气低）；定了“释归”一概放还，得仁义之名
+      const how2 = occupiers[0].captives;
+      const surrender = Math.round(g0 * (how2 === 'absorb' ? 0.35 : how2 === 'release' ? 0 : 0.2));
+      if (surrender >= 100) {
+        if (how2 === 'absorb') occupiers[0].morale = Math.round((occupiers[0].morale * occupiers[0].troops + 30 * surrender) / (occupiers[0].troops + surrender));
+        occupiers[0].troops += surrender; spoils.troops = surrender;
+      }
+      if (how2 === 'release' && g0 >= 300) { s.flags['mercy_' + topOf(s, occupiers[0].faction)] = s.turn; bump(s, node, 'minxin', 8, '释归降卒，安抚百姓', src); }
       for (const a of occupiers) a.morale = Math.min(100, a.morale + 8);
     }
     // 记下城中被执者，史事据此叙述（被俘者随即押往敌方治所）

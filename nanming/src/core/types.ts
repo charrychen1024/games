@@ -177,6 +177,10 @@ export interface Army {
   pace?: 'steady' | 'forced';
   forage?: 'forage' | 'plunder';
   camp?: boolean;
+  /** 战法：强攻、诱敌、夜袭（缺省临阵应变） */
+  tactic?: 'rush' | 'lure' | 'night';
+  /** 降卒：收编入伍、释归乡里（缺省按常例：破城收两成） */
+  captives?: 'absorb' | 'release';
 }
 export interface Siege {
   node: NodeId;
@@ -203,7 +207,7 @@ export type Order =
   /** 改换粮台 */
   | { id: string; kind: 'supply'; army: ArmyId; node: NodeId }
   /** 军略：行军、粮秣、营垒（null 表示复归常例） */
-  | { id: string; kind: 'conduct'; army: ArmyId; pace?: 'steady' | 'forced' | null; forage?: 'forage' | 'plunder' | null; camp?: boolean }
+  | { id: string; kind: 'conduct'; army: ArmyId; pace?: 'steady' | 'forced' | null; forage?: 'forage' | 'plunder' | null; camp?: boolean; tactic?: 'rush' | 'lure' | 'night' | null; captives?: 'absorb' | 'release' | null }
   | { id: string; kind: 'reinforce'; node: NodeId; army: ArmyId; troops: number }
   /** 裁兵：裁撤本城驻军（army 缺省）或在本城的某军若干人 */
   | { id: string; kind: 'disband'; node: NodeId; army?: ArmyId; troops: number }
