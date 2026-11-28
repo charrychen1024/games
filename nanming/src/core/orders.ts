@@ -6,7 +6,7 @@ import { setArmyOrder, capture } from './military';
 import { recruitSilverOf, gunBonusOf, eduSteadfast } from './develop';
 import { PLUNDER_INFAMY, RECRUIT_SILVER, DISBAND_SILVER, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
 import { rngFor } from './rng';
-import { seekTalent, seekError, prisonerError, handlePrisoner, SEEK_SILVER, govEffects, hasTrait } from './people';
+import { seekTalent, seekError, prisonerError, ransomError, handlePrisoner, SEEK_SILVER, govEffects, hasTrait } from './people';
 import { shortestPath, neighbors, NODE, pathDays } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
@@ -21,7 +21,7 @@ export function describeOrder(s: GameState, o: Order): string {
     case 'policy': return `${nodeName(o.node)}改行“${POLICY_NAME[o.policy]}”方针`;
     case 'appoint': return `任命${charName(s, o.char)}主政${nodeName(o.node)}`;
     case 'seek': return `在${nodeName(o.node)}招贤（${SEEK_SILVER / 1000}千两）`;
-    case 'prisoner': return `${o.act === 'recruit' ? '劝降' : o.act === 'release' ? '释放' : '处斩'}俘虏${charName(s, o.char)}`;
+    case 'prisoner': return `${o.act === 'recruit' ? '劝降' : o.act === 'release' ? '释放' : o.act === 'ransom' ? '索赎' : '处斩'}俘虏${charName(s, o.char)}`;
     case 'transfer': return `自${nodeName(o.from)}调${o.grain ? `粮 ${o.grain} 石` : ''}${o.grain && o.silver ? '、' : ''}${o.silver ? `银 ${o.silver} 两` : ''}往${nodeName(o.to)}`;
     case 'recruit': return `${nodeName(o.node)}募兵 ${o.troops} 人`;
     case 'disband': return o.army ? `${s.armies[o.army]?.name ?? '军队'}裁撤 ${o.troops} 人${o.troops >= (s.armies[o.army]?.troops ?? Infinity) ? '（全军遣散）' : ''}` : `${nodeName(o.node)}裁撤驻军 ${o.troops} 人`;
@@ -86,7 +86,7 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
   switch (o.kind) {
     case 'policy': return own(o.node) ? null : '只能给自己的城定方针';
     case 'seek': return seekError(s, f, o.node);
-    case 'prisoner': return prisonerError(s, f, o.char);
+    case 'prisoner': return prisonerError(s, f, o.char) ?? (o.act === 'ransom' ? ransomError(s, o.char) : null);
     case 'appoint': {
       const c = s.chars[o.char];
       if (!own(o.node)) return '只能任命自己城池的主官';

@@ -217,6 +217,19 @@ try {
   await page.click('#conduct-pace-null');
   await wait(200);
   check('改回常行即撤去该令', (await page.evaluate(() => NM.orders.length)) === used0);
+  // 俘虏：点“处置”弹出四种处置卡（后果、成算、依据），选定后卡上显示已定、月末见分晓
+  {
+    const pid = await page.evaluate(() => { const s = NM.s; const c = Object.values(s.chars).find(x => x.faction === 'shun' && x.status === 'active' && s.factions.shun.leader !== x.id); c.status = 'captured'; c.captor = s.player; c.capturedAt = s.turn; NM.openChars('prisoners'); return c.id; });
+    await wait(300);
+    await page.click('#pr-open-' + pid);
+    await wait(300);
+    check('俘虏处置弹出四张卡，写明成算与依据', (await page.locator('#modal .gcard').count()) === 4 && (await text('#modal')).includes('成算') && (await text('#modal')).includes('降意'));
+    await page.click('[data-card="recruit"]');
+    await wait(400);
+    check('选定劝降后，俘虏卡显示已定、月末见分晓', (await text('#pr-q-' + pid)).includes('月末见分晓'));
+    await page.evaluate(pid => { NM.orders = NM.orders.filter(o => o.kind !== 'prisoner'); const c = NM.s.chars[pid]; c.status = 'active'; delete c.captor; NM.closeModal(); NM.renderOrders(); NM.renderTop(); }, pid);
+    await wait(150);
+  }
   // 号令黄得功
   await page.evaluate(() => NM.selectArmy('a_huang'));
   await wait(200);

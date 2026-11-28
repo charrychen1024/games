@@ -221,7 +221,7 @@ export type Order =
   /** 招贤：在本城延请地方人物 */
   | { id: string; kind: 'seek'; node: NodeId }
   /** 处置俘虏：劝降、释放、处斩 */
-  | { id: string; kind: 'prisoner'; char: CharId; act: 'recruit' | 'release' | 'execute' };
+  | { id: string; kind: 'prisoner'; char: CharId; act: 'recruit' | 'release' | 'execute' | 'ransom' };
 
 /** 跨月进行中的交涉 */
 export interface Mission {

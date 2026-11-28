@@ -15,7 +15,7 @@ import { cardHand, cardArt, type GameCard, type Chip } from './cards';
 import { newsArt, type ArtCat } from './newsArt';
 import { hashKeys } from '../core/rng';
 import { scene, type SceneKind, type SceneOpts, type Party, type Hat } from './scene';
-import { traitsOf, TRAITS, govEffects, governorOf, prisonerChance, SEEK_SILVER, SEEK_COOLDOWN } from '../core/people';
+import { traitsOf, TRAITS, govEffects, governorOf, prisonerOdds, ransomOf, ransomError, SEEK_SILVER, SEEK_COOLDOWN } from '../core/people';
 import { resolveMonth, unificationProgress, unifierRole, type Answer } from '../core/turn';
 import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
 import { POLITIES } from '../data/factions';
@@ -1854,8 +1854,8 @@ export class App {
         traitsOf(c).length ? h('div', { class: 'r-traits' }, ...traitsOf(c).map(t => h('i', { class: TRAITS[t].tone, 'data-tip': `${TRAITS[t].name}：${TRAITS[t].desc}` }, TRAITS[t].name))) : null,
         group === 'prisoners' ? this.prisonerBtns(c) : null));
     }
-    const empty = group === 'prisoners' ? '眼下没有俘虏。城破被执、阵前被擒、扣下的敌使都会押到这里，由你劝降、释放或处斩。' : '无';
-    this.modal('chars', '人物', group === 'prisoners' ? `${list.length} 人在押 · 劝降成则改投、可以任用；释放得仁名；处斩则其旧主上下同仇` : `${list.length} 人 · 点人物看档案`, [tabs, list.length ? grid : h('div', { class: 'note' }, empty)], [{ label: '关闭', icon: 'close', onclick: () => {} }], 'wide');
+    const empty = group === 'prisoners' ? '眼下没有俘虏。城破被执、阵前被擒、扣下的敌使都会押到这里，由你劝降、索赎、释放或处斩。' : '无';
+    this.modal('chars', '人物', group === 'prisoners' ? `${list.length} 人在押 · 点“处置”看各种处置的后果与成算；月末施行` : `${list.length} 人 · 点人物看档案`, [tabs, list.length ? grid : h('div', { class: 'note' }, empty)], [{ label: '关闭', icon: 'close', onclick: () => {} }], 'wide');
     gsap.from('#modal .rcard', { opacity: 0, y: 20, scale: 0.9, duration: 0.3, stagger: 0.02, ease: 'back.out(1.6)' });
   }
 
@@ -1863,18 +1863,42 @@ export class App {
   prisonerBtns(c: Character): HTMLElement {
     const s = this.s!;
     const queued = this.orders.find(o => o.kind === 'prisoner' && o.char === c.id) as Extract<Order, { kind: 'prisoner' }> | undefined;
-    const p = prisonerChance(s, s.player, c.id);
-    const act = (a: 'recruit' | 'release' | 'execute') => (e: Event) => {
-      e.stopPropagation();
-      this.orders = this.orders.filter(o => !(o.kind === 'prisoner' && o.char === c.id));
-      this.addOrder({ id: this.newOrderId(), kind: 'prisoner', char: c.id, act: a });
-      this.closeModal(); this.openChars('prisoners');
-    };
-    const b = (a: 'recruit' | 'release' | 'execute', label: string, tip: string) => h('span', { class: 'pr-b' + (queued?.act === a ? ' on' : '') + (a === 'execute' ? ' bad' : ''), role: 'button', 'data-tip': tip, onclick: act(a) }, label);
+    const held = s.turn - (c.capturedAt ?? s.turn);
+    const NAME = { recruit: '劝降', release: '释放', execute: '处斩', ransom: '索赎' } as const;
+    const open = (e: Event) => { e.stopPropagation(); click(); this.formPrisoner(c.id); };
     return h('div', { class: 'pr-acts' },
-      b('recruit', p < 0.05 ? '劝降·极难' : `劝降 约${Math.round(p * 20) * 5}%`, '成则改投我方、可以任用；不成则降意稍增，下月可再劝'),
-      b('release', '释放', '遣归旧主；我方各城民心 +1'),
-      b('execute', '处斩', '身死；其旧主上下主战 +5，我方主战之臣忠诚 +1'));
+      h('small', { class: 'pr-held' }, `原属${s.factions[c.faction]?.short ?? '—'} · 在押 ${held} 月`),
+      queued
+        ? h('span', { class: 'pr-b on', role: 'button', id: 'pr-q-' + c.id, 'data-tip': '月末结算时施行；点此改换或撤销', onclick: open }, `已定：${NAME[queued.act]} · 月末见分晓`)
+        : h('span', { class: 'pr-b', role: 'button', id: 'pr-open-' + c.id, onclick: open }, ic('prisoner'), '处置'));
+  }
+
+  /** 处置俘虏：四种处置各写后果、成算与依据；月末施行，占一道政令 */
+  formPrisoner(id: string) {
+    const s = this.s!, c = s.chars[id];
+    const queued = this.orders.find(o => o.kind === 'prisoner' && o.char === id) as Extract<Order, { kind: 'prisoner' }> | undefined;
+    const odds = prisonerOdds(s, s.player, id);
+    const old = s.factions[c.faction];
+    const price = ransomOf(c), rErr = ransomError(s, id);
+    const pc = Math.round(odds.p * 100);
+    const COL = { recruit: '#3f6f8f', ransom: '#b0702a', release: '#5f8a3a', execute: '#7d1a12' } as const;
+    const ICON = { recruit: 'persuade', ransom: 'silver', release: 'minxin', execute: 'war' } as const;
+    const cards: GameCard[] = ([
+      ['recruit', '劝降', [{ icon: 'persuade', text: `成算约 ${pc}%`, tone: pc >= 30 ? 'good' : 'bad' }, { icon: 'chars', text: '成则改投、可任用' }], `不成则降意 +5，下月可再劝。依据：${odds.factors.join('；')}`],
+      ['ransom', '索赎', rErr ? [{ icon: 'close', text: rErr, tone: 'bad' }] : [{ icon: 'silver', text: `+${fmt(price)} 两`, tone: 'good' }, { icon: 'chars', text: `放回${old?.short ?? '旧主'}` }], `向${old?.name ?? '旧主'}索银赎人，银入本方治所府库；才高者价高。此人回去后仍为敌用。`],
+      ['release', '释放', [{ icon: 'minxin', text: '各城民心 +1', tone: 'good' }, { icon: 'war', text: '其人主战 −10', tone: 'good' }], `以礼遣归${old?.name ?? '旧主'}，得宽厚之名；此人对我方敌意减轻，日后或可招抚。`],
+      ['execute', '处斩', [{ icon: 'war', text: `${old?.short ?? '旧主'}上下主战 +5`, tone: 'bad' }, { icon: 'morale', text: '本方主战之臣忠诚 +1' }], '永绝后患；但其旧主上下同仇，更难议和、招抚。'],
+    ] as const).map(([k, title, chips, note], i) => ({ id: k, title, art: cardArt(ICON[k], COL[k], i), chips: [...chips] as Chip[], note, on: queued?.act === k, color: COL[k], disabled: k === 'ransom' && rErr ? rErr : undefined }));
+    this.modal('prisoner', `处置 · ${c.name}`, `${c.title} · 原属${old?.name ?? '—'} · 月末施行，占一道政令`, [
+      h('div', { class: 'cnote', id: 'prisoner-note' }, ic('info'), h('span', null, queued ? `已定“${({ recruit: '劝降', release: '释放', execute: '处斩', ransom: '索赎' } as const)[queued.act]}”，月末结算时施行。可另选一张改换，或撤销。` : '选一张。处置在月末结算时施行，结果见当月军情；结算之前可以改换或撤销。')),
+      cardHand(cards, k => {
+        if (k === 'ransom' && rErr) { this.toast(rErr, 'close'); return; }
+        this.closeModal();
+        this.orders = this.orders.filter(o => !(o.kind === 'prisoner' && o.char === id));
+        this.addOrder({ id: this.newOrderId(), kind: 'prisoner', char: id, act: k as 'recruit' | 'release' | 'execute' | 'ransom' });
+        this.openChars('prisoners');
+      }, { stampText: '定' })],
+      [...(queued ? [{ label: '撤销处置', icon: 'close', id: 'prisoner-undo', onclick: () => { this.removeOrder(queued.id); setTimeout(() => this.openChars('prisoners'), 0); } }] : []), { label: '再想想', icon: 'hourglass', onclick: () => { setTimeout(() => this.openChars('prisoners'), 0); } }], 'wide');
   }
 
   openChar(id: string) {

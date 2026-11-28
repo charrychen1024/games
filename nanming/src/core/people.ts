@@ -159,18 +159,34 @@ export function seekError(s: GameState, f: string, node: string): string | null 
 
 /* ---------- 俘虏 ---------- */
 /** 劝降俘虏的把握：降意、对旧主的忠诚、志节（主战而异朝者更难） */
-export function prisonerChance(s: GameState, f: string, id: string): number {
+export function prisonerChance(s: GameState, f: string, id: string): number { return prisonerOdds(s, f, id).p; }
+/** 劝降俘虏的成算与其依据（供处置卡逐条写明） */
+export function prisonerOdds(s: GameState, f: string, id: string): { p: number; factors: string[] } {
   const c = s.chars[id];
-  if (!c) return 0;
+  if (!c) return { p: 0, factors: [] };
+  const factors: string[] = ['底数 8%'];
   let p = 0.08 + c.att.surrender / 160 + (100 - c.att.loyalty) / 260;
+  factors.push(`降意 ${Math.round(c.att.surrender)}（+${Math.round(c.att.surrender / 1.6)}%）`, `忠诚 ${Math.round(c.att.loyalty)}（+${Math.round((100 - c.att.loyalty) / 2.6)}%）`);
   const old = s.factions[c.faction], me = s.factions[f];
-  if (old && me && old.polity !== me.polity && c.att.hawk > 50) p -= 0.15;
-  if (old && me && old.polity === me.polity) p += 0.1;
-  if (old?.leader === id) p -= 0.2;
-  if (c.att.loyalty >= 95) p = Math.min(p, 0.05);
-  return Math.max(0.02, Math.min(0.85, p));
+  if (old && me && old.polity !== me.polity && c.att.hawk > 50) { p -= 0.15; factors.push('主战且异朝，誓不相从 −15%'); }
+  if (old && me && old.polity === me.polity) { p += 0.1; factors.push('同奉一朝 +10%'); }
+  if (old?.leader === id) { p -= 0.2; factors.push('一方之主 −20%'); }
+  const held = s.turn - (c.capturedAt ?? s.turn);
+  if (held >= 6) factors.push(`在押 ${held} 月（每劝不成降意 +5）`);
+  if (c.att.loyalty >= 95) { p = Math.min(p, 0.05); factors.push('忠贞不二，至多 5%'); }
+  return { p: Math.max(0.02, Math.min(0.85, p)), factors };
 }
-export type PrisonerAct = 'recruit' | 'release' | 'execute';
+/** 索赎之价：才高者价高；旧主治所府库须付得起 */
+export const ransomOf = (c: GameState['chars'][string]) => Math.round((2000 + (c.ab.tong + c.ab.zheng + c.ab.mou + c.ab.wang) * 30) / 500) * 500;
+export function ransomError(s: GameState, id: string): string | null {
+  const c = s.chars[id];
+  const home = c && s.factions[c.faction];
+  if (!home || home.defunct) return '旧主已亡，无人来赎';
+  const cap = s.cities[home.capital];
+  if (!cap || cap.controller !== home.id || cap.silver < ransomOf(c)) return `${home.name}府库不足，赎不起`;
+  return null;
+}
+export type PrisonerAct = 'recruit' | 'release' | 'execute' | 'ransom';
 export function prisonerError(s: GameState, f: string, id: string): string | null {
   const c = s.chars[id];
   if (!c || c.status !== 'captured') return '此人不在押';
@@ -193,6 +209,14 @@ export function handlePrisoner(s: GameState, f: string, id: string, act: Prisone
       adjustAtt(s, id, 'surrender', 5, '久系思变');
       if (mine) report(s, { cat: '人事', ok: false, text: `劝降${c.name}，不从。（把握 ${Math.round(p * 100)}%；久系之后降意稍增）` });
     }
+  } else if (act === 'ransom') {
+    const err = ransomError(s, id);
+    if (err) { if (mine) report(s, { cat: '人事', ok: false, text: `索赎${c.name}不成：${err}。仍在押。` }); return; }
+    const price = ransomOf(c), home = s.factions[old], cap = s.factions[f]?.capital;
+    bump(s, home.capital, 'silver', -price, `赎回${c.name}`, { kind: 'order', ref });
+    if (cap && s.cities[cap]?.controller === f) bump(s, cap, 'silver', price, `${home.name}赎${c.name}`, { kind: 'order', ref });
+    freeCaptive(s, c, old);
+    report(s, { cat: '人事', ok: true, node: cap, text: `${home.name}出银 ${price} 两赎回${c.name}。`, faction: mine ? undefined : f });
   } else if (act === 'release') {
     freeCaptive(s, c, old);
     adjustAtt(s, id, 'hawk', -10, `${factionName(s, f)}以礼遣归`);

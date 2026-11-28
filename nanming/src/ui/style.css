@@ -1217,10 +1217,12 @@ button.rc.on::after { content: '▴'; color: var(--gold-2); }
 .rcard .r-traits { display: flex; gap: 3px; justify-content: center; flex-wrap: wrap; margin-top: 2px; }
 .rcard .r-traits i { font-style: normal; font-size: 10.5px; font-weight: 900; padding: 0 5px; border-radius: 6px; color: #fff3d9; background: #3f6a2e; }
 .rcard .r-traits i.bad { background: #8f2a1f; }
-.rcard .pr-acts { display: flex; gap: 3px; margin-top: 4px; justify-content: center; flex-wrap: wrap; }
-.rcard .pr-b { font-size: 11px; font-weight: 900; padding: 2px 6px; border-radius: 7px; border: 1px solid var(--gold-dim); color: var(--gold-2); background: rgba(0, 0, 0, 0.35); cursor: pointer; }
+.rcard .pr-acts { display: flex; flex-direction: column; align-items: center; gap: 3px; margin-top: 4px; }
+.rcard .pr-held { color: var(--dim); font-size: 10.5px; }
+.rcard .pr-b { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 900; padding: 2px 6px; border-radius: 7px; border: 1px solid var(--gold-dim); color: var(--gold-2); background: rgba(0, 0, 0, 0.35); cursor: pointer; }
 .rcard .pr-b:hover { background: #5a3a1f; }
 .rcard .pr-b.bad { color: #ff9a85; border-color: #8f2a1f; }
+.rcard .pr-b .ic { width: 13px; height: 13px; }
 .rcard .pr-b.on { color: #fff3d9; background: linear-gradient(180deg, #c23a2b, #6e170f); border-color: var(--gold); }
 
 /* 政令台八枚按钮：窄屏收紧，开着城池面板时居中于左侧军队栏与面板之间，不压面板 */
