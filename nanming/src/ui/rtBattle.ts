@@ -57,7 +57,8 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   (window as unknown as { NM_siege?: unknown }).NM_siege = { sim, view };
   const units = () => sim.units as AnyUnit[];
   const step = (dt: number) => { if (ssim) stepSiege(ssim, dt); else stepField(fsim!, dt); };
-  const ai = (sd: 'att' | 'def', opts: { eager?: boolean; hold?: boolean } = {}) => { if (ssim) aiCommands(ssim, sd, opts); else aiField(fsim!, sd, opts); };
+  // 电脑下令：野战带上该方军略（坚守营垒、强攻），与快算一致
+  const ai = (sd: 'att' | 'def', opts?: { eager?: boolean; hold?: boolean }) => { if (ssim) aiCommands(ssim, sd, opts ?? {}); else aiField(fsim!, sd, opts ?? { hold: !!b0[sd].camp, eager: b0[sd].tactic === 'rush' }); };
   const cmd = (unit: string, o: AnyOrder) => { if (ssim) command(ssim, { unit, side, order: o as SOrder }); else commandF(fsim!, { unit, side, order: o as FOrder }); };
   const isLegal = (u: AnyUnit, o: AnyOrder) => ssim ? legal(u as SUnit, o as SOrder) : legalF(u as FUnit, o as FOrder);
   const orderText = (o: AnyOrder): string => {
@@ -71,7 +72,8 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   (window as unknown as { NM_siegeSkip?: () => void }).NM_siegeSkip = () => {
     if (phase === 'deploy') start();
     let next = 0;
-    while (!sim.over && sim.t < 3600) { if (sim.t >= next) { ai(foe); ai(side); next = sim.t + 2; } step(0.1); }
+    // 与快算同一规矩：攻方先下令，每拍之后双方部将自择战机
+    while (!sim.over && sim.t < 3600) { if (sim.t >= next) { ai('att'); ai('def'); next = sim.t + 2; } step(0.1); for (const sd of ['att', 'def'] as const) if (!sim.over) { if (ssim) autoMomentS(ssim, sd); else autoMomentF(fsim!, sd); } }
     if (!sim.over && ssim) defDecision(ssim, 'abandon');
   };
   let phase: 'deploy' | 'fight' | 'end' = 'deploy';
@@ -481,7 +483,8 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
       acc += dtReal * speed;
       while (acc >= 0.1 && !sim.over) {
         acc -= 0.1;
-        if (sim.t >= aiNext) { ai(foe); if (autoMe) ai(side); aiNext = sim.t + 2; }
+        // 下令次序与快算相同：攻方先、守方后（我方仅在部将代打时由电脑下令）
+        if (sim.t >= aiNext) { for (const sd of ['att', 'def'] as const) if (sd === foe || autoMe) ai(sd); aiNext = sim.t + 2; }
         step(0.1);
         view.harvest(now);
         // 战机：与快算同一拍、同一次序检查——敌方的由敌将自择，我方的停下请你定夺（部将代打则代你择）
@@ -626,13 +629,14 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
         breach: ['破城', `${b0.att.name}夺下${b0.nodeName}。`, '城破', `${b0.nodeName}失守。`],
         surrender: ['城降', `${b0.nodeName}守军开城出降。`, '城降', `${b0.nodeName}守军崩溃，开城出降。`],
         collapse: ['城降', `${b0.nodeName}守军崩溃。`, '城降', `${b0.nodeName}守军崩溃。`],
+        blockade: ['围城', '本月不攻，深沟高垒断其粮道；城中粮尽则守军逃散、守将或献城。', '被围', `${b0.att.name}围而不攻，城中粮道已断。`],
         retreat: ['未克', `收兵回营，城未克；各军改为围困（要再攻须重新下令）。${wallText}${ssim.gate.hp <= 0 ? '，城门已破' : ''}。`, '守住', `${b0.att.name}收兵退去，${b0.nodeName}守住了。`],
         repulsed: ['受挫', `攻城受挫，${b0.att.name}溃退。`, '击退', `击退${b0.att.name}。`],
         abandon: ['入城', `${b0.def.name}弃城而走，${b0.nodeName}到手。`, '弃城', `弃${b0.nodeName}而走，残部退往邻城。`],
       };
       const row = table[o.outcome];
       const r = side === 'att' ? { big: row[0], text: row[1] } : { big: row[2], text: row[3] };
-      return { win: meWin, ...r, tone: meWin ? 'win' : o.outcome === 'retreat' ? 'even' : 'lose' };
+      return { win: meWin, ...r, tone: meWin ? 'win' : o.outcome === 'retreat' || o.outcome === 'blockade' ? 'even' : 'lose' };
     }
     const f = fsim!.over!;
     const enemy = b0[foe].name;

@@ -171,7 +171,9 @@ export function cityForecast(s: GameState, c: City): CityForecast {
   const sum = (l: ForecastItem[]) => l.reduce((n, i) => n + i.v, 0);
   const gN = sum(G), sN = sum(S);
   // 按月末（常规收支之后）的仓粮府库，看会不会触发自动粜籴（审查：预估增粮而当月自动卖掉两万多石）
-  const m = c.controller === s.player || topOf(s, c.controller) !== topOf(s, s.player) ? autoMarket(s, c, c.grain + gN, c.silver + sN) : null;
+  // 月结里自动粜籴在起运、解饷之前：按起运前的库存判断（2026-11-28 复核：预告卖两万多石而实际未卖）；下属之城只自动买、不自动卖，由 autoMarket 内部区分
+  const pre = (items: ForecastItem[]) => items.filter(i => i.kind !== 'remit' && !/霉变/.test(i.label)).reduce((n, i) => n + i.v, 0);
+  const m = autoMarket(s, c, c.grain + pre(G), c.silver + pre(S));
   return { grain: { items: G, net: gN }, silver: { items: S, net: sN }, ...(m ? { auto: { grain: m.grain, silver: m.silver } } : {}) };
 }
 /** 一年展望：按当前城权、驻军、方针不变，逐月滚动（田粮随季节变），看一年内粮、银最低到多少、哪个月起见底，
@@ -300,6 +302,7 @@ export function payArrears(s: GameState, a: import('./types').Army, owed: number
 /** 一个月的内政与钱粮结算 */
 export function runEconomy(s: GameState) {
   const cities = Object.values(s.cities).sort((a, b) => a.id.localeCompare(b.id));
+  const garrisonFed = new Map<string, { need: number; got: number }>();
   // 1. 收入与方针
   for (const c of cities) {
     const inc = monthlyIncome(s, c);
@@ -310,13 +313,16 @@ export function runEconomy(s: GameState) {
   }
   // 2. 驻军与军队粮饷
   for (const c of cities) {
-    bump(s, c.id, 'grain', -Math.round(c.garrison * GRAIN_PER_SOLDIER * garrisonGrainMul(c)), `驻军 ${troopsText(c.garrison)} 人口粮${garrisonGrainMul(c) < 1 ? '（沃野军屯）' : ''}`, { kind: 'upkeep', ref: 'garrison' });
+    // 记下应发与实发之差：断粮与否按此判，不看月底仓里还剩没剩（2026-11-28 复核：足额发粮仍判逃散）
+    const g1 = Math.round(c.garrison * GRAIN_PER_SOLDIER * garrisonGrainMul(c)), g2 = s.sieges[c.id] ? Math.round(c.garrison * GRAIN_PER_SOLDIER * 0.5) : 0;
+    const got1 = -bump(s, c.id, 'grain', -g1, `驻军 ${troopsText(c.garrison)} 人口粮${garrisonGrainMul(c) < 1 ? '（沃野军屯）' : ''}`, { kind: 'upkeep', ref: 'garrison' });
     bump(s, c.id, 'silver', -Math.round(c.garrison * SILVER_PER_SOLDIER), `驻军 ${troopsText(c.garrison)} 人月饷`, { kind: 'upkeep', ref: 'garrison' });
-    if (s.sieges[c.id]) bump(s, c.id, 'grain', -Math.round(c.garrison * GRAIN_PER_SOLDIER * 0.5), '守城加给', { kind: 'siege', ref: c.id });
+    const got2 = g2 ? -bump(s, c.id, 'grain', -g2, '守城加给', { kind: 'siege', ref: c.id }) : 0;
+    if (g1 + g2 > 0) garrisonFed.set(c.id, { need: g1 + g2, got: got1 + got2 });
   }
   fixForeignSupply(s);
   // 当地每月可征之粮有限：四乡按户口（每万口六百石），抄掠者另可搜刮城中存粮；同城各军分食（2026-11-28 审查：空城抄掠全军不饥）
-  const localLeft = new Map<string, number>();
+  const localLeft = new Map<string, number>(), silverLeft = new Map<string, number>();
   for (const a of Object.values(s.armies).sort((x, y) => x.id.localeCompare(y.id))) {
     const mine = (id: string) => { const c = s.cities[id]; return !!c && (c.controller === a.faction || topOf(s, c.controller) === topOf(s, a.faction)); };
     // 就地筹粮：一部分口粮饷银取于所过地方，所在城民心随之下降
@@ -335,6 +341,17 @@ export function runEconomy(s: GameState) {
       // 抄掠：四乡不够，搜刮城中存粮
       if (localGot < localNeed && plundering(s, a) && where.grain > 0) { const take = Math.min(where.grain, localNeed - localGot); bump(s, where.id, 'grain', -take, `${a.name}搜刮存粮`, { kind: 'upkeep', ref: a.id }); localGot += take; }
     }
+    // 就地取饷同样以当地为限（四乡每万口三百两，抄掠者另取城中府库）；不够者记为欠饷（2026-11-28 复核：无银之城抄掠仍无欠饷）
+    const localSNeed = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * fs);
+    let localSShort = 0;
+    if (where && localSNeed > 0) {
+      if (!silverLeft.has(where.id)) silverLeft.set(where.id, Math.round(where.pop * 300));
+      const av = silverLeft.get(where.id)!;
+      let gotS = Math.min(localSNeed, av);
+      silverLeft.set(where.id, av - gotS);
+      if (gotS < localSNeed && plundering(s, a) && where.silver > 0) { const take = Math.min(where.silver, localSNeed - gotS); bump(s, where.id, 'silver', -take, `${a.name}搜刮府库充饷`, { kind: 'upkeep', ref: a.id }); gotS += take; }
+      localSShort = localSNeed - gotS;
+    }
     let got = 0, paid = 0;
     const sup = s.cities[a.supply];
     const cut = sup && a.location !== a.supply ? supplyBlock(s, a.faction, a.supply, a.location) : null;
@@ -348,7 +365,7 @@ export function runEconomy(s: GameState) {
       paid = Math.max(0, Math.min(sup.silver, needS));
       if (paid) bump(s, sup.id, 'silver', -paid, `${a.name}关饷${paid < needS ? '（不足）' : ''}`, { kind: 'upkeep', ref: a.id });
     }
-    payArrears(s, a, needS - paid, sup && mine(a.supply) && !cut ? sup.id : undefined);
+    payArrears(s, a, needS - paid + localSShort, sup && mine(a.supply) && !cut ? sup.id : undefined);
     // 粮台不足：就地征粮（所在城为己方或同阵营时），扰民
     const here = s.cities[a.location];
     if (got < needG && here && here.id !== a.supply && mine(here.id) && here.grain > 0) {
@@ -417,8 +434,10 @@ export function runEconomy(s: GameState) {
     if (!s.sieges[c.id] && c.wall < 60) bump(s, c.id, 'wall', 1, '民夫修城', { kind: 'income' });
     if (s.sieges[c.id]) bump(s, c.id, 'minxin', -3, '城被围困', { kind: 'siege', ref: c.id });
     else if (c.minxin < 55 && c.policy !== 'levy') bump(s, c.id, 'minxin', 0.5, '休养', { kind: 'income' });
-    if (c.grain <= 0 && c.garrison > 0) {
-      const lost = Math.round(c.garrison * 0.1);
+    const fed = garrisonFed.get(c.id);
+    const shortRatio = fed && fed.need > 0 ? Math.max(0, fed.need - fed.got) / fed.need : 0;
+    if (shortRatio > 0.001 && c.garrison > 0) {
+      const lost = Math.round(c.garrison * 0.1 * Math.min(1, shortRatio * 1.5));
       bump(s, c.id, 'garrison', -lost, '断粮，士卒逃散', { kind: 'upkeep', ref: 'garrison' });
       bump(s, c.id, 'minxin', -6, '城中断粮', { kind: 'upkeep', ref: 'garrison' });
     }

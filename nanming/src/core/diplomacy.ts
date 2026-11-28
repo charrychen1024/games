@@ -260,7 +260,7 @@ export function applyOffer(s: GameState, o: Offer, idx: number): string {
       } else if (idx === 1) {
         if (rng.next() < (o.odds ?? 0.4)) { s.flags[pactKey('pass', P, F)] = s.turn + PACT_MONTHS; const v = transfer(treasuryOf(s, F), cap, Math.max(10000, (o.silver ?? 5000) * 2), `向${factionName(s, P)}借道之谢`, `${factionName(s, F)}借道之谢`, 'pass:' + F); text = `${factionName(s, F)}加倍酬谢 ${v} 两，借道一年。`; }
         else { ok = false; adjustAtt(s, s.factions[F].leader, 'hawk', 5, '借道不成'); text = `${leaderName(s, F)}嫌所索过多，使者而去。`; }
-      } else { ok = false; adjustAtt(s, s.factions[F].leader, 'hawk', 5, '借道被拒'); text = `闭关不纳${factionName(s, F)}之军。`; }
+      } else { ok = false; s.flags[`deny_${P}_${F}`] = s.turn + PACT_MONTHS; adjustAtt(s, s.factions[F].leader, 'hawk', 5, '借道被拒'); text = `闭关不纳${factionName(s, F)}之军（一年之内本方之城不许其过境）。`; }
       break;
     case 'gift_in':
       if (idx <= 1) {

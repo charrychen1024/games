@@ -133,6 +133,7 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
 
   // 五、围城与攻城
   const assaults = updateSieges(s);
+  const blockaded: string[] = [];
   for (const node of assaults) {
     const b = buildSiegeBattle(s, node);
     if (!b) continue;
@@ -142,9 +143,11 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
       const ans = yield { type: 'battle', battle: b, side };
       if (ans?.type === 'battle') { result = ans.result; manual = ans.manual; } else result = autoResolve(b);
     } else result = autoResolve(b);
+    // 临阵改为围而不攻：按围困令结算——不记战绩，各军改围，月末照常查断粮献城
+    if (result.outcome === 'blockade') { for (const id of b.att.armies) { const a = s.armies[id]; if (a && a.order.kind === 'siege') a.order = { ...a.order, assault: false }; } blockaded.push(node); continue; }
     applyBattle(s, result, manual);
   }
-  for (const node of Object.keys(s.sieges)) if (!assaults.includes(node)) blockadeEffects(s, node);
+  for (const node of Object.keys(s.sieges)) if (!assaults.includes(node) || blockaded.includes(node)) blockadeEffects(s, node);
 
   // 六、内政与钱粮
   runEconomy(s);

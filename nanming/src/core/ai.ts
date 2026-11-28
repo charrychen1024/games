@@ -107,7 +107,7 @@ export function aiOrders(s: GameState, f: string): Order[] {
     if (a.sortie) continue;       // 出城之兵：只与围城之军一战，战罢回城
     // 奉玩家号令（三个月内、仍在执行）之军：电脑不改其令（2026-11-28 审查：付银令黄得功围困，当月却被改为强攻）
     const cmd = s.flags['commanded_' + a.id];
-    if (typeof cmd === 'number' && cmd >= 0 && s.turn - cmd <= 3 && a.order.kind !== 'hold') continue;
+    if (typeof cmd === 'number' && cmd >= 0 && s.turn - cmd <= 3) continue;
     const power = armyPower(a, s);
     const sea = canSea(a);
     // 已在围城：继续
@@ -370,7 +370,8 @@ export function aiPayArmies(s: GameState) {
 export function aiDefections(s: GameState) {
   if (!hostile(s, 'qing', 'hongguang')) return;
   for (const f of Object.values(s.factions)) {
-    if (!f.overlord || f.defunct || f.polity !== 'ming' || f.id === 'mingprov') continue;
+    // 玩家本家不由电脑代为改奉（2026-11-28 复核：郑氏玩家被电脑直接降清）
+    if (!f.overlord || f.defunct || f.polity !== 'ming' || f.id === 'mingprov' || f.id === s.player) continue;
     const leader = s.chars[f.leader];
     if (!leader || leader.status !== 'active') continue;
     const near = Object.values(s.armies).some(a => a.faction === 'qing' && citiesOf(s, f.id).some(c => c.id === a.location || shortestPath(a.location, c.id, false)?.length === 1));
@@ -649,7 +650,7 @@ export function aiEvacuate(s: GameState) {
   const done = new Set<string>();
   for (const c of Object.values(s.cities).sort((a, b) => a.id.localeCompare(b.id))) {
     const f = s.factions[c.controller];
-    if (!f || f.defunct || f.id === 'local' || topOf(s, f.id) === s.player || done.has(f.id)) continue;
+    if (!f || f.defunct || f.id === 'local' || mineSide(s, f.id) || done.has(f.id)) continue;   // 玩家一方之城由玩家自己定去留
     const k = 'evac_' + f.id, last = s.flags[k];
     if (typeof last === 'number' && s.turn - last < 2) continue;
     if (keyCity(s, c.id) || c.garrison < 1000 || citiesOf(s, f.id).length < 2) continue;

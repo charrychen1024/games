@@ -199,6 +199,7 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       const t = s.factions[o.target], tr = treasuryOf(s, f), cap = tr ? s.cities[tr] : undefined;
       if (!t || t.defunct || o.target === f) return '对象不对';
       if (!cap) return '治所已失，无府库可支';
+      if (!treasuryOf(s, o.target)) return `${t.name}已无治所，无从受礼`;
       if (o.silver <= 0 || cap.silver < o.silver) return '治所府库不足';
       return null;
     }
@@ -559,7 +560,7 @@ function commandVassal(s: GameState, f: string, o: Extract<Order, { kind: 'comma
   switch (ob.result) {
     case 'comply':
       setArmyOrder(s, a, o.order);
-      if (f === s.player) s.flags['commanded_' + a.id] = o.order.kind === 'hold' ? -1 : s.turn;
+      if (f === s.player) s.flags['commanded_' + a.id] = s.turn;   // 驻守之令也算号令：期内电脑不改（2026-11-28 复核）
       break;
     case 'delay':
       s.delayed.push({ ...o, silver: 0, id: o.id + 'd' });

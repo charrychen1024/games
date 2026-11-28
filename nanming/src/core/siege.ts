@@ -56,7 +56,7 @@ export interface SiegeSim {
   /** 夺城进度 0—100：入城之兵压过城内守军时上涨 */
   capture: number;
   events: SEvent[];
-  over?: { t: number; winner: 'att' | 'def'; outcome: 'breach' | 'surrender' | 'repulsed' | 'retreat' | 'collapse' | 'abandon' };
+  over?: { t: number; winner: 'att' | 'def'; outcome: 'breach' | 'surrender' | 'repulsed' | 'retreat' | 'collapse' | 'abandon' | 'blockade' };
   att: Pick<BattleSide, 'name' | 'commanderName' | 'tong' | 'mix' | 'wai' | 'surrender'> & { start: number; morale0: number };
   def: Pick<BattleSide, 'name' | 'commanderName' | 'tong' | 'mix' | 'wai' | 'surrender'> & { start: number; morale0: number };
   weather: string;
@@ -85,8 +85,8 @@ export function createSiege(b: BattleState): SiegeSim {
   else if (mix.gun > 0.03) parts.push({ kind: 'gun', name: '弓铳营', share: mix.gun });
   if (mix.cav > 0.05) parts.push({ kind: 'cav', name: '骑营', share: mix.cav });
   const infShare = 1 - parts.reduce((n, p) => n + p.share, 0);
-  // 步营：一千五百人以上分两营、四千五百人以上分三营（撞门、两路攀城）——门槛放在小仗里，免得大仗多一人便多一路攻势（2026-11-28 审查）
-  const nInf = totA * infShare > 4500 ? 3 : totA * infShare > 1500 ? 2 : 1;
+  // 步营：二百人以上分两营、六百人以上即分三营（撞门、两路攀城）——除极小之仗外营数一样，免得多一人便多一路攻势（2026-11-28 审查、复核）
+  const nInf = totA * infShare > 600 ? 3 : totA * infShare > 200 ? 2 : 1;
   const infNames = ['前营', '左营', '右营'];
   for (let k = 0; k < nInf; k++) parts.push({ kind: 'inf', name: infNames[k], share: infShare / nInf });
   let left = totA;
@@ -165,7 +165,8 @@ export function defDecision(sim: SiegeSim, d: 'surrender' | 'abandon') {
 export function attWithdraw(sim: SiegeSim) {
   if (sim.over) return;
   for (const u of sim.units) if (u.side === 'att' && u.state !== 'gone') u.state = 'gone';
-  end(sim, 'def', 'retreat', `${sim.att.name}围而不攻，深沟高垒，断其粮道。`);
+  // 围而不攻：不是一场败仗，月结按围困令处理（不记战绩、照常查断粮献城；2026-11-28 复核）
+  end(sim, 'def', 'blockade', `${sim.att.name}围而不攻，深沟高垒，断其粮道。`);
 }
 /** 阵前劝降：攻方遣人入城说降守将，一战一次。看攻方外交、守将降意、守军军心与兵势。成则开城出降。 */
 export function persuadeOdds(sim: SiegeSim): number {

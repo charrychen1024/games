@@ -1099,7 +1099,7 @@ export class App {
           ...[...f.items].sort((a, b) => b.v - a.v).map(i => h('div', { class: 'cfc-r ' + (i.v >= 0 ? 'up' : 'down') }, ic(KIND_IC[i.kind] ?? 'info'), h('span', null, i.label), h('b', null, `${i.v >= 0 ? '+' : '−'}${wan(Math.abs(i.v))}`))),
           h('div', { class: 'cfc-f' },
             months !== null ? h('span', { class: months < 3 ? 'warn' : '' }, ic('hourglass'), `按本月收支不变：每月亏 ${fmt(-f.net)}，现存 ${fmt(stock)} 约撑 ${months} 月`) : h('span', null, ic('ok'), f.net === 0 ? '按本月收支不变：收支持平' : '按本月收支不变：每月有余'),
-            h('span', { class: short ? 'warn' : '' }, ic('calendar'), short ? `一年展望（随季节）：第 ${short} 个月起见底，须外援或减兵` : `一年展望（随季节）：最低约 ${fmt(low)} ${unit}，不致见底`),
+            h('span', { class: short ? 'warn' : '' }, ic('calendar'), short ? `${ol.months >= 12 ? '一年展望（随季节）' : `剧本余 ${ol.months} 月展望`}：第 ${short} 个月起见底，须外援或减兵` : `${ol.months >= 12 ? '一年展望（随季节）' : `剧本余 ${ol.months} 月展望`}：最低约 ${fmt(low)} ${unit}，不致见底`),
             h('small', null, '按当前城权、驻军、方针推算；围城、战事与自动市籴、就地征粮等视情况才发生的不计'))));
       }
       sec.append(h('div', { class: 'crings' },
@@ -1427,7 +1427,7 @@ export class App {
         h('div', { class: 'ms-wrap', id: 'month-summary' },
           band('silver', '钱粮', cardShow(resCards, 'res')),
           people.length ? band('chars', '人物', cardShow(people, 'ppl')) : null,
-          cities.length || war.length ? band('city', '城池', cardShow([...cities, ...war], 'cty')) : null)],
+          cities.length || war.length ? band(cities.length ? 'city' : 'war', cities.length && war.length ? '城池战事' : cities.length ? '城池' : '战事', cardShow([...cities, ...war], 'cty')) : null)],
         [{ label: '开始新的一月', icon: 'next', primary: true, id: 'summary-ok', onclick: () => {} }], 'wide');
       this.modalDone = () => res2();
       if (!fast) {
@@ -1617,7 +1617,7 @@ export class App {
     const sg = (v: number) => `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v))}`;
     const line = (icon: string, k: string, net0: number, net1: number, short: number | null, low: number, unit: string) =>
       h('div', { class: 'rq-row' + (net1 < 0 ? ' neg' : '') }, ic(icon), h('span', null, k),
-        h('b', null, `${sg(net0)} → ${sg(net1)}`), h('small', { class: short ? 'warn' : '' }, short ? `一年内第 ${short} 月起见底` : `一年内最低约 ${wan(low)}`), h('em', null, unit));
+        h('b', null, `${sg(net0)} → ${sg(net1)}`), h('small', { class: short ? 'warn' : '' }, short ? `${ol0.months >= 12 ? '一年内' : `剧本余 ${ol0.months} 月内`}第 ${short} 月起见底` : `${ol0.months >= 12 ? '一年内' : `剧本余 ${ol0.months} 月内`}最低约 ${wan(low)}`), h('em', null, unit));
     const upd = () => {
       const n = +input.value;
       const over = n > room;
@@ -1632,7 +1632,7 @@ export class App {
       clear(proj).append(h('div', { class: 'rq-h' }, `募后本城本月结余（已含其他已排命令；之后每人每月口粮 ${GRAIN_PER_SOLDIER} 石、饷银 ${SILVER_PER_SOLDIER} 两）`),
         line('grain', '粮', fc.grain.net, f1.grain.net, ol.shortGrain, ol.minGrain, '石'),
         line('silver', '银', fc.silver.net, f1.silver.net, ol.shortSilver, ol.minSilver, '两'),
-        ...(over ? [h('div', { class: 'rq-warn' }, ic('urgent'), room > 0 ? `超出本城全年结余可长期供养之数 ${fmt(n - room)} 人：要靠存粮存银、别城调拨，或编军出征后改由别城作粮台` : '本城全年已无结余：所募之兵要靠存粮存银、别城调拨，或出征后由别城供养')] : []));
+        ...(over ? [h('div', { class: 'rq-warn' }, ic('urgent'), room > 0 ? `超出本城${ol0.months >= 12 ? '全年' : `剧本余下 ${ol0.months} 月`}结余可供养之数 ${fmt(n - room)} 人：要靠存粮存银、别城调拨，或编军出征后改由别城作粮台` : `本城${ol0.months >= 12 ? '全年' : `剧本余下 ${ol0.months} 月`}已无结余：所募之兵要靠存粮存银、别城调拨，或出征后由别城供养`)] : []));
     };
     input.oninput = upd; upd();
     const pctMark = Math.max(0, Math.min(100, (room - 100) / Math.max(1, max - 100) * 100));
@@ -1779,7 +1779,7 @@ export class App {
       const cities = Object.values(s.cities).filter(c => c.controller === f.id).length;
       const pacts: Chip[] = [];
       if (pactOn(s, 'pass', s.player, f.id)) pacts.push({ icon: 'move', text: '借道', tone: 'good' });
-      if (pactOn(s, 'trade', s.player, f.id)) pacts.push({ icon: 'commerce', text: '互市', tone: 'good' });
+      if (pactOn(s, 'trade', s.player, f.id) && st !== 'war') pacts.push({ icon: 'commerce', text: '互市', tone: 'good' });
       if (pactOn(s, 'goodwill', s.player, f.id)) pacts.push({ icon: 'reward', text: '结好', tone: 'good' });
       return { id: f.id, title: f.name.length <= 5 ? f.name : f.short, sub: lead?.name ?? '', art: lead ? portrait(lead, f.color, f.polity) : cardArt('factions', f.color, cities), portrait: !!lead, color: f.color, badge: `${cities} 城`,
         chips: [{ icon: ST_IC[st] ?? 'crown', text: STANCE_NAME[st] ?? st, tone: st === 'war' ? 'bad' : st === 'alliance' || st === 'overlord' ? 'good' : 'plain' }, ...pacts] };

@@ -49,6 +49,8 @@ const relOf = (s: GameState, f: string, node: NodeId): 'friend' | 'war' | 'truce
   if (!c) return 'none';
   if (friendly(s, f, c.controller)) return 'friend';
   if (hostile(s, f, c.controller)) return 'war';
+  // 拒绝借道：一年之内此家之城对来借者闭关（2026-11-28 复核：拒绝了对方仍能进城）
+  if (Number(s.flags[`deny_${c.controller}_${f}`] ?? -1) > s.turn || Number(s.flags[`deny_${c.controller}_${topOf(s, f)}`] ?? -1) > s.turn) return 'truce';
   // 借道之约：一年之内对方之城可行军运粮，如同友方（2026-11-28）
   if (Number(s.flags[`pass_${[f, c.controller].sort().join('|')}`] ?? -1) > s.turn || Number(s.flags[`pass_${[topOf(s, f), topOf(s, c.controller)].sort().join('|')}`] ?? -1) > s.turn) return 'friend';
   return stance(s, f, c.controller) === 'truce' ? 'truce' : 'neutral';

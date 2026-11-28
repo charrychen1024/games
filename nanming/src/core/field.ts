@@ -28,6 +28,8 @@ export interface FUnit {
   poise?: number;
   /** 营垒：所受伤损之比 */
   guard?: number;
+  /** 布阵基准位置（开战前切阵用） */
+  bx?: number; by?: number;
   /** 连续行进的时间（冲势）、接敌后冲锋余时 */
   run: number; charge: number;
   /** 伏兵：藏于林中（或用“伏兵”计）不为敌所见，初次接敌加倍杀伤；lurk 为在林中静候的时长 */
@@ -140,7 +142,7 @@ export function createField(b: BattleState): FieldSim {
   for (let k = 0; k < nT; k++) { const t = Math.round(110 + fr.next() * 520), kind = kinds[Math.floor(fr.next() * kinds.length)], r = fr.next(); twists.push({ t, kind, side: kind === 'wound' || kind === 'mutiny' ? (r < pAtt ? 'att' : 'def') : kind === 'relief' ? (r < 1 - pAtt ? 'att' : 'def') : r < 0.5 ? 'att' : 'def' }); }
   twists.sort((a, b2) => a.t - b2.t);
   // 临阵状态：全军将运 ±9%，各营再 ±8%（种子定，读档重打不变）
-  for (const side of ['att', 'def'] as const) { const fortune = 0.8 + rng.next() * 0.4; for (const u of units) if (u.side === side) { u.luck = fortune * (0.92 + rng.next() * 0.16); u.poise = tongPoise(b[side].tong) * (b[side].camp ? 0.9 : 1); u.guard = b[side].camp ? (b[foeOf(side)].tactic === 'rush' ? 0.7 : 0.8) : 1; if (b[side].tactic === 'rush') { u.luck *= 1.1; u.poise *= 1.12; } } }
+  for (const side of ['att', 'def'] as const) { const fortune = 0.8 + rng.next() * 0.4; for (const u of units) if (u.side === side) { u.luck = fortune * (0.92 + rng.next() * 0.16); u.poise = tongPoise(b[side].tong) * (b[side].camp ? 0.9 : 1); u.guard = b[side].camp ? (b[foeOf(side)].tactic === 'rush' ? 0.6 : 0.8) : 1; if (b[side].tactic === 'rush') { u.luck *= 1.1; u.poise *= 1.12; } } }
   // 临阵尚有余勇：军心再低，开战时全军军心不低于 25（各营士气在 compose 里不低于 22），免得未见敌便全线崩溃
   const mA = Math.max(25, avgMorale(b.att)), mD = Math.max(25, avgMorale(b.def));
   const tot = (s: BattleSide) => s.lanes.reduce((n, l) => n + l.troops, 0) + (s.reserve ?? 0);
@@ -170,7 +172,7 @@ export function nightChance(b: Pick<BattleState, 'att' | 'def' | 'weather'>): nu
   let p = 0.45 + ((b.att.mou ?? 50) - (b.def.mou ?? 50)) / 100 + b.att.mix.cav * 0.3;
   if (b.weather === 'rain') p -= 0.15;
   if (b.weather === 'fog') p += 0.1;
-  if (b.def.camp) p *= 0.4;
+  if (b.def.camp) p *= 0.6;
   return clamp(p, 0.05, 0.85);
 }
 function tacticOpening(sim: FieldSim, b: BattleState) {
@@ -744,8 +746,8 @@ const fwd = (side: 'att' | 'def') => (side === 'att' ? -1 : 1);
 /** 定阵形：只在开战之前（t=0）；各营按阵形挪到起手位置 */
 export function setFormation(sim: FieldSim, side: 'att' | 'def', f: Formation): boolean {
   if (sim.t > 0 || sim.mode === 'naval' && f !== 'normal' && f !== 'fangyuan' && f !== 'fengshi') return false;
-  const prev = sim.formation[side];
-  // 先退回常阵位置，再按新阵挪
+  // 每次都从开战时的基准位置排起：反复点同一阵、来回切阵都不会挤压部署（2026-11-28 复核）
+  for (const u of sim.units.filter(x => x.side === side)) { if (u.bx === undefined) { u.bx = u.x; u.by = u.y; } u.x = u.bx; u.y = u.by!; }
   const shift = (form: Formation, sign: number) => {
     for (const u of sim.units.filter(x => x.side === side)) {
       let dx = 0, dy = 0;
@@ -756,7 +758,6 @@ export function setFormation(sim: FieldSim, side: 'att' | 'def', f: Formation): 
       u.x = clamp(u.x + dx * sign, 40, 960); u.y = clamp(u.y + dy * sign, 40, 960);
     }
   };
-  shift(prev, -1);
   sim.formation[side] = f;
   shift(f, 1);
   return true;
@@ -1038,16 +1039,16 @@ export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
         aiField(s, side, { eager: true }); drumF(s, side);
         if (roll(s, 'chanceA', pA)) { s.resolve[foe] = Math.max(0, s.resolve[foe] - 12); return { ok: true, text: '全军压上，敌阵大乱' }; }
         all(side, u => { u.stamina = Math.max(0, u.stamina - 20); }); return { ok: false, text: '冲得太急，阵形散乱、人困马乏' }; } },
-      { label: cav.length ? '骑兵直捣最弱一营' : '无骑可遣', icon: 'cav', odds: pC, desc: '一举冲垮敌之最弱一营', apply: s => {
+      { label: sim.mode === 'naval' ? '快船直捣最弱一队' : '骑兵直捣最弱一营', icon: sim.mode === 'naval' ? 'navy' : 'cav', odds: pC, desc: sim.mode === 'naval' ? '快船冲乱敌之最弱一队' : '一举冲垮敌之最弱一营', apply: s => {
         if (!weak) return { ok: false, text: '无隙可乘' };
         for (const u of cav) commandF(s, { unit: u.id, side, order: { t: 'attack', target: weak.id } });
-        if (cav.length && roll(s, 'chanceC', pC)) { weak.morale = 0; return { ok: true, text: `${weak.name}被铁骑冲垮` }; }
-        for (const u of cav) u.morale = Math.max(0, u.morale - 8); return { ok: false, text: '骑兵冲阵受阻' }; } },
+        if (cav.length && roll(s, 'chanceC', pC)) { weak.morale = 0; return { ok: true, text: sim.mode === 'naval' ? `${weak.name}被快船冲乱` : `${weak.name}被铁骑冲垮` }; }
+        for (const u of cav) u.morale = Math.max(0, u.morale - 8); return { ok: false, text: sim.mode === 'naval' ? '快船冲阵受阻' : '骑兵冲阵受阻' }; } },
       { label: '稳扎稳打', icon: 'hold', odds: 1, desc: '不改部署，免得追击中阵形散乱', apply: () => ({ ok: true, text: '稳扎稳打' }) },
     ] as MomentOption[]).filter((_, i) => i !== 1 || (cav.length > 0 && !!weak)) });
   }
   // 四、阵前搦战：敌将骁勇者出阵挑战
-  if (room && sim.mode === 'field' && sim.t > 25 && sim.t < 200 && once('duel') && tong(foe) >= 60 && destined(sim, 'duel', 0.45)) {
+  if (room && sim.mode === 'field' && sim.t > 25 && sim.t < 200 && !sim.moments.some(m => m.endsWith(':duel')) && tong(foe) >= 60 && destined(sim, 'duel', 0.45)) {
     const pD = pct(0.5 + (tong(side) - tong(foe)) / 90), pS = pct(0.25 + (mou(side) - 50) / 90);
     return fire('duel', { title: '敌将阵前搦战', icon: 'battle', text: `${sim[foe].commanderName}匹马出阵，指名挑战！`, options: [
       { label: '遣将应战', icon: 'battle', odds: pD, desc: `比统军（我 ${tong(side)} · 彼 ${tong(foe)}）：胜则敌军夺气，败则我军丧胆`, apply: s => {
@@ -1064,13 +1065,14 @@ export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
   if (room && sim.mode === 'field' && rain && myGuns.length && sim.t > 40 && once('rain') && destined(sim, 'rain', 0.7)) {
     const inf = mine.filter(u => u.kind === 'inf' || u.kind === 'cav');
     const pB = pct(0.3 + sum(inf) / Math.max(1, sum(foes)) * 0.4);
-    return fire('rain', { title: '大雨湿了火药', icon: 'event', text: '雨势转急，铳炮多半哑火。', options: [
+    const noMelee = inf.length === 0;
+    return fire('rain', { title: '大雨湿了火药', icon: 'event', text: '雨势转急，铳炮多半哑火。', options: ([
       { label: '白刃突击', icon: 'charge', odds: pB, desc: '趁敌火器也哑，步骑直冲', apply: s => {
         for (const u of inf) { const t = foes.slice().sort((a, b) => dist(a, u) - dist(b, u))[0]; if (t) commandF(s, { unit: u.id, side, order: { t: 'attack', target: t.id } }); }
         if (roll(s, 'rainB', pB)) { all(foe, u => { u.morale = Math.max(0, u.morale - 10); }); return { ok: true, text: '冒雨肉搏，敌阵动摇' }; }
         all(side, u => { u.stamina = Math.max(0, u.stamina - 15); }); return { ok: false, text: '泥泞难行，冲锋受挫' }; } },
       { label: '收兵避雨，待雨歇', icon: 'hold', odds: 1, desc: '全军结阵，二十秒内受伤 −15%', apply: s => { s.buff[side].brace = 20; for (const u of mine) if (u.state !== 'melee') commandF(s, { unit: u.id, side, order: { t: 'hold' } }); return { ok: true, text: '结阵避雨' }; } },
-    ] });
+    ] as MomentOption[]).filter((_, i) => i !== 0 || !noMelee) });
   }
   // 六、顺风火攻：起风，敌阵邻近林木、村落
   const foeY = sideY(foes), myY = sideY(mine);

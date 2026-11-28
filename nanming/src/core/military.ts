@@ -96,6 +96,12 @@ export function moveArmies(s: GameState): Contact[] {
         continue;
       }
       if (a.progress < r.days) continue;
+      // 走到城下才知已停战闭关：不得入，退回出发之城（途中停战；2026-11-28 复核）
+      if (closedTo(s, a.faction, next)) {
+        a.progress = 0; a.path = []; stopped.add(a.id);
+        if (mineSide(s, a.faction)) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}行抵${nodeName(next)}城下，城已闭关不纳，退回${nodeName(a.location)}。`, src: { kind: 'order', ref: a.id } });
+        continue;
+      }
       a.location = next; a.path.shift(); a.progress = 0;
       arrivedDay[a.id] = day;
       const cmd = s.chars[a.commander]; if (cmd && cmd.status === 'active') cmd.location = next;
@@ -553,7 +559,8 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
       const head = !!of0 && of0.leader === gov.id && old !== 'local' && !of0.admin;
       // 一镇之主献城，全镇随否要看诸将：不从者另推主事，镇主只带走本城与亲领之兵
       const odds = head ? followOdds(s, old, newCtrl) : 0;
-      const follow = head && rngFor(s.seed, 'follow', s.turn, old).next() < odds;
+      // 玩家本家：全镇改投与否由玩家定，电脑劝降至多带走主事者与本城
+      const follow = head && old !== s.player && rngFor(s.seed, 'follow', s.turn, old).next() < odds;
       if (head && !follow) report(s, { cat: '人事', urgent: topOf(s, old) === s.player || topOf(s, newCtrl) === s.player, node, text: `${gov.name}欲率${of0!.name}归附${factionName(s, newCtrl)}，诸将不从（随者约 ${Math.round(odds * 100)}%）。${gov.name}只以${nodeName(node)}及亲兵改投。` });
       if (head && follow) {
         // 一镇之主献城：全镇正式归附，城仍由本镇实控，改奉新主
