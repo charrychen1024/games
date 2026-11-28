@@ -101,12 +101,14 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
           h('div', { class: 'sh-l3' }, h('span', { class: 'sh-tic', html: iconSvg('troops') }), h('div', { class: 'sh-troops', 'data-troops': sd })),
           resolveBar(sd))));
   };
+  // 谁在指挥：随“交部将指挥 / 部将代打 / 收回指挥”而变
+  const whoText = () => b0[side].faction === s.player ? (autoMe ? '部将代你指挥' : '你亲自指挥') : `${b0[side].name}奉你号令出战${autoMe ? ' · 部将代打' : ''}`;
   const kindName = siege ? (side === 'att' ? '攻城' : '守城') : naval ? '水战' : '野战';
   const terrainTag = siege ? '' : naval ? '' : b0.terrain === 'hills' ? '丘陵 · 守方据高地' : b0.terrain === 'river' ? '隔河 · 中有浅滩' : '平原';
   hud.append(
     plaque(side, 'mine', '我军'),
     h('div', { class: 'sh-mid' }, h('div', { class: 'bh-kind', id: 'battle-where' }, `${b0.nodeName} · ${kindName}`),
-      h('div', { class: 'bh-who' }, `${b0.att.name}${siege ? '攻' : '击'}${b0.def.name} · `, h('em', null, b0[side].faction === s.player ? '你亲自指挥' : `${b0[side].name}奉你号令出战`)),
+      h('div', { class: 'bh-who' }, `${b0.att.name}${siege ? '攻' : '击'}${b0.def.name} · `, h('em', { id: 'battle-who' }, whoText())),
       h('div', { class: 'sh-info' }, h('span', { 'data-clock': '1' }), h('span', { 'data-i1': '1' }), h('span', { 'data-i2': '1' })),
       h('div', { class: 'scap hidden' }, h('b', null, '夺城'), h('div', null, h('i', { 'data-cap': '1' })))),
     plaque(foe, 'foe', '敌军'));
@@ -191,6 +193,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
 
   /* ---------- 底栏：各营卡片 + 全军号令 ---------- */
   function renderUi() {
+    const who = document.getElementById('battle-who'); if (who) who.textContent = whoText();
     clear(ui);
     ui.className = 'rt-ui';
     if (phase === 'deploy' && siege && side === 'def') {
@@ -460,6 +463,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   function start() {
     phase = 'fight'; paused = false; manual = manual || !autoMe;
     if (autoMe) speed = 4;
+    const who = document.getElementById('battle-who'); if (who) who.textContent = whoText();
     view.selected = null;
     say(siege ? (side === 'att' ? '开战！' : '敌军来攻，各段守军就位！') : naval ? '起锚，迎敌！' : '擂鼓进兵！');
     battleSfx.advance(false);

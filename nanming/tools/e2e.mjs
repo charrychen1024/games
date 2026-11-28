@@ -527,7 +527,11 @@ try {
     await wait(1400);
     const me = await text('#battle .bbark.l span'), foe = await text('#battle .bbark.r span');
     check('劝降：我方喊话，守将答以拒降或开城', /降|开城|孤城|玉石/.test(me) && /降|城|使|拿命|屈|开/.test(foe) && !/再加一鼓|再进一步|不堪一击/.test(foe), `${me} | ${foe}`);
+    const who0 = await text('#battle-who');
     await page.click('#siege-auto').catch(() => {});
+    await wait(150);
+    const who1 = await text('#battle-who');
+    check('顶部“谁在指挥”随部将代打而变', !/部将/.test(who0) && /部将/.test(who1), `${who0} → ${who1}`);
     await pd.catch(() => {});
     await wait(400);
   }

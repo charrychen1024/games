@@ -104,10 +104,10 @@ export function cardHand(cards: GameCard[], onPick: (id: string) => void, opts: 
 }
 
 /** 展示用的一排卡（不可点选）：翻入，再落印。big 为卡面上的大字（如增减），stamp 为落在卡上的印 */
-export interface ShowCard extends GameCard { big?: string; bigTone?: 'up' | 'down' | ''; stamp?: string; stampTone?: 'good' | 'bad'; tip?: string }
+export interface ShowCard extends GameCard { big?: string; bigTone?: 'up' | 'down' | ''; stamp?: string; stampTone?: 'good' | 'bad'; tip?: string; dim?: boolean }
 export function cardShow(cards: ShowCard[], cls = ''): HTMLElement {
   const row = h('div', { class: 'show-row ' + cls });
-  for (const c of cards) row.append(h('div', { class: 'gcard show' + (c.portrait ? ' pc' : ''), 'data-card': c.id, 'data-tip': c.tip, style: { '--cc': c.color ?? '#8c6a35' } as any },
+  for (const c of cards) row.append(h('div', { class: 'gcard show' + (c.portrait ? ' pc' : '') + (c.dim ? ' dim' : ''), 'data-card': c.id, 'data-tip': c.tip, style: { '--cc': c.color ?? '#8c6a35' } as any },
     h('div', { class: 'gc-art' + (c.portrait ? ' tall' : '') }, h('img', { src: c.art, alt: '', draggable: 'false' }),
       c.badge ? h('span', { class: 'gc-badge' }, c.badge) : null),
     h('div', { class: 'gc-title' }, c.title),
