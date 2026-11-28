@@ -443,6 +443,7 @@ export function capture(s: GameState, node: string, newCtrl: string, how: 'é™·åŸ
     }
   }
   const src = { kind: 'battle' as const, ref: `${how}:${node}` };
+  c.takenTurn = s.turn;
   const gov = c.governor ? s.chars[c.governor] : undefined;
   c.controller = newCtrl;
   delete s.sieges[node];

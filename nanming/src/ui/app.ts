@@ -23,7 +23,7 @@ import { isReduced, setReducedMotion, reducedSystem } from './motion';
 import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
-import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, supplyLegOf, RECRUIT_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
+import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, supplyLegOf, RECRUIT_SILVER, DISBAND_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
 import { projectOrders, validateQueued, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { yangzhouSiegeState } from '../data/presets';
@@ -58,7 +58,7 @@ const FIELD_NAME: Record<string, string> = { grain: '仓粮', silver: '府库', 
 const FIELD_ICON: Record<string, string> = { grain: 'grain', silver: 'silver', pop: 'pop', minxin: 'minxin', garrison: 'troops', wall: 'wall', order: 'order', agri: 'agri', commerce: 'commerce', edu: 'edu' };
 const CAT_ICON: Record<ReportCat, string> = { 急报: 'urgent', 军报: 'war', 易主: 'capture', 交涉: 'envoy', 内政: 'admin', 人事: 'person', 史事: 'event', 线索: 'clue' };
 const POLICY_ICON: Record<Policy, string> = { balanced: 'order', agri: 'agri', commerce: 'commerce', fortify: 'wall', relief: 'minxin', edu: 'edu', levy: 'reward' };
-const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', supply: 'grain', reinforce: 'reinforce', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army', seek: 'chars', prisoner: 'prisoner' };
+const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', supply: 'grain', reinforce: 'reinforce', disband: 'troops', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army', seek: 'chars', prisoner: 'prisoner' };
 const HINT_KEY = 'nanming:hint';
 
 /** 选势力卡片：难度、一句处境、目标 */
@@ -1128,6 +1128,7 @@ export class App {
     if (mine) cmds.push(
       { id: 'act-policy', icon: 'policy', label: '方针', tip: '定下本城逐月照行的方针', fn: () => this.formPolicy(id), done: has('policy') },
       { id: 'act-recruit', icon: 'recruit', label: '募兵', tip: `本月最多再募 ${wan(recruitLeft(s, id))} 人`, fn: () => this.formRecruit(id), done: has('recruit') },
+      { id: 'act-disband', icon: 'troops', label: '裁兵', tip: '裁撤驻军，省口粮饷银（每人遣散银半两，给不足则散兵为盗）', fn: () => this.formDisband(id), done: this.orders.some(o => o.kind === 'disband' && o.node === id && !o.army) },
       { id: 'act-raise', icon: 'army', label: '出兵', tip: '抽驻军编成一军，择将统领', fn: () => this.formRaise(id), done: this.orders.some(o => o.kind === 'raise' && o.node === id), primary: c.garrison >= 3000 },
       { id: 'act-transfer', icon: 'transfer', label: '调拨', tip: '把钱粮运往别城', fn: () => this.formTransfer(id), done: has('transfer') },
       { id: 'act-trade', icon: 'grain', label: '粜籴', tip: '买粮卖粮', fn: () => this.formTrade(id), done: has('trade') },
@@ -1289,7 +1290,7 @@ export class App {
       if (a.progress === 0 && here && hostile(s, s.player, here.controller)) {
         acts.append(A('act-assault', 'storm', '攻城', () => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'siege', target: a.location, assault: true } }), true),
           A('act-blockade', 'blockade', '围困', () => this.addOrder({ id: this.newOrderId(), kind: 'army', army: id, order: { kind: 'siege', target: a.location, assault: false } })));
-      } else if (a.progress === 0 && here && here.controller === s.player) acts.append(A('act-reinforce', 'reinforce', '拨兵', () => this.formReinforce(id)));
+      } else if (a.progress === 0 && here && here.controller === s.player) acts.append(A('act-reinforce', 'reinforce', '拨兵', () => this.formReinforce(id)), A('act-disband-army', 'troops', '裁兵', () => this.formDisband(a.location, id)));
       acts.append(A('act-supply', 'grain', '粮台', () => this.beginTarget(id, `点选${a.name}改由哪座城支粮（本方之城；驻在友方城时也可由该城就地支应）`, n => {
         if (!this.addOrder({ id: this.newOrderId(), kind: 'supply', army: id, node: n })) return;
         const c = this.s!.cities[n];
@@ -1684,6 +1685,36 @@ export class App {
     input.oninput = upd; upd();
     this.modal('reward', `犒赏${s.factions[vassal].short}部`, `当前服从 ${s.factions[vassal].loyalty}`, [big, h('div', { class: 'field' }, input)],
       [this.cancelBtn(), { label: '犒赏', icon: 'ok', primary: true, id: 'reward-ok', onclick: () => this.addOrder({ id: this.newOrderId(), kind: 'reward', vassal, silver: +input.value }) }]);
+  }
+
+  /** 裁兵：驻军或某军（army）若干人。写明每月省多少、遣散要花多少，府库不够时有多少人会流为盗匪 */
+  formDisband(node: string, army?: string) {
+    const ps = this.proj(), pc = ps.cities[node];
+    const a = army ? ps.armies[army] : undefined;
+    const have = a ? a.troops : pc.garrison - 500;
+    if (have < 100) { this.toast(`${nodeName(node)}城中至少留 500 人，无可再裁`, 'close'); return; }
+    const step = 100;
+    const input = h('input', { type: 'range', min: step, max: have, step, value: Math.min(have, Math.max(step, Math.round(have / 4 / step) * step)), id: 'disband-n' }) as HTMLInputElement;
+    const big = h('div', { class: 'big-num' });
+    const costs = h('div', { class: 'costs' });
+    const note = h('div', { class: 'rq-proj', id: 'disband-note' });
+    const upd = () => {
+      const n = +input.value;
+      const owed = a ? Math.round((a.arrears ?? 0) * n / Math.max(1, a.troops)) : 0;
+      const due = Math.round(n * DISBAND_SILVER) + owed;
+      const paid = Math.min(due, Math.max(0, Math.floor(pc.silver)));
+      const lost = due ? Math.round(n * (1 - paid / due) / 100) * 100 : 0;
+      big.textContent = `${fmt(n)} 人${a && n >= a.troops ? '（全军遣散）' : ''}`;
+      clear(costs).append(
+        h('span', { class: 'cost bad' }, ic('silver'), `遣散银 −${fmt(paid)}${owed ? `（含欠饷 ${fmt(owed)}）` : ''}`),
+        h('span', { class: 'cost good' }, ic('grain'), `每月省粮 ${fmt(Math.round(n * GRAIN_PER_SOLDIER))} 石`),
+        h('span', { class: 'cost good' }, ic('silver'), `每月省饷 ${fmt(Math.round(n * (a ? SILVER_PER_FIELD_SOLDIER : SILVER_PER_SOLDIER)))} 两`),
+        lost >= 300 ? h('span', { class: 'cost bad' }, ic('urgent'), `约 ${fmt(lost)} 人无资归乡，流为盗匪（民心、吏治下降）`) : h('span', { class: 'cost good' }, ic('pop'), '散兵归农，人口回升'));
+      clear(note).append(h('div', { class: 'rq-h' }, `${nodeName(node)}府库存银 ${fmt(Math.floor(pc.silver))} 两 · 每人遣散银 ${DISBAND_SILVER} 两${a ? '，另结清所欠之饷' : ''}`));
+    };
+    input.oninput = upd; upd();
+    this.modal('disband', a ? `裁兵 · ${a.name}` : '裁撤驻军', a ? `${a.name}现有 ${fmt(a.troops)} 人，驻${nodeName(node)}` : `${nodeName(node)}驻军 ${fmt(pc.garrison)} 人（至少留 500）`, [big, h('div', { class: 'field' }, input), costs, note],
+      [this.cancelBtn(), { label: '裁兵', icon: 'ok', primary: true, id: 'disband-ok', onclick: () => { this.addOrder({ id: this.newOrderId(), kind: 'disband', node, ...(army ? { army } : {}), troops: +input.value }); } }]);
   }
 
   formReinforce(army: string) {

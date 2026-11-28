@@ -117,6 +117,8 @@ export interface City {
   minxin: number;
   /** 吏治 0-100 */
   order: number;
+  /** 最近一次易主的月份（新附之地有降卒可收编） */
+  takenTurn?: number;
   agri: number;
   commerce: number;
   edu: number;
@@ -197,6 +199,8 @@ export type Order =
   /** 改换粮台 */
   | { id: string; kind: 'supply'; army: ArmyId; node: NodeId }
   | { id: string; kind: 'reinforce'; node: NodeId; army: ArmyId; troops: number }
+  /** 裁兵：裁撤本城驻军（army 缺省）或在本城的某军若干人 */
+  | { id: string; kind: 'disband'; node: NodeId; army?: ArmyId; troops: number }
   | { id: string; kind: 'envoy'; char: CharId; target: FactionId; aim: 'alliance' | 'truce' | 'peace' }
   | { id: string; kind: 'persuade'; char: CharId; node: NodeId }
   | { id: string; kind: 'command'; vassal: FactionId; army: ArmyId; order: ArmyOrder; silver: number }

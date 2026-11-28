@@ -3,13 +3,13 @@ import { supplyRoute, armyRoute, noRouteReason } from './route';
 import type { ArmyOrder, City, GameState, Order } from './types';
 import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance, treasuryOf } from './state';
 import { setArmyOrder, capture } from './military';
-import { RECRUIT_SILVER, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
+import { RECRUIT_SILVER, DISBAND_SILVER, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
 import { rngFor } from './rng';
 import { seekTalent, seekError, prisonerError, handlePrisoner, SEEK_SILVER, govEffects, hasTrait } from './people';
 import { shortestPath, neighbors, NODE, pathDays } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
-  trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', supply: '粮台', reinforce: '增兵',
+  trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', supply: '粮台', reinforce: '增兵', disband: '裁兵',
   envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立', war: '宣战', raise: '出兵',
   seek: '招贤', prisoner: '俘虏',
 };
@@ -23,6 +23,7 @@ export function describeOrder(s: GameState, o: Order): string {
     case 'prisoner': return `${o.act === 'recruit' ? '劝降' : o.act === 'release' ? '释放' : '处斩'}俘虏${charName(s, o.char)}`;
     case 'transfer': return `自${nodeName(o.from)}调${o.grain ? `粮 ${o.grain} 石` : ''}${o.grain && o.silver ? '、' : ''}${o.silver ? `银 ${o.silver} 两` : ''}往${nodeName(o.to)}`;
     case 'recruit': return `${nodeName(o.node)}募兵 ${o.troops} 人`;
+    case 'disband': return o.army ? `${s.armies[o.army]?.name ?? '军队'}裁撤 ${o.troops} 人${o.troops >= (s.armies[o.army]?.troops ?? Infinity) ? '（全军遣散）' : ''}` : `${nodeName(o.node)}裁撤驻军 ${o.troops} 人`;
     case 'trade': return o.grain >= 0 ? `${nodeName(o.node)}籴粮 ${o.grain} 石` : `${nodeName(o.node)}粜粮 ${-o.grain} 石`;
     case 'loan': return `${nodeName(o.node)}劝捐助饷`;
     case 'army': return `${s.armies[o.army]?.name ?? o.army}${armyOrderText(o.order)}`;
@@ -130,6 +131,21 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       if (a.location !== o.node || a.progress > 0 || !own(o.node)) return '军队须在己方城中';
       if (o.troops > 0 && o.troops > a.troops - 500) return '军队至少留 500 人';
       if (o.troops < 0 && -o.troops > s.cities[o.node].garrison - 500) return '城中至少留 500 人';
+      return null;
+    }
+    case 'disband': {
+      if (!own(o.node)) return '只能裁自己城中的兵';
+      if (s.sieges[o.node]) return '城被围，不能裁兵';
+      if (!(o.troops > 0)) return '人数不对';
+      if (o.army) {
+        const a = s.armies[o.army];
+        if (!a || a.faction !== f) return '不是你的军队';
+        if (a.location !== o.node || a.progress > 0) return '军队须驻在本方城中才能遣散';
+        if (o.troops > a.troops) return `此军只有 ${a.troops} 人`;
+        if (o.troops < a.troops && a.troops - o.troops < 500) return '军队至少留 500 人（或全军遣散）';
+        return null;
+      }
+      if (o.troops > s.cities[o.node].garrison - 500) return '城中至少留 500 人';
       return null;
     }
     case 'envoy': case 'persuade': {
@@ -327,6 +343,34 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       a.troops -= o.troops;
       bump(s, o.node, 'garrison', o.troops, o.troops > 0 ? `${a.name}拨兵入城` : `抽兵补入${a.name}`, src);
       if (isPlayer) report(s, { cat: '军报', node: o.node, text: `${describeOrder(s, o)}。`, src });
+      break;
+    }
+    case 'disband': {
+      const c = s.cities[o.node];
+      const a = o.army ? s.armies[o.army] : undefined;
+      const n = o.troops;
+      // 遣散银：每人半两；军队连同所欠之饷，按人分摊
+      const owed = a ? Math.round((a.arrears ?? 0) * n / Math.max(1, a.troops)) : 0;
+      const due = Math.round(n * DISBAND_SILVER) + owed;
+      const paid = Math.max(0, Math.min(due, Math.floor(c.silver)));
+      const short = due ? 1 - paid / due : 0;
+      if (paid) bump(s, o.node, 'silver', -paid, `裁兵 ${n} 人遣散银${owed ? '（含结清欠饷）' : ''}`, src);
+      if (a) {
+        if (a.arrears) a.arrears = Math.max(0, a.arrears - owed);
+        if (n >= a.troops) delete s.armies[a.id];
+        else a.troops -= n;
+      } else bump(s, o.node, 'garrison', -n, `裁撤驻军 ${n} 人`, src);
+      // 给足遣散银者归农（人口回升、民心稍安）；给不足的那部分散兵无资归乡，流为盗匪
+      const home = n * (1 - short);
+      bump(s, o.node, 'pop', Math.round(home / 10000 * 100) / 100, '散兵归农', src);
+      if (home >= 1000) bump(s, o.node, 'minxin', Math.round(home / 5000 * 10) / 10, '裁兵省饷，百姓少累', src);
+      const lost = n * short;
+      if (lost >= 300) {
+        bump(s, o.node, 'minxin', -Math.round(lost / 1500 * 10) / 10, '散兵为盗', src);
+        bump(s, o.node, 'order', -Math.max(1, Math.round(lost / 3000)), '散兵为盗', src);
+      }
+      if (isPlayer) report(s, { cat: lost >= 300 ? '急报' : '军报', urgent: lost >= 300, node: o.node, src,
+        text: `${describeOrder(s, o)}，${paid ? `发遣散银 ${paid} 两` : '府库无银可发'}${lost >= 300 ? `；约 ${Math.round(lost / 100) * 100} 人无资归乡，啸聚为盗（民心、吏治下降）` : '，散兵各自归农'}。每月省口粮约 ${Math.round(n * GRAIN_PER_SOLDIER)} 石、饷银约 ${Math.round(n * (a ? 0.9 : SILVER_PER_SOLDIER))} 两。` });
       break;
     }
     case 'envoy': case 'persuade': {

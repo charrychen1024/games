@@ -5,7 +5,7 @@ import { shortestPath, pathDays, neighbors, distancesFrom, NODE } from '../data/
 import { canSea } from './military';
 import { maxRecruit } from './orders';
 import { defectFaction, disband } from './military';
-import { RECRUIT_SILVER, supplyChoiceError, supplyBlock, GRAIN_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER } from './economy';
+import { RECRUIT_SILVER, SILVER_PER_SOLDIER, supplyChoiceError, supplyBlock, GRAIN_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER } from './economy';
 import { rngFor } from './rng';
 import { genLocal } from './people';
 import { applyOrder, validateOrder, persuadeChance } from './orders';
@@ -231,6 +231,16 @@ export function aiOrders(s: GameState, f: string): Order[] {
       orders.push({ id: id(), kind: 'army', army: it.a.id, order: { kind: 'move', target: capNode, attack: false } });
     }
   }
+  // 裁兵：府库连一个月的驻军饷银都发不出、又非边城（邻城无敌城、两站内无敌军），裁去多余驻军（留足守兵的两倍）
+  for (const c of citiesOf(s, f)) {
+    if (s.sieges[c.id] || danger.some(d => d.node === c.id)) continue;
+    if (c.silver >= c.garrison * SILVER_PER_SOLDIER) continue;
+    const nb = neighbors(c.id).map(n => n.to);
+    const nb2 = new Set([...nb, ...nb.flatMap(n => neighbors(n).map(x => x.to))]);
+    if (nb.some(n => s.cities[n] && hostile(s, f, s.cities[n].controller)) || Object.values(s.armies).some(a => hostile(s, f, a.faction) && nb2.has(a.location))) continue;
+    const extra = Math.floor((c.garrison - keepOf(s, f, c.id) * 2) / 500) * 500;
+    if (extra >= 1000 && extra <= c.garrison - 500) orders.push({ id: id(), kind: 'disband', node: c.id, troops: extra });
+  }
   // 募兵：都城、受威胁之城，以及钱粮宽裕而驻军单薄的城
   const soldiers = armiesOf(s, f).reduce((sum, a) => sum + a.troops, 0) + citiesOf(s, f).reduce((m, c) => m + c.garrison, 0);
   const cityCount = citiesOf(s, f).length;
@@ -248,15 +258,22 @@ export function aiOrders(s: GameState, f: string): Order[] {
   return orders;
 }
 
-/** 大顺新败之余，部众逐月离散（至乙酉春）；清军沿途收编降卒，在本方地面的野战军逐月补充 */
+/** 大顺新败之余，部众逐月离散（至乙酉春）；清军收编降卒（史实：绿营多出明朝降兵）。
+ *  收编不是白来的（2026-11-27 玩家问：军队随年限自己扩充，合理吗）：只在近一年新取之地（两站之内有一年半内归清之城）才有降卒可收，
+ *  每人给编练银（募兵之半）、由粮台支出，粮台无银便收不成；欠饷、缺粮之军不收；每军至多五万；玩家一方不在此列（玩家要募兵）。 */
 export function aiAttrition(s: GameState) {
   if (s.turn <= 10) for (const a of Object.values(s.armies)) if (a.faction === 'shun' && a.faction !== s.player) a.troops = Math.round(a.troops * 0.97);
-  for (const a of Object.values(s.armies)) {
-    if (topOf(s, a.faction) !== 'qing' || a.hunger > 0 || a.troops >= 50000) continue;
-    const here = s.cities[a.location];
-    const onOwn = here ? topOf(s, here.controller) === 'qing' : false;
-    const near = onOwn || neighbors(a.location).some(nb => topOf(s, s.cities[nb.to]?.controller ?? '') === 'qing');
-    if (near) a.troops = Math.min(50000, Math.round(a.troops * 1.03 + 200));
+  const fresh = (id: string) => { const c = s.cities[id]; return !!c && topOf(s, c.controller) === 'qing' && c.takenTurn !== undefined && s.turn - c.takenTurn <= 18; };
+  for (const a of Object.values(s.armies).sort((x, y) => x.id.localeCompare(y.id))) {
+    if (topOf(s, a.faction) !== 'qing' || a.faction === s.player || topOf(s, a.faction) === s.player || a.hunger > 0 || (a.unpaid ?? 0) > 1 || a.troops >= 50000) continue;
+    if (!fresh(a.location) && !neighbors(a.location).some(nb => fresh(nb.to) || neighbors(nb.to).some(x => fresh(x.to)))) continue;
+    const sup = s.cities[a.supply];
+    const add = Math.min(50000 - a.troops, Math.round(a.troops * 0.03 + 200));
+    const cost = Math.round(add * RECRUIT_SILVER / 2);
+    if (!sup || add <= 0 || sup.silver < cost) continue;
+    sup.silver -= cost;
+    s.ledger.push({ turn: s.turn, node: sup.id, field: 'silver', delta: -cost, text: `${a.name}收编降卒 ${add} 人`, src: { kind: 'order', ref: 'absorb:' + a.id } });
+    a.troops += add;
   }
 }
 

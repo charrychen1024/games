@@ -132,6 +132,12 @@ try {
   await page.click('#recruit-ok');
   await wait(200);
   check('募兵加入本月命令', (await text('#orders')).includes('募兵'));
+  // 裁兵：弹窗写明遣散银与每月所省（只看不下，免占政令）
+  await page.click('#act-disband');
+  await wait(200);
+  check('裁兵弹窗写明遣散银与每月省粮省饷', /遣散银/.test(await text('#modal')) && /每月省粮/.test(await text('#modal')) && /每月省饷/.test(await text('#modal')), await text('#modal'));
+  await page.locator('#modal button', { hasText: '取消' }).click();
+  await wait(200);
   // 调拨：游戏化下拉框，不用浏览器原生控件
   await page.click('#act-transfer');
   await wait(300);

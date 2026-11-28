@@ -37,6 +37,8 @@ export function forageShare(s: GameState, faction: string): number {
   return 0.2;
 }
 export const RECRUIT_SILVER = 3; // 两/人
+/** 裁兵每人遣散银（两）；军队另须结清所欠之饷 */
+export const DISBAND_SILVER = 0.5;
 /** 赈济：每万口每月放粮一百石（大城约当一月田粮的六七成），民心 +3 */
 export const reliefGrain = (pop: number) => Math.round(pop * 100);
 /** 仓储损耗：超出本城六个月用度的存粮，每月霉变鼠耗百分之一（陈粮不耐久存） */
