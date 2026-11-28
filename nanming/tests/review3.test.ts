@@ -43,26 +43,32 @@ function month(s: GameState, pick: (title: string, labels: string[]) => number =
   return { s: r.value.state, seen };
 }
 
+/* 2026-11-27 改：天下只归一家。奉他人号令者，即便直辖最多，也只是臣属，须先自立才能一统；盟友亦是对手。 */
 describe('一、谁完成统一', () => {
-  it('弘光主导、郑氏只守安平：郑氏是随同，不是统一者', () => {
+  it('弘光一统、郑氏只守安平且奉弘光：郑氏只是臣属，不算一统', () => {
     const s = runMonthAuto(endgame('zheng', id => id === 'anping' ? 'zheng' : 'hongguang'), []);
-    expect(s.ended?.kind).toBe('unified');
-    expect(s.ended?.role).toBe('follow');
+    expect(s.ended?.kind).toBe('subject');
     expect(s.ended?.text).toContain('弘光');
   });
-  it('郑氏扶明主导：郑氏直辖最多，仍奉明室，算玩家的扶立之功', () => {
+  it('郑氏直辖最多而仍奉明室：仍是臣属，须自立', () => {
     const s = runMonthAuto(endgame('zheng', (id, i) => i < 3 ? 'hongguang' : 'zheng'), []);
-    expect(s.ended?.kind).toBe('unified');
-    expect(s.ended?.role).toBe('patron');
+    expect(s.ended?.kind).toBe('subject');
   });
   it('郑氏自立统一：独立一统', () => {
     const s = runMonthAuto(endgame('zheng', () => 'zheng', true), []);
     expect(s.ended?.kind).toBe('unified');
     expect(s.ended?.role).toBe('lead');
   });
-  it('弘光玩家、郑氏随同：弘光是统一者', () => {
+  it('弘光玩家、郑氏奉其号令：弘光是统一者', () => {
     const s = runMonthAuto(endgame('hongguang', id => id === 'anping' ? 'zheng' : 'hongguang'), []);
-    expect(s.ended?.role).toBe('lead');
+    expect(s.ended?.kind).toBe('unified');
+  });
+  it('盟友不算：弘光与盟友分据天下，不算一统', () => {
+    const s0 = endgame('hongguang', id => id === 'anping' ? 'zheng' : 'hongguang');
+    delete s0.factions.zheng.overlord; delete s0.factions.zheng.loyalty;
+    s0.relations[['hongguang', 'zheng'].sort().join('|')] = { stance: 'alliance' };
+    const s = runMonthAuto(s0, []);
+    expect(s.ended?.kind).not.toBe('unified');
   });
 });
 

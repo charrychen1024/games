@@ -5,13 +5,13 @@ import type { GameState, Order } from './types';
 import type { BattleState } from './battle';
 import { autoResolve } from './battle';
 import { applyOrder, validateOrder, describeOrder, resolveMissions, orderBudget, orderCost, answerCounter } from './orders';
-import { proposalsFor, applyOffer, aiDiplomacyTalks } from './diplomacy';
+import { proposalsFor, applyOffer, aiDiplomacyTalks, aiBreakAlliances } from './diplomacy';
 import { moveArmies, buildFieldBattle, buildSiegeBattle, applyBattle, updateSieges, blockadeEffects, tidyPeople, unrest } from './military';
 import { runEconomy, arriveConvoys } from './economy';
 import { aiOrders, aiFixSupply, aiPayArmies, aiDefections, aiRaiseArmies, aiAttrition, aiDiplomacy, aiSorties, aiMusters, aiOpportunism, aiConduct, aiEvacuate, aiIntrigue, aiRegarrison } from './ai';
 import { dueEvents, fireEvent, choiceFor, applyChoice, type EventDef, type PendingChoice } from './events';
 import { EVENTS } from '../data/events';
-import { pruneLedger, topOf, report, citiesOf, armiesOf } from './state';
+import { pruneLedger, topOf, report, citiesOf, armiesOf, nodeName, factionName } from './state';
 import { TOTAL_TURNS, dateLabel } from './calendar';
 import { VICTORY_AREAS, NODE } from '../data/geography';
 import { runTalent } from './talent';
@@ -105,6 +105,7 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
     applyOffer(s, o, idx);
   }
   aiDiplomacyTalks(s);
+  aiBreakAlliances(s);
   aiDefections(s);
   aiIntrigue(s);
   // 翻脸宣战放在本月用兵之后：先有急报，下月才动兵，玩家有一个月补防
@@ -216,11 +217,19 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   }
 
   // 八、结算与收尾
+  const before0: Record<string, string> = Object.fromEntries(Object.keys(s.cities).map(id => [id, String(s.flags['lostfrom_' + id] ?? '')]));
   for (const f of Object.values(s.factions)) {
     if (f.defunct || f.id === 'local' || f.id === 'helan') continue;
     if (!citiesOf(s, f.id).length && !armiesOf(s, f.id).length) {
       f.defunct = true;
-      report(s, { cat: '急报', urgent: f.id === s.player, text: `${f.name}已无城池军队，退出天下之争。` });
+      s.flags['fell_' + f.id] = s.turn;
+      // 一方覆亡是天下大事：写明亡于何处、首领下落、立国几年
+      const lead = s.chars[f.leader];
+      const lastNode = Object.keys(s.cities).filter(id => s.flags['lost_' + id] === s.turn && before0[id] === f.id)[0];
+      const fate = !lead ? '' : lead.status === 'dead' ? `${lead.name}身死` : lead.status === 'captured' ? `${lead.name}被执于${factionName(s, lead.captor ?? '')}` : `${lead.name}下落不明`;
+      const yrs = Math.max(1, Math.round((s.turn + 1) / 12));
+      report(s, { cat: '急报', act: 'fall', from: f.id, urgent: true, node: lastNode ?? f.capital, faction: undefined,
+        text: `${f.name}亡。${lastNode ? `${nodeName(lastNode)}陷落，` : ''}城池军队尽失${fate ? `，${fate}` : ''}。自开局以来 ${yrs} 年，${f.short}退出天下之争。` });
       // 下属随之失主：改为自立
       for (const v of Object.values(s.factions)) if (v.overlord === f.id) { delete v.overlord; delete v.loyalty; }
     }
@@ -233,25 +242,22 @@ export function* resolveMonth(input: GameState, playerOrders: Order[], events: E
   return { state: s };
 }
 
-/** 统一：计入胜利的地区全部归于同一政权（玩家及奉其号令者），且其他可选势力均已退出 */
-export function unificationProgress(s: GameState, f = s.player): { held: number; total: number; rivals: string[] } {
+/** 统一：计入胜利的地区全部归于本方（本方直辖，以及奉本方号令的下属），其余可选势力尽数覆亡或归附本方。
+ * 盟友、停战之家仍是对手——结盟只是一时之计，天下只能归于一家（2026-11-27 玩家：与清结盟后显示共存即胜，不对）。
+ * 本方若奉他人号令，须先自立，否则不能一统。 */
+export function unificationProgress(s: GameState, f = s.player): { held: number; total: number; rivals: string[]; vassalOf?: string } {
   const nodes = Object.values(s.cities).filter(c => VICTORY_AREAS.includes(NODE[c.id].area));
-  const held = nodes.filter(c => topOf(s, c.controller) === topOf(s, f)).length;
-  // 盟约、停战保留各自控制权：盟友若仍奉另一政权，照样是独立对手；只有正式归附（同奉一主）或退出才不算
-  const rivals = Object.values(s.factions).filter(x => x.playable && !x.defunct && topOf(s, x.id) !== topOf(s, f)).map(x => x.name);
-  return { held, total: nodes.length, rivals };
+  const mine = (id: string) => id === f || topOf(s, id) === f;
+  const held = nodes.filter(c => mine(c.controller)).length;
+  const rivals = Object.values(s.factions).filter(x => x.playable && !x.defunct && !mine(x.id)).map(x => x.name);
+  const top = topOf(s, f);
+  return { held, total: nodes.length, rivals, vassalOf: top !== f ? top : undefined };
 }
 
-/** 统一时谁是主导者：本方即天下之主（lead）；奉他人号令而直辖计胜之地最多（patron）；否则随同（follow） */
-export function unifierRole(s: GameState, f = s.player): { role: 'lead' | 'patron' | 'follow'; mine: number; best: number; leader: string } {
-  const top = topOf(s, f);
-  const bloc = Object.values(s.factions).filter(x => !x.defunct && topOf(s, x.id) === top).map(x => x.id);
-  const count = (id: string) => Object.values(s.cities).filter(c => c.controller === id && VICTORY_AREAS.includes(NODE[c.id].area)).length;
-  const mine = count(f);
-  let best = 0, leader = top;
-  for (const id of bloc) if (id !== f) { const n = count(id); if (n > best) { best = n; leader = id; } }
-  if (top === f) return { role: 'lead', mine, best, leader: f };
-  return { role: mine > best ? 'patron' : 'follow', mine, best, leader: mine > best ? f : leader };
+/** 兼容旧调用：只剩“一方之主”一种身份 */
+export function unifierRole(s: GameState, f = s.player): { role: 'lead'; mine: number; best: number; leader: string } {
+  const u = unificationProgress(s, f);
+  return { role: 'lead', mine: u.held, best: 0, leader: f };
 }
 
 function checkEnd(s: GameState) {
@@ -262,14 +268,17 @@ function checkEnd(s: GameState) {
     return;
   }
   const u = unificationProgress(s);
-  if (u.held === u.total && u.rivals.length === 0) {
-    const r = unifierRole(s);
-    const top = s.factions[topOf(s, s.player)];
-    const text = r.role === 'lead' ? `${p.name}统一天下。`
-      : r.role === 'patron' ? `${p.name}奉${top.name}，扶明室而定天下：直辖 ${r.mine} 处计胜之地，诸家之冠，号令实出${p.short}。`
-      : `天下归于${top.name}，${p.name}随同，直辖 ${r.mine} 处计胜之地（主导者${s.factions[r.leader]?.name ?? top.name}，${r.best} 处）。`;
-    s.ended = { kind: 'unified', role: r.role, text };
+  if (!u.vassalOf && u.held === u.total && u.rivals.length === 0) {
+    s.ended = { kind: 'unified', role: 'lead', text: `${p.name}扫平群雄，天下归于一家。` };
     return;
+  }
+  // 所奉之主一统天下：本方只是臣属，不算一统
+  if (u.vassalOf) {
+    const lord = unificationProgress(s, u.vassalOf);
+    if (lord.held === lord.total && lord.rivals.length === 0) {
+      s.ended = { kind: 'subject', text: `天下归于${s.factions[u.vassalOf]?.name ?? ''}，${p.name}为其臣属。江山不姓${p.short}，本局到此为止。` };
+      return;
+    }
   }
   if (s.turnLimit !== undefined && s.turn + 1 >= s.turnLimit) {
     s.ended = { kind: 'trial_end', text: `试玩结束：${dateLabel(polityOf(s, p.polity), s.turn)}。` };

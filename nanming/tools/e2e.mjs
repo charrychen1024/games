@@ -26,7 +26,7 @@ async function nextMonth(manualBattle = false, probe = null) {
   const before = await text('#date-label');
   await page.click('#btn-next');
   const t0 = Date.now();
-  let summary = null, battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false, newsArtMotion = '', marched = 0, siegeProbe = null;
+  let fall = '', summary = null, battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false, newsArtMotion = '', marched = 0, siegeProbe = null;
   while (Date.now() - t0 < 150000) {
     if (await visible('[data-choice]')) {
       if (probe && !probe.done) {
@@ -78,6 +78,10 @@ async function nextMonth(manualBattle = false, probe = null) {
       }
       await page.click('#news-skip', { timeout: 1000 }).catch(() => {}); await wait(450); continue;
     }
+    if (await visible('#fall')) {
+      if (!fall) fall = await text('#fall');
+      await page.click('#fall', { timeout: 1000 }).catch(() => {}); await wait(500); continue;
+    }
     if (await visible('#summary-ok')) {
       if (!summary) summary = { tiles: await page.locator('#month-summary .ms-tile').count(), text: await text('#modal') };
       await page.click('#summary-ok', { timeout: 1000 }).catch(() => {}); await wait(200); continue;
@@ -87,7 +91,7 @@ async function nextMonth(manualBattle = false, probe = null) {
     await wait(150);
   }
   await wait(200);
-  return { summary, before, after: await text('#date-label'), battles, choices, battleScene, newsSeen, newsArtMotion, marched, siegeProbe };
+  return { fall, summary, before, after: await text('#date-label'), battles, choices, battleScene, newsSeen, newsArtMotion, marched, siegeProbe };
 }
 
 try {
@@ -682,8 +686,12 @@ try {
   await page.click('#act-independence');
   await wait(200);
   check('自立加入本月命令', (await text('#orders')).includes('自立'), await text('#orders'));
-  await nextMonth();
+  // 一方覆亡：让大西本月失尽城池军队，结算时应有全屏覆亡演出
+  await page.evaluate(() => { const s = NM.s; for (const c of Object.values(s.cities)) if (c.controller === 'xi') c.controller = 'mingprov'; for (const a of Object.values(s.armies)) if (a.faction === 'xi') delete s.armies[a.id]; });
+  const mz = await nextMonth();
   check('结算后郑氏不再奉弘光号令', await page.evaluate(() => !NM.s.factions.zheng.overlord));
+  check('一方覆亡有全屏演出：“西亡”与亡国之由', /西亡/.test(mz.fall) && /亡/.test(mz.fall), mz.fall.slice(0, 80));
+  check('天下诸家写明盟友亦是对手、天下只归一家', await page.evaluate(() => NM.unityLine().includes('只归一家') || NM.unityLine().includes('自立')));
 
   console.log('地图样稿：扬州被围');
   await page.click('#btn-menu');

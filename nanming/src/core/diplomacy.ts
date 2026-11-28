@@ -276,3 +276,45 @@ export function aiDiplomacyTalks(s: GameState) {
     }
   }
 }
+
+/* ---------- 盟约只是一时之计（2026-11-27 玩家：结盟只是暂时的，最终只能一家胜出；电脑要会结盟、攻击、解约） ----------
+ * 每月看一遍各家盟约（至少一方是电脑、各自为主者）：
+ * 一、背盟：电脑一方兵力在盟友两倍以上（玩家为盟友时一倍八）、两家相邻、主将不太主和，便翻脸宣战（每对盟友至少结盟半年后才会）；
+ * 二、恐为所并：盟友已是天下最强、兵力在本方两倍以上，便绝盟自保（回到中立）；
+ * 三、盟约无用：结盟一年以上，两家已无共同强敌，各自为谋（回到中立）。 */
+export function aiBreakAlliances(s: GameState) {
+  const me = s.factions[s.player] ? topOf(s, s.player) : s.player;
+  const heads = Object.keys(s.factions).filter(f => live(s, f) && !s.factions[f].overlord).sort();
+  const top = hegemon(s);
+  for (let i = 0; i < heads.length; i++) for (let j = i + 1; j < heads.length; j++) {
+    const A = heads[i], B = heads[j];
+    if (stance(s, A, B) !== 'alliance') continue;
+    const key = `ally_${A}_${B}`;
+    if (s.flags[key] === undefined) { s.flags[key] = s.turn; continue; }   // 记下结盟之月
+    const age = s.turn - Number(s.flags[key]);
+    const rng = rngFor(s.seed, 'breakally', s.turn, key);
+    for (const [X, Y] of [[A, B], [B, A]] as const) {
+      if (X === me) continue;   // 玩家自己决定盟约
+      const sx = blocStrength(s, X), sy = blocStrength(s, Y);
+      const pCap = s.factions[Y].capital, xCap = s.factions[X].capital;
+      if (age >= 6 && sx >= sy * (Y === me ? 1.8 : 2) && nearBloc(s, X, Y) && hawkOf(s, X) >= 20 && rng.next() < 0.15) {
+        setStance(s, X, Y, 'war'); delete s.flags[key];
+        report(s, { cat: '交涉', urgent: Y === me, node: pCap, origin: xCap,
+          text: `${Y === me ? '' : '【动向】'}${factionName(s, X)}自恃兵强，背弃盟约，向${factionName(s, Y)}宣战！${Y === me ? '盟约只是一时之计，速整边防。' : ''}` });
+        return;
+      }
+      if (top === Y && sy >= sx * 2 && rng.next() < 0.2) {
+        setStance(s, X, Y, 'neutral'); delete s.flags[key];
+        report(s, { cat: '交涉', urgent: Y === me, node: xCap, origin: pCap,
+          text: `${Y === me ? '' : '【动向】'}${factionName(s, X)}见${factionName(s, Y)}势大，恐为所并，绝盟自保，两家复归各守疆界。` });
+        return;
+      }
+    }
+    const sa = blocStrength(s, A), sb = blocStrength(s, B);
+    const common = top && top !== A && top !== B && hostile(s, A, top) && hostile(s, B, top) && blocStrength(s, top) > Math.max(sa, sb) * 1.2;
+    if (age >= 12 && !common && A !== me && B !== me && rng.next() < 0.25) {
+      setStance(s, A, B, 'neutral'); delete s.flags[key];
+      report(s, { cat: '交涉', node: s.factions[A].capital, origin: s.factions[B].capital, text: `【动向】${factionName(s, A)}与${factionName(s, B)}共同之敌已不足为患，盟约名存实亡，各自为谋。` });
+    }
+  }
+}

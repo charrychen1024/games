@@ -566,7 +566,7 @@ export function capture(s: GameState, node: string, newCtrl: string, how: '陷�
   for (const a of armiesAt(s, node)) if (hostile(s, a.faction, newCtrl)) retreat(s, a, true);
   // 围攻此城的各军：途中受阻的接着开往原定目标
   for (const a of Object.values(s.armies)) if (a.order.kind === 'siege' && a.order.target === node && !hostile(s, a.faction, s.cities[node].controller)) siegeDone(s, a);
-  s.flags['lost_' + node] = s.turn;
+  s.flags['lost_' + node] = s.turn; s.flags['lostfrom_' + node] = old;
   s.flags['lost_how_' + node] = how;
   if (c.controller === old) {
     report(s, { cat: '易主', act: 'join', from: old, to: newCtrl, urgent: true, node, text: `${nodeName(node)}守将${gov?.name ?? ''}率${factionName(s, old)}开城，正式归附${factionName(s, newCtrl)}。城仍由${factionName(s, old)}实控，改奉${s.factions[old].polity === 'qing' ? '清' : factionName(s, topOf(s, newCtrl))}。`, src });

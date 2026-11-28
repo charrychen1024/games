@@ -8,7 +8,7 @@ import gsap from 'gsap';
 gsap.config({ nullTargetWarn: false });   // 弹窗里某类元素没有时，入场动画安静跳过
 import { playBattle } from './battle';
 import type { BattleState } from '../core/battle';
-import { newsSfx, eventSfx, resultSfx, marchSfx, chime, alarm, click, isMuted, setMuted, setScene, setIntensity, audioState, getVolumes, setVolume, paper, scroll, stampSfx, orderSfx, endTurnSfx, monthSfx, captureSfx, distantBattle, choiceSfx, successSfx, denySfx, introSfx, hoverPluck } from './audio';
+import { newsSfx, eventSfx, resultSfx, marchSfx, chime, alarm, click, isMuted, setMuted, setScene, setIntensity, audioState, getVolumes, setVolume, paper, scroll, stampSfx, orderSfx, endTurnSfx, monthSfx, captureSfx, distantBattle, choiceSfx, successSfx, denySfx, introSfx, hoverPluck, gong } from './audio';
 import { dangerOf, eraOf } from './musicTheory';
 import { portrait } from './portrait';
 import { cardHand, cardArt, type GameCard, type Chip } from './cards';
@@ -16,7 +16,7 @@ import { newsArt, type ArtCat } from './newsArt';
 import { hashKeys } from '../core/rng';
 import { scene, type SceneKind, type SceneOpts, type Party, type Hat } from './scene';
 import { traitsOf, TRAITS, govEffects, governorOf, prisonerOdds, ransomOf, ransomError, SEEK_SILVER, SEEK_COOLDOWN } from '../core/people';
-import { resolveMonth, unificationProgress, unifierRole, type Answer } from '../core/turn';
+import { resolveMonth, unificationProgress, type Answer } from '../core/turn';
 import { dateLabel, eraYear, monthName, lunarOf, shortDate, TOTAL_TURNS, ganzhi as ganzhiOf } from '../core/calendar';
 import { POLITIES } from '../data/factions';
 import { isReduced, setReducedMotion, reducedSystem } from './motion';
@@ -1759,7 +1759,7 @@ export class App {
     const st = stance(s, s.player, target);
     const tf = s.factions[target];
     if (!aim0) {
-      const aims: GameCard[] = [{ id: 'alliance', title: '结盟', art: cardArt('envoy', '#3f7a4a', 1), chips: [{ icon: 'city', text: '各守其城' }, { icon: 'factions', text: '互不相攻', tone: 'good' }], note: '盟友之城不算你的，统一时另计。' }];
+      const aims: GameCard[] = [{ id: 'alliance', title: '结盟', art: cardArt('envoy', '#3f7a4a', 1), chips: [{ icon: 'city', text: '各守其城' }, { icon: 'factions', text: '互不相攻', tone: 'good' }], note: '盟约只是一时之计：盟友之城不算你的，天下只能归于一家；时移势易，盟友也会背盟。' }];
       if (st === 'war') aims.push({ id: 'truce', title: '停战', art: cardArt('hourglass', '#8c6a35', 2), chips: [{ icon: 'hourglass', text: '六个月' }], note: '期满复归交战。' },
         { id: 'peace', title: '议和', art: cardArt('ok', '#3f6f8f', 3), chips: [{ icon: 'war', text: '罢兵', tone: 'good' }], note: '两家不再交兵。' });
       this.sceneNext = { kind: 'parley', opts: { a: this.party(s.player), b: this.party(target), seed: s.turn } };
@@ -1886,9 +1886,9 @@ export class App {
   /* ================= 势力 / 人物 ================= */
   /** 统一进度的一句话：阵营进度、剩余对手、本方直辖贡献与是否主导 */
   unityLine(): string {
-    const s = this.s!, u = unificationProgress(s), r = unifierRole(s);
-    const lead = r.role === 'lead' ? '本方为一方之主' : r.role === 'patron' ? `本方直辖计胜之地最多（${r.mine}，次者 ${r.best}），算主导` : `当前随同：本方直辖 ${r.mine}，阵营中${s.factions[r.leader]?.name ?? ''}最多（${r.best}），主导须超过 ${r.best}`;
-    return `阵营 ${u.held}/${u.total}${u.rivals.length ? ` · 尚有对手 ${u.rivals.length} 家` : ''} · ${lead}`;
+    const s = this.s!, u = unificationProgress(s);
+    if (u.vassalOf) return `本方奉${s.factions[u.vassalOf]?.short ?? ''}号令，须先自立，方能一统 · 本方及所属 ${u.held}/${u.total}`;
+    return `本方及所属 ${u.held}/${u.total}${u.rivals.length ? ` · 尚有对手 ${u.rivals.length} 家（盟友亦是对手）` : ''} · 天下只归一家`;
   }
   openFactions() {
     const s = this.s!;
@@ -2433,6 +2433,38 @@ export class App {
 
   /* ================= 月度推进 ================= */
   /** 翻月：旧月翻过，新月落下 */
+  /** 一方覆亡：天下大事，全屏演出——残旗坠地、旗面裂开、墨色漫开，“某某亡”大字落下，并写亡于何处、首领下落 */
+  fallFx(after: GameState, fid: string): Promise<void> {
+    return new Promise(resolve => {
+      const f = after.factions[fid];
+      const r = after.reports.filter(x => x.act === 'fall' && x.from === fid).pop();
+      const lead = after.chars[f.leader];
+      const mark = polityOf(after, f.polity).mark || f.short.slice(0, 1);
+      const el = h('div', { id: 'fall', role: 'dialog', 'aria-label': `${f.name}覆亡`, style: { '--fc': f.color } as any },
+        h('div', { class: 'fall-ink' }),
+        h('div', { class: 'fall-banner' }, h('div', { class: 'fall-half l' }, h('b', null, mark)), h('div', { class: 'fall-half r' }, h('b', null, mark)), h('i', { class: 'fall-pole' })),
+        h('div', { class: 'fall-text' }, h('h1', null, `${f.short}亡`), h('small', null, `${f.name}${lead ? ` · ${lead.name}` : ''} · ${shortDate(Math.max(0, after.turn - (after.ended ? 0 : 1)))}`), r ? h('p', null, r.text) : null),
+        h('div', { class: 'fall-skip' }, '点击继续'));
+      $('#app').append(el);
+      alarm(); setTimeout(() => gong(false), 900);
+      const fast = isReduced();
+      let done = false;
+      const finish = () => { if (done) return; done = true; gsap.to(el, { opacity: 0, duration: 0.4, onComplete: () => { el.remove(); resolve(); } }); };
+      el.onclick = finish;
+      if (fast) { gsap.from(el, { opacity: 0, duration: 0.3 }); setTimeout(finish, 2600); return; }
+      const tl = gsap.timeline({ onComplete: () => setTimeout(finish, 2200) });
+      tl.from(el, { opacity: 0, duration: 0.3 })
+        .from('#fall .fall-banner', { y: -260, rotate: -6, duration: 0.7, ease: 'power3.in' })
+        .to('#fall .fall-banner', { rotate: 14, y: 40, duration: 0.5, ease: 'power2.out' })
+        .to('#fall .fall-half.l', { x: -60, rotate: -18, opacity: 0.55, duration: 0.6, ease: 'power2.out' }, '+=0.1')
+        .to('#fall .fall-half.r', { x: 60, rotate: 22, y: 30, opacity: 0.55, duration: 0.6, ease: 'power2.out' }, '<')
+        .fromTo('#fall .fall-ink', { scale: 0.2, opacity: 0 }, { scale: 1.6, opacity: 0.9, duration: 1.1, ease: 'power2.out' }, '<')
+        .from('#fall .fall-text h1', { scale: 2.4, opacity: 0, duration: 0.45, ease: 'back.out(1.4)' }, '-=0.6')
+        .from('#fall .fall-text small, #fall .fall-text p', { opacity: 0, y: 12, duration: 0.4, stagger: 0.15 })
+        .from('#fall .fall-skip', { opacity: 0, duration: 0.3 });
+    });
+  }
+
   monthFlip(before: GameState, after: GameState): Promise<void> {
     return new Promise(resolve => {
       const pol = polityOf(after, after.factions[after.player].polity);
@@ -2571,6 +2603,13 @@ export class App {
     this.monthFx(before, this.s);
     await this.monthFlip(before, this.s);
     if (!live()) return;
+    // 本月覆亡之家（玩家自己覆亡另有结局画面）
+    for (const f of Object.values(this.s.factions)) {
+      if (f.id === this.s.player || !f.defunct || before.factions[f.id]?.defunct || f.id === 'local' || f.id === 'helan') continue;
+      if (f.capital) this.map.flyTo(f.capital, 1.6);
+      await this.fallFx(this.s, f.id);
+      if (!live()) return;
+    }
     await this.resultFx(before, this.s, issued);
     if (!live()) return;
     // 顶栏关键数字：此刻才从上月滚到本月，并飘出增减
@@ -2661,7 +2700,7 @@ export class App {
     const own = citiesOf(s, s.player).length;
     const troops = citiesOf(s, s.player).reduce((n, c) => n + c.garrison, 0) + Object.values(s.armies).filter(a => a.faction === s.player).reduce((n, a) => n + a.troops, 0);
     const years = Math.floor((Math.min(s.turn, TOTAL_TURNS - 1)) / 12 * 10) / 10;
-    const dlg = this.modal(kind === 'unified' ? 'emperor' : kind === 'fallen' ? 'ruins' : 'hourglass', kind === 'trial_end' ? '试玩结束' : kind === 'unified' ? (s.ended!.role === 'patron' ? '扶明定鼎' : s.ended!.role === 'follow' ? '随主一统' : '天下一统') : kind === 'fallen' ? (s.flags['joined_' + s.player] ? '部众投靠' : '覆亡') : '天下未定', s.ended!.text, [
+    const dlg = this.modal(kind === 'unified' ? 'emperor' : kind === 'fallen' ? 'ruins' : 'hourglass', kind === 'trial_end' ? '试玩结束' : kind === 'unified' ? '天下一统' : kind === 'subject' ? '天下归于他人' : kind === 'fallen' ? (s.flags['joined_' + s.player] ? '部众投靠' : '覆亡') : '天下未定', s.ended!.text, [
       h('div', { class: 'end-seal', style: { background: me.color } }, polityOf(s, me.polity).mark || me.short),
       h('div', { class: 'tiles' },
         this.tile('city', '城池', `${own}`, { unit: `/ ${Object.keys(s.cities).length}` }),
@@ -2670,7 +2709,7 @@ export class App {
         this.tile('battle', '参与战斗', String(myBattles.length)),
         this.tile('event', '史事线索', String(s.events.length)),
         this.tile('troops', '直辖兵', wan(troops))),
-      h('div', { class: 'note' }, kind === 'trial_end' ? '可继续推进。' : kind === 'fallen' ? '本局已覆亡，可读取更早的存档重来，或换一方再战。' : kind === 'unified' ? '天下归一。可回看军情，或换一方再战。' : '剧本期满。可回看军情，或换一方再战。'),
+      h('div', { class: 'note' }, kind === 'trial_end' ? '可继续推进。' : kind === 'fallen' || kind === 'subject' ? '本局到此为止，可读取更早的存档重来，或换一方再战。' : kind === 'unified' ? '天下归一。可回看军情，或换一方再战。' : '剧本期满。可回看军情，或换一方再战。'),
     ], [
       { label: '回到标题', icon: 'exit', onclick: () => this.showTitle() },
       ...(kind !== 'trial_end' ? [] : [{ label: '继续推进', icon: 'next', primary: true, id: 'end-continue', onclick: () => {

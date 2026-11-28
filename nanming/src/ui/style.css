@@ -1407,3 +1407,20 @@ html.reduced *:not(#toast, #toast *), html.reduced *:not(#toast, #toast *)::befo
 .ms-row .ic { width: 16px; height: 16px; color: var(--gold); }
 .ms-row small { color: var(--dim); }
 @media (max-width: 520px) { .ms-grid { grid-template-columns: 1fr; } }
+
+/* 一方覆亡 */
+#fall { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: radial-gradient(ellipse at center, rgba(20, 10, 6, 0.82), rgba(0, 0, 0, 0.94)); cursor: pointer; overflow: hidden; padding: 16px; }
+#fall .fall-ink { position: absolute; width: 70vmin; height: 70vmin; border-radius: 50%; background: radial-gradient(circle, rgba(0, 0, 0, 0.95) 30%, rgba(0, 0, 0, 0.6) 55%, transparent 72%); filter: blur(6px); pointer-events: none; }
+#fall .fall-banner { position: relative; width: 150px; height: 190px; transform-origin: 50% 0; }
+#fall .fall-pole { position: absolute; left: -6px; top: -20px; width: 6px; height: 240px; border-radius: 3px; background: linear-gradient(90deg, #6b4a26, #3a2512); }
+#fall .fall-half { position: absolute; top: 0; width: 75px; height: 190px; background: var(--fc, #8f2a1f); border: 2px solid rgba(240, 207, 134, 0.6); overflow: hidden; display: flex; align-items: center; }
+#fall .fall-half.l { left: 0; clip-path: polygon(0 0, 100% 0, 88% 30%, 100% 55%, 84% 78%, 100% 100%, 0 100%); justify-content: flex-end; }
+#fall .fall-half.r { left: 75px; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 16% 78%, 0 55%, 12% 30%); justify-content: flex-start; }
+#fall .fall-half b { font-size: 92px; font-weight: 900; color: rgba(255, 240, 210, 0.92); line-height: 1; width: 150px; text-align: center; flex: none; }
+#fall .fall-half.l b { margin-right: -75px; }
+#fall .fall-half.r b { margin-left: -75px; }
+#fall .fall-text { position: relative; text-align: center; max-width: 560px; }
+#fall .fall-text h1 { margin: 0; font-size: clamp(56px, 12vw, 104px); letter-spacing: 0.25em; color: #f3e6c8; text-shadow: 0 0 24px rgba(0, 0, 0, 0.9), 0 0 2px #000; }
+#fall .fall-text small { display: block; color: var(--gold-2); font-size: 14px; letter-spacing: 0.15em; margin-top: 6px; }
+#fall .fall-text p { color: rgba(243, 230, 200, 0.85); font-size: 15px; line-height: 1.7; margin: 10px 0 0; }
+#fall .fall-skip { position: relative; color: var(--dim); font-size: 12px; }

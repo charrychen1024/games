@@ -275,7 +275,7 @@ export interface ReportEntry {
   /** 史事与线索的声音基调 */
   tone?: 'lament' | 'death' | 'edict' | 'turn' | 'war' | 'court' | 'omen';
 }
-export type ReportAct = 'abandon' | 'breach' | 'yield' | 'join' | 'revolt' | 'battle' | 'siege' | 'lift' | 'retreat' | 'march';
+export type ReportAct = 'fall' | 'abandon' | 'breach' | 'yield' | 'join' | 'revolt' | 'battle' | 'siege' | 'lift' | 'retreat' | 'march';
 
 /* ---------- 史事与线索的运行记录 ---------- */
 /** player：此事关乎玩家所选势力的作为，本局由玩家作主，只作史实提示、不按史实代行 */
@@ -325,7 +325,7 @@ export interface GameState {
   flags: Record<string, number | string | boolean>;
   nextId: number;
   /** 结局 */
-  ended?: { kind: 'unified' | 'undecided' | 'fallen' | 'trial_end'; text: string;
+  ended?: { kind: 'unified' | 'undecided' | 'fallen' | 'trial_end' | 'subject'; text: string;
     /** 统一时玩家的身份：lead 本方为天下之主；patron 奉明而主导统一（扶立之功）；follow 随所奉朝廷统一 */
     role?: 'lead' | 'patron' | 'follow' };
   /** 试玩模式：限定月数 */
