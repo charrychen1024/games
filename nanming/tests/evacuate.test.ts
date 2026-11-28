@@ -64,3 +64,31 @@ describe('撤离', () => {
     expect(after - before).toBe(Math.round(9500 * 0.7));
   });
 });
+
+describe('电脑弃守', () => {
+  it('非要城、敌势两倍半以上、无援：撤往要城，流寇焚仓', async () => {
+    const { aiEvacuate, keyCity } = await import('../src/core/ai');
+    const s = createGame('hongguang', 1);
+    const shunCities = Object.values(s.cities).filter(c => c.controller === 'shun');
+    const c = shunCities.find(x => !keyCity(s, x.id) && neighbors(x.id).some(n => s.cities[n.to]?.controller === 'shun'))!;
+    c.garrison = 3000; c.wall = 30; c.grain = 100000;
+    const a = Object.values(s.armies).find(x => x.faction === 'hongguang')!;
+    for (const x of Object.values(s.armies)) if (x.id !== a.id) delete s.armies[x.id];   // 只留这一支，免得别处先撤
+    s.relations[['hongguang', 'shun'].sort().join('|')] = { stance: 'war' };
+    a.location = c.id; a.troops = 40000; a.progress = 0; a.path = [];
+    aiEvacuate(s);
+    expect(c.garrison).toBe(0);
+    expect(c.grain).toBe(0);   // 大顺焦土
+    expect(s.convoys!.some(v => v.from === c.id)).toBe(true);
+    expect(s.reports.some(r => /难守/.test(r.text))).toBe(true);
+  });
+  it('要城（治所）死守不撤', async () => {
+    const { aiEvacuate } = await import('../src/core/ai');
+    const s = createGame('hongguang', 1);
+    const cap = s.cities[s.factions.shun.capital]; cap.garrison = 3000; cap.wall = 30;
+    const a = Object.values(s.armies).find(x => x.faction === 'hongguang')!;
+    a.location = cap.id; a.troops = 60000; a.progress = 0;
+    aiEvacuate(s);
+    expect(cap.garrison).toBe(3000);
+  });
+});

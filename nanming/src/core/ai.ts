@@ -9,6 +9,7 @@ import { RECRUIT_SILVER, SILVER_PER_SOLDIER, supplyChoiceError, supplyBlock, GRA
 import { rngFor } from './rng';
 import { genLocal } from './people';
 import { applyOrder, validateOrder, persuadeChance } from './orders';
+import { evacPlan, applyEvacuate } from './evacuate';
 
 /** 各家各军的目标序列（开局几年的史实倾向；依次取第一个尚未到手的） */
 function doctrineTargets(s: GameState, a: Army): string[] {
@@ -629,5 +630,43 @@ export function aiConduct(s: GameState) {
     else delete a.tactic;
     // 降卒：清军收编（绿营多出降卒）；其余按常例
     if (topOf(s, a.faction) === 'qing') a.captives = 'absorb'; else delete a.captives;
+  }
+}
+
+/** 要城：治所、本家户口前二、城防八成以上——死守不撤 */
+export function keyCity(s: GameState, node: string): boolean {
+  const c = s.cities[node], f = s.factions[c.controller];
+  if (!f || f.capital === node || c.wall >= 80) return true;
+  const big = citiesOf(s, c.controller).sort((a, b) => b.pop - a.pop).slice(0, 2).map(x => x.id);
+  return big.includes(node);
+}
+/** 电脑弃守：敌已兵临城下，城下与邻近敌军之力在守城之力三倍以上、近处本方援军不足、又非要城者，把兵银粮撤往最近的要城。
+ * 大顺、大西（流动作战）与主战之主多行焦土；民心尚可、未被围则带百姓同走。每家每两月至多一城。 */
+export function aiEvacuate(s: GameState) {
+  const done = new Set<string>();
+  for (const c of Object.values(s.cities).sort((a, b) => a.id.localeCompare(b.id))) {
+    const f = s.factions[c.controller];
+    if (!f || f.defunct || f.id === 'local' || topOf(s, f.id) === s.player || done.has(f.id)) continue;
+    const k = 'evac_' + f.id, last = s.flags[k];
+    if (typeof last === 'number' && s.turn - last < 2) continue;
+    if (keyCity(s, c.id) || c.garrison < 1000 || citiesOf(s, f.id).length < 2) continue;
+    const near = (x: Army) => x.progress === 0 && (x.location === c.id || neighbors(c.id).some(n => n.to === x.location));
+    // 敌已兵临城下（在城下，不只是邻近）
+    if (!Object.values(s.armies).some(x => hostile(s, f.id, x.faction) && x.progress === 0 && x.location === c.id)) continue;
+    const threat = Object.values(s.armies).filter(x => hostile(s, f.id, x.faction) && near(x)).reduce((n, x) => n + armyPower(x, s), 0);
+    const help = Object.values(s.armies).filter(x => sameTop(s, x.faction, f.id) && near(x) && x.location !== c.id).reduce((n, x) => n + armyPower(x, s), 0);
+    if (threat < holdStrength(s, c.id) * 3 || help > threat * 0.4) continue;
+    const keys = citiesOf(s, f.id).filter(x => x.id !== c.id && keyCity(s, x.id) && !s.sieges[x.id]);
+    const dest = keys.map(x => ({ x, p: evacPlan(s, f.id, c.id, x.id, {}) })).filter(o => !o.p.error).sort((a, b) => a.p.days - b.p.days)[0];
+    if (!dest) continue;
+    const pol = f.polity, lead = s.chars[f.leader];
+    const scorch = pol === 'shun' || pol === 'xi' || (lead?.att.hawk ?? 0) >= 60;
+    const people = !s.sieges[c.id] && c.minxin >= 50 && c.pop >= 10;
+    s.flags[k] = s.turn; done.add(f.id);
+    const sieged = !!s.sieges[c.id];
+    applyEvacuate(s, f.id, { id: `evac_${f.id}_${s.turn}_${c.id}`, node: c.id, to: dest.x.id, people, scorch });
+    // 当面之敌是玩家：军情里知会一声
+    if (Object.values(s.armies).some(x => topOf(s, x.faction) === s.player && near(x)))
+      report(s, { cat: '军报', urgent: true, node: c.id, text: `${f.name}自度${nodeName(c.id)}难守，${sieged ? '突围' : '弃城'}而走，兵马钱粮退往${nodeName(dest.x.id)}${scorch ? '；临行焚仓拆城，只留一座空城' : people ? '，百姓多随之而去' : ''}。` });
   }
 }

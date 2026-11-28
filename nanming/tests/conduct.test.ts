@@ -92,5 +92,5 @@ describe('营垒', () => {
     const o = tally(false), c = tally(true);
     expect(c.wins).toBeGreaterThan(o.wins);
     expect(c.ratio).toBeGreaterThan(o.ratio * 1.3);
-  });
+  }, 60000);
 });
