@@ -959,6 +959,26 @@ export class MapRenderer {
     const n = Math.max(4, Math.min(9, Math.round(Math.sqrt(a.troops) / 22)));
     const cav = a.mix.cav >= 0.35, t = this.lastTime;
     g.save();
+    // 水师：画船影与尾波，不画步卒扬尘（2026-11-28 复核）
+    if (a.mix.navy >= 0.3) {
+      const m = Math.max(2, Math.min(5, Math.round(n / 2)));
+      for (let k = m; k >= 1; k--) {
+        const back = 10 + k * 11;
+        const x = st.ax - ux * back + (k % 2 ? -uy : uy) * 4, y = st.ay - uy * back + (k % 2 ? ux : -ux) * 4;
+        const bob = Math.sin(t / 260 + k) * 0.8;
+        // 尾波：船后两道渐散的白线
+        const wp = ((t / 900) + k * 0.23) % 1;
+        g.strokeStyle = `rgba(235,240,245,${0.5 * (1 - wp)})`; g.lineWidth = 1;
+        for (const side of [-1, 1]) { g.beginPath(); g.moveTo(x - ux * 5, y - uy * 5); g.lineTo(x - ux * (9 + wp * 10) + side * -uy * (2 + wp * 5), y - uy * (9 + wp * 10) + side * ux * (2 + wp * 5)); g.stroke(); }
+        // 船身与帆
+        g.save(); g.translate(x, y + bob); g.rotate(Math.atan2(uy, ux));
+        g.fillStyle = '#4a3220'; g.beginPath(); g.moveTo(-7, -2); g.lineTo(6, -2); g.lineTo(8, 0); g.lineTo(6, 2); g.lineTo(-7, 2); g.closePath(); g.fill();
+        g.restore();
+        g.fillStyle = color; g.beginPath(); g.moveTo(x, y - 2 + bob); g.lineTo(x, y - 11 + bob); g.lineTo(x + 5, y - 4 + bob); g.closePath(); g.fill();
+      }
+      g.restore();
+      return;
+    }
     for (let k = n; k >= 1; k--) {
       const back = 9 + k * (cav ? 8 : 6);
       const x = st.ax - ux * back + (k % 2 ? -uy : uy) * 3, y = st.ay - uy * back - 2 + (k % 2 ? ux : -ux) * 3;

@@ -132,7 +132,7 @@ export function scholarsArrive(s: GameState) {
 /** 户口生息（取代旧的一律千分之一） */
 export function popGrowth(s: GameState, c: City) {
   const r = popGrowthRate(c);
-  if (r > 0 && !s.sieges[c.id]) bump(s, c.id, 'pop', Math.round(c.pop * r * 100) / 100, `生息（农业 ${Math.round(c.agri)}）`, { kind: 'income' });
+  if (r > 0 && !s.sieges[c.id]) bump(s, c.id, 'pop', Math.round(c.pop * r * 10000) / 10000, `生息（农业 ${Math.round(c.agri)}）`, { kind: 'income' });
 }
 
 /** 流民：被围或民心不足三成之城，百姓逃亡；邻近民心五成五以上、未被围之城按农商吸纳七成，余者流散。

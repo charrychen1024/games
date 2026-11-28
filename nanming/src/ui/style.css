@@ -983,7 +983,7 @@ html.reduced .bh-pips i.now { animation: none; }
 .stoast { position: absolute; left: 16px; bottom: 16px; z-index: 6; display: flex; flex-direction: column; gap: 4px; pointer-events: none; max-width: 40%; }
 .st-line { padding: 4px 12px 4px 10px; font-size: 13.5px; color: #f3e6c8; text-shadow: 0 1px 2px #000; background: linear-gradient(90deg, rgba(20, 12, 6, 0.85), rgba(20, 12, 6, 0)); border-left: 0; }
 .st-line.good { color: #c9f5bc; } .st-line.bad { color: #ffc4b8; }
-.sbanner { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); z-index: 8; font-family: var(--brush); font-size: 46px; padding: 8px 40px; pointer-events: none; text-shadow: 0 3px 8px #000; background: radial-gradient(ellipse, rgba(10, 6, 3, 0.75), transparent 70%); }
+.sbanner { position: absolute; left: 50%; top: 150px; transform: translate(-50%, 0); z-index: 8; font-family: var(--brush); font-size: 30px; max-width: 70%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 6px 32px; pointer-events: none; text-shadow: 0 3px 8px #000; background: radial-gradient(ellipse, rgba(10, 6, 3, 0.75), transparent 70%); }
 .sbanner.bad { color: #ff9a8a; } .sbanner.good { color: #ffe2a0; }
 .sresult { position: absolute; left: 50%; top: 44%; transform: translate(-50%, -50%); z-index: 9; text-align: center; padding: 18px 60px 22px; background: radial-gradient(ellipse, rgba(10, 6, 3, 0.88), rgba(10, 6, 3, 0.6) 70%, transparent); }
 .sresult b { display: block; font-family: var(--brush); font-weight: 400; font-size: 96px; line-height: 1.1; text-shadow: 0 4px 12px #000; }

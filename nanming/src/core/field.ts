@@ -980,7 +980,8 @@ const destined = (sim: FieldSim, id: string, p: number) => makeRng(sim.seed ^ [.
 /** 掷成败：按战局时刻定种子，同一时刻同一选择结果相同 */
 const roll = (sim: FieldSim, id: string, p: number) => makeRng((sim.seed ^ Math.round(sim.t * 10) ^ [...id].reduce((n, c) => n * 17 + c.charCodeAt(0), 3)) >>> 0).next() < p;
 export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
-  if (sim.over || sim.t < 5) return null;
+  // 每半秒看一次（节拍写在这里，快算、实时、测试各处调用自然一致）
+  if (sim.over || sim.t < 5 || Math.round(sim.t * 10) % 5 !== 0) return null;
   // 双方各有各的战机（敌方的由敌将按同一规矩自择）
   const foe = foeOf(side), once = (id: string) => !sim.moments.includes(side + ':' + id);
   const mine = sim.units.filter(u => u.side === side && active(u)), foes = sim.units.filter(u => u.side === foe && active(u));
@@ -1100,7 +1101,8 @@ export function momentF(sim: FieldSim, side: 'att' | 'def'): Moment | null {
     ] });
   }
   // 八、抢占高地：丘陵之战，开局时
-  if (room && sim.terrain === 'hills' && sim.t < 60 && once('height') && destined(sim, 'height', 0.8)) {
+  // 丘陵本是守方地利：争高地之机只给守方（守方抢占成则更稳，失手则高冈落入攻方）
+  if (room && side === 'def' && sim.terrain === 'hills' && sim.t < 60 && once('height') && destined(sim, 'height', 0.8)) {
     const fast = mine.filter(u => u.kind === 'cav').length / Math.max(1, mine.length);
     const pH = pct(0.4 + fast * 0.5 + (tong(side) - tong(foe)) / 150);
     return fire('height', { title: '两军争高地', icon: 'pass', text: '战场中有一处高冈，先得者居高临下。', options: [

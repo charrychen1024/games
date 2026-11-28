@@ -58,10 +58,10 @@ export function bump(s: GameState, node: string, field: LedgerField, delta: numb
   let after = before + delta;
   if (INDEX_FIELDS.includes(field)) after = Math.max(0, Math.min(100, after));
   else after = Math.max(0, after);
-  if (field === 'pop') after = Math.round(after * 100) / 100;
+  if (field === 'pop') after = Math.round(after * 10000) / 10000;   // 人口记到一人（万口四位小数），小城生息不被取整抹去（2026-11-28 复核）
   else if (INDEX_FIELDS.includes(field)) after = Math.round(after * 10) / 10;
   else after = Math.round(after);
-  const real = Math.round((after - before) * 100) / 100;
+  const real = field === 'pop' ? Math.round((after - before) * 10000) / 10000 : Math.round((after - before) * 100) / 100;
   (c as any)[field] = after;
   if (real !== 0) s.ledger.push({ turn: s.turn, node, field, delta: real, text, src: { ...src, turn: src.turn ?? s.turn } });
   return real;

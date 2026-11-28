@@ -28,7 +28,7 @@ import { evacPlan } from '../core/evacuate';
 import { monthSummary, type Delta } from '../core/summary';
 import { cardShow, type ShowCard } from './cards';
 import { popTip, devTip, devStep, reached, MILESTONE_NAME, policyOutlook, advisePolicy, recruitSilverOf, type DevKey } from '../core/develop';
-import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, supplyLegOf, RECRUIT_SILVER, DISBAND_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
+import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, levyGain, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, supplyLegOf, RECRUIT_SILVER, DISBAND_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
 import { projectOrders, validateQueued, giftBonus, pactOn, aimError, AIM_NAME, cascadeInvalid, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { yangzhouSiegeState } from '../data/presets';
@@ -272,6 +272,7 @@ export class App {
           h('div', { class: 'i-name' }, me.name),
           h('div', { class: 'i-line' }, info?.situation ?? ''),
           h('div', { class: 'i-goal' }, ic('goal'), info?.goal ?? '统一天下'),
+          me.overlord && s.factions[me.overlord] ? h('div', { class: 'i-line', id: 'intro-vassal' }, `开局奉${s.factions[me.overlord].name}号令：天下只归一家，须先自立，方能一统`) : null,
           h('div', { class: 'i-skip' }, '点击继续')));
       let done = false;
       const end = () => { if (done) return; done = true; gsap.to(el, { opacity: 0, duration: 0.5, onComplete: () => { el.remove(); resolve(); } }); this.map.flyTo(me.capital, 2.1); };
@@ -1415,12 +1416,18 @@ export class App {
       return { id, title, art: cardArt(icon, color, id.length), color, big: sign(diff, f), bigTone: diff > 0 ? 'up' : diff < 0 ? 'down' : '', sub: `${f(d.after)} ${unit}`,
         chips: [...d.up, ...d.down].map(w => ({ icon: WHY_IC[w.kind] ?? 'info', text: sign(w.v, f), tone: w.v > 0 ? 'good' : 'bad', tip: w.label })) as Chip[] };
     };
-    const pop = (n: number) => String(Math.round(n * 10) / 10);
+    // 户口：增减按口计（万口取整会抹掉小城生息），总数仍写万口
+    const popCard = res('ms-pop', 'pop', '户口', '#3f6f8f', { ...sm.pop, before: sm.pop.before * 10000, after: sm.pop.after * 10000 }, wan, '口');
+    popCard.sub = `${Math.round(sm.pop.after * 10) / 10} 万口`;
     const resCards = [res('ms-silver', 'silver', '府库', '#b0702a', sm.silver, wan, '两'), res('ms-grain', 'grain', '仓粮', '#5f8a3a', sm.grain, wan, '石'),
-      res('ms-troops', 'troops', '兵力', '#7d1a12', sm.troops, wan, '人'), res('ms-pop', 'pop', '户口', '#3f6f8f', sm.pop, pop, '万口')];
+      res('ms-troops', 'troops', '兵力', '#7d1a12', sm.troops, wan, '人'), popCard];
     const people: ShowCard[] = sm.people.map(p => { const c = after.chars[p.id], fc = after.factions[c.faction]; return { id: 'p-' + p.id, title: c.name, sub: fc?.short ?? '', art: portrait(c, fc?.color ?? '#6a5a48', fc?.polity ?? 'none'), portrait: true, color: fc?.color, tip: `${c.name} · ${p.tag}`, dim: p.tag === '殁' || p.tag === '被执' || p.tag === '俘获', stamp: ({ 来投: '投', 殁: '殁', 被执: '执', 离去: '去', 俘获: '俘' } as const)[p.tag], stampTone: p.good ? 'good' : 'bad' }; });
     const cities: ShowCard[] = sm.cities.map(x => { const fc = after.factions[after.cities[x.id].controller]; return { id: 'c-' + x.id, title: nodeName(x.id), sub: fc?.short ?? '', art: cardArt('city', fc?.color ?? '#8c6a35', x.id.length), color: fc?.color, stamp: x.gained ? '得' : '失', stampTone: x.gained ? 'good' : 'bad' }; });
-    const war: ShowCard[] = sm.battlesWon || sm.battlesLost || sm.battlesDrawn ? [{ id: 'ms-war', title: '战事', art: cardArt('war', '#7d1a12', 3), color: '#7d1a12', big: `${sm.battlesWon}胜 ${sm.battlesLost}负${sm.battlesDrawn ? ` ${sm.battlesDrawn}平` : ''}`, bigTone: sm.battlesWon >= sm.battlesLost ? 'up' : 'down' }] : [];
+    const own = sm.battlesWon + sm.battlesLost + sm.battlesDrawn, vas = sm.vassalWon + sm.vassalLost + sm.vassalDrawn;
+    const rec = (w: number, l: number, d: number) => `${w}胜 ${l}负${d ? ` ${d}平` : ''}`;
+    const war: ShowCard[] = own || vas ? [{ id: 'ms-war', title: own ? '本部战事' : '诸镇战事', art: cardArt('war', '#7d1a12', 3), color: '#7d1a12',
+      big: own ? rec(sm.battlesWon, sm.battlesLost, sm.battlesDrawn) : rec(sm.vassalWon, sm.vassalLost, sm.vassalDrawn), bigTone: (own ? sm.battlesWon >= sm.battlesLost : sm.vassalWon >= sm.vassalLost) ? 'up' : 'down',
+      sub: own && vas ? `所属诸镇 ${rec(sm.vassalWon, sm.vassalLost, sm.vassalDrawn)}` : undefined }] : [];
     const band = (icon: string, label: string, el: HTMLElement) => h('div', { class: 'ms-band' }, h('div', { class: 'ms-tag' }, ic(icon), label), el);
     return new Promise(res2 => {
       this.modal('calendar', '本月得失', shortDate(before.turn), [
@@ -1507,7 +1514,7 @@ export class App {
       fortify: [{ icon: 'silver', text: `−${wan(p * 40 + 2000)}/月`, tone: 'bad' }, { icon: 'wall', text: '城防 +3/月', tone: 'good' }],
       relief: [{ icon: 'grain', text: `−${wan(reliefGrain(p))}/月`, tone: 'bad' }, { icon: 'minxin', text: '民心 +3/月', tone: 'good' }],
       edu: [{ icon: 'silver', text: `−${wan(p * 25)}/月`, tone: 'bad' }, { icon: 'edu', text: `文教 +${devStep(c.edu)}/月`, tone: 'good' }],
-      levy: [{ icon: 'silver', text: '赋税 +50%', tone: 'good' }, { icon: 'minxin', text: '民心 −3/月', tone: 'bad' }, { icon: 'order', text: '吏治 −1/月', tone: 'bad' }],
+      levy: [{ icon: 'silver', text: `赋税 +${levyGain(c)}%`, tone: levyGain(c) > 0 ? 'good' : 'bad' }, { icon: 'minxin', text: '民心 −3/月', tone: 'bad' }, { icon: 'order', text: '吏治 −1/月', tone: 'bad' }],
     };
     // 每张卡写明：按已排的其他命令，选它之后本城本月粮、银结余各变成多少
     const others = this.orders.filter(o => !(o.kind === 'policy' && o.node === node));
@@ -2150,7 +2157,9 @@ export class App {
     const c = r.cat;
     const ctrl = r.node && s.cities[r.node] ? s.cities[r.node].controller : undefined;
     // 陷城才演破门换旗；弃城演移交；围城、守住演“围而未破”
-    const sk: SceneKind | null = c === '易主' ? (r.act === 'breach' ? 'siege' : 'surrender') : c === '交涉' && r.from && r.to ? 'parley' : (r.act === 'battle' || r.act === 'siege') && r.from && r.to ? (r.act === 'siege' ? 'siege' : /水战|水师|江面/.test(r.text) ? 'naval' : 'battle') : null;
+    // 旧式无动作字段的陷城军报按正文判；攻城战（含“攻城不克”）配围城画而非野战画
+    const breach = r.act === 'breach' || (!r.act && /陷城|攻破/.test(r.text));
+    const sk: SceneKind | null = c === '易主' ? (breach ? 'siege' : 'surrender') : c === '交涉' && r.from && r.to ? 'parley' : (r.act === 'battle' || r.act === 'siege') && r.from && r.to ? (r.act === 'siege' || /攻城战|攻城不克|城下/.test(r.text) ? 'siege' : /水战|水师|江面/.test(r.text) ? 'naval' : 'battle') : null;
     if (sk) return { kind: sk, opts: { a: this.party(c === '易主' ? r.to ?? ctrl : r.from), b: this.party(c === '易主' ? r.from : r.to), seed, ok: r.ok !== false, hold: sk === 'siege' && c !== '易主' } };
     if (!broad) return null;
     if (c === '史事' || c === '线索' || r.src?.ref?.startsWith('inc:')) return this.eventScene(r.text.match(/【([^】]+)】/)?.[1] ?? '', r.text);
@@ -2503,10 +2512,12 @@ export class App {
         h('div', { class: 'fall-text' }, h('h1', null, `${f.short}亡`), h('small', null, `${f.name}${lead ? ` · ${lead.name}` : ''} · ${shortDate(Math.max(0, after.turn - (after.ended ? 0 : 1)))}`), r ? h('p', null, r.text) : null),
         h('div', { class: 'fall-skip' }, '点击继续'));
       $('#app').append(el);
-      alarm(); setTimeout(() => gong(false), 900);
+      alarm();
+      const gongT = window.setTimeout(() => gong(false), 900);
       const fast = isReduced();
       let done = false;
-      const finish = () => { if (done) return; done = true; gsap.to(el, { opacity: 0, duration: 0.4, onComplete: () => { el.remove(); resolve(); } }); };
+      // 跳过则不再补响锣（2026-11-28 复核）
+      const finish = () => { if (done) return; done = true; clearTimeout(gongT); gsap.to(el, { opacity: 0, duration: 0.4, onComplete: () => { el.remove(); resolve(); } }); };
       el.onclick = finish;
       if (fast) { gsap.from(el, { opacity: 0, duration: 0.3 }); setTimeout(finish, 2600); return; }
       const tl = gsap.timeline({ onComplete: () => setTimeout(finish, 2200) });
@@ -2533,6 +2544,8 @@ export class App {
         yearChanged ? h('div', { class: 'flip-year' }, `${ganzhiOf(lmB.year)}年 · ${eraYear(pol, Math.min(after.turn, TOTAL_TURNS - 1))}`) : null);
       $('#app').append(el);
       monthSfx(yearChanged);
+      // 简化演出：不翻页，新月份淡入片刻即去
+      if (isReduced()) { (el.querySelector('.old') as HTMLElement | null)?.remove(); gsap.fromTo(el, { opacity: 0 }, { opacity: 1, duration: 0.15, onComplete: () => { setTimeout(() => { el.remove(); resolve(); }, yearChanged ? 700 : 350); } }); return; }
       const tl = gsap.timeline({ onComplete: () => { el.remove(); resolve(); } });
       tl.from(el, { opacity: 0, duration: 0.2 })
         .fromTo('#flip .old', { rotateX: 0 }, { rotateX: -90, duration: 0.45, ease: 'power2.in' })
@@ -2648,7 +2661,9 @@ export class App {
     this.map.view.state = this.s;
     const hops = Math.max(0, ...Object.values(marchPaths).map(p => p.length));
     this.map.view.anim = { from, paths: marchPaths, t0: this.map.lastTime, dur: isReduced() ? 500 : Math.min(3200, 1500 + hops * 260) };
-    if (Object.keys(marchPaths).some(id => this.s!.armies[id] && topOf(this.s!, this.s!.armies[id].faction) === topOf(this.s!, this.s!.player))) marchSfx(Object.values(this.s.armies).some(a => a.faction === this.s!.player && a.mix.cav >= 0.35));
+    // 行军声：只看本月真在走的本方之军——有骑军在走才用马蹄声，全是水师则不出步声（2026-11-28 复核）
+    const movingMine = Object.keys(marchPaths).map(id => this.s!.armies[id]).filter(a => a && topOf(this.s!, a.faction) === topOf(this.s!, this.s!.player));
+    if (movingMine.some(a => a.mix.navy < 0.3)) marchSfx(movingMine.some(a => a.mix.cav >= 0.35));
     this.autoSave();
     this.reportTurn = this.s.turn - (this.s.ended ? 0 : 1);
     this.holdPills = true;
@@ -2663,7 +2678,7 @@ export class App {
     // 本月覆亡之家（玩家自己覆亡另有结局画面）
     for (const f of Object.values(this.s.factions)) {
       if (f.id === this.s.player || !f.defunct || before.factions[f.id]?.defunct || f.id === 'local' || f.id === 'helan') continue;
-      if (f.capital) this.map.flyTo(f.capital, 1.6);
+      if (f.capital) { if (isReduced()) this.map.focus(f.capital, 1.6); else this.map.flyTo(f.capital, 1.6); }
       await this.fallFx(this.s, f.id);
       if (!live()) return;
     }
@@ -2705,9 +2720,13 @@ export class App {
       m.append(h('div', { class: 'dialog hud', role: 'dialog' }, scene(sc.kind, sc.opts).el,
         h('div', { class: 'dh' }, h('div', { class: 'emb' }, ic('event')), h('div', null, h('h2', null, c.title), h('small', null, `${c.eventId.startsWith('inc:') ? '时事' : c.eventId === 'succession' ? '继统' : '史事'} · ${this.s?.factions[this.s.player]?.name ?? ''}决断`))),
         h('div', { class: 'db' }, h('div', { class: 'lead' }, c.text), opts)));
-      gsap.fromTo('#modal .dialog', { scale: 0.85, opacity: 0, rotateX: 20 }, { scale: 1, opacity: 1, rotateX: 0, duration: 0.45, ease: 'back.out(1.6)' });
-      gsap.killTweensOf('#modal .opt');
-      gsap.fromTo('#modal .opt', { opacity: 0, x: -30 }, { opacity: 1, x: 0, y: 0, duration: 0.35, stagger: 0.1, delay: 0.2, ease: 'power3.out' });
+      // 简化演出：淡入即可，不旋转、不逐条滑入（2026-11-28 复核）
+      if (isReduced()) gsap.fromTo('#modal .dialog', { opacity: 0 }, { opacity: 1, duration: 0.15 });
+      else {
+        gsap.fromTo('#modal .dialog', { scale: 0.85, opacity: 0, rotateX: 20 }, { scale: 1, opacity: 1, rotateX: 0, duration: 0.45, ease: 'back.out(1.6)' });
+        gsap.killTweensOf('#modal .opt');
+        gsap.fromTo('#modal .opt', { opacity: 0, x: -30 }, { opacity: 1, x: 0, y: 0, duration: 0.35, stagger: 0.1, delay: 0.2, ease: 'power3.out' });
+      }
       requestAnimationFrame(() => ($('#modal .opt') as HTMLElement | null)?.focus({ preventScroll: true }));
     });
   }

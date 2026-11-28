@@ -5,11 +5,12 @@ import { shortestPath, pathDays, neighbors, distancesFrom, NODE } from '../data/
 import { canSea } from './military';
 import { maxRecruit } from './orders';
 import { defectFaction, disband } from './military';
-import { RECRUIT_SILVER, SILVER_PER_SOLDIER, supplyChoiceError, supplyBlock, GRAIN_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER } from './economy';
+import { RECRUIT_SILVER, SILVER_PER_SOLDIER, supplyChoiceError, GRAIN_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER } from './economy';
 import { rngFor } from './rng';
 import { genLocal } from './people';
 import { applyOrder, validateOrder, persuadeChance, envoyScore } from './orders';
 import { evacPlan, applyEvacuate } from './evacuate';
+import { supplyRoute } from './route';
 
 /** 各家各军的目标序列（开局几年的史实倾向；依次取第一个尚未到手的） */
 function doctrineTargets(s: GameState, a: Army): string[] {
@@ -356,12 +357,18 @@ export function aiPayArmies(s: GameState) {
     if (!sup || sup.controller !== a.faction) continue;
     const need = Math.round(a.troops * SILVER_PER_FIELD_SOLDIER * 3) + (a.arrears ?? 0);
     if (sup.silver >= need) continue;
-    const donor = Object.values(s.cities).filter(c => c.controller === a.faction && c.id !== sup.id && !s.sieges[c.id] && c.silver > need + c.garrison * 2 && !supplyBlock(s, a.faction, c.id, sup.id))
-      .sort((x, y) => y.silver - x.silver)[0];
-    if (!donor) continue;
-    const amt = Math.round(need - Math.max(0, sup.silver));
-    donor.silver -= amt; sup.silver += amt;
+    // 与玩家同一规矩：沿粮道运银，三十日内当月到，路远者在途数月；就近调拨（2026-11-28 复核：电脑北京之银即时到昆明）
+    const donors = Object.values(s.cities).filter(c => c.controller === a.faction && c.id !== sup.id && !s.sieges[c.id] && c.silver > need + c.garrison * 2)
+      .map(c => ({ c, leg: supplyRoute(s, a.faction, c.id, sup.id) })).filter(o => !o.leg.reason).sort((x, y) => x.leg.days - y.leg.days || y.c.silver - x.c.silver);
+    const pick = donors[0];
+    if (!pick) continue;
+    if ((s.convoys ?? []).some(v => v.faction === a.faction && v.to === sup.id && v.silver > 0)) continue;   // 已有饷银在途
+    const donor = pick.c, amt = Math.round(need - Math.max(0, sup.silver));
+    donor.silver -= amt;
     s.ledger.push({ turn: s.turn, node: donor.id, field: 'silver', delta: -amt, text: `调银往${nodeName(sup.id)}发${a.name}饷`, src: { kind: 'order', ref: 'aipay:' + a.id } });
+    const months = Math.max(1, Math.ceil(pick.leg.days / 30));
+    if (months > 1) { (s.convoys ??= []).push({ id: `aipay_${a.id}_${s.turn}`, faction: a.faction, from: donor.id, to: sup.id, grain: 0, silver: amt, sent: s.turn, arrive: s.turn + months - 1, days: pick.leg.days, path: pick.leg.path }); continue; }
+    sup.silver += amt;
     s.ledger.push({ turn: s.turn, node: sup.id, field: 'silver', delta: amt, text: `自${nodeName(donor.id)}调来饷银`, src: { kind: 'order', ref: 'aipay:' + a.id } });
   }
 }

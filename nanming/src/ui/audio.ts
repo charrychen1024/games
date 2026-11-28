@@ -525,7 +525,8 @@ function scheduleBar(tr: Track, t0: number, dur: number) {
       // 梆子计时：太平时轻敲
       if (I < 0.3 && tr.bar % 4 === 3) wood(t0 + beat * 3, 0.05, bus, 1, 0.4);
       // 鸟鸣：太平之世
-      if (I < 0.25 && rng.next() < 0.18) birds(t0 + rng.next() * dur, bus);
+      // 自然声走环境轨：调低环境音量即可关掉（2026-11-28 复核）
+      if (I < 0.25 && rng.next() < 0.18) birds(t0 + rng.next() * dur, ambBus);
       // 年代越后，伴奏越密：丙戌以后添堂鼓切分，庚寅以后添大鼓与低胡，乙未以后八分音符鼓点与号角
       const E = tr.era;
       if (E >= 1) { drum(t0 + beat * 1.5, 'tang', 0.07, bus, 0.3); drum(t0 + beat * 3.5, 'tang', 0.06, bus, 0.3); }
@@ -537,7 +538,7 @@ function scheduleBar(tr: Track, t0: number, dur: number) {
       if (I > 0.6) { drum(t0, 'big', 0.25 * I, bus); bowed(t0, root - 12, dur * 0.95, 0.04 * I, bus, -0.2); }
       if (I > 0.8 && tr.bar % 8 === 0) horn(t0 + beat, root - 5, beat * 3, 0.06, bus);
       // 清军：马蹄般的鼓点；郑氏：海浪里的锣
-      if (tr.color === 'coast' && rng.next() < 0.22) gulls(t0 + rng.next() * dur, bus);
+      if (tr.color === 'coast' && rng.next() < 0.22) gulls(t0 + rng.next() * dur, ambBus);
       if (tr.color === 'coast' && tr.bar % 8 === 5) gongHit(t0 + beat * 2, 0.06, bus, 'small');
       if (tr.color === 'steppe' && tr.bar % 2 === 0) { drum(t0 + beat * 1.5, 'tang', 0.07, bus, 0.3); drum(t0 + beat * 1.75, 'tang', 0.05, bus, 0.3); }
       if (tr.bar % 16 === 15) gongHit(t0 + beat * 3, 0.12, bus, 'small');

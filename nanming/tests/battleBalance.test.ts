@@ -27,12 +27,14 @@ describe('野战：胜负有悬念', () => {
     expect(w).toBeLessThanOrEqual(SEEDS.length * 0.4);
   });
   it('地利向着守方：丘陵、隔河，攻方胜得不比平原多', () => {
+    const many = Array.from({ length: 48 }, (_, i) => (i + 1) * 7919);
+    const w = (f: (seed: number) => BattleState) => many.filter(s => runField(f(s)).over?.winner === 'att').length;
     for (const ratio of [1, 1.2]) {
-      const plain = attWins(s => fieldB(30000 * ratio, 30000, s));
-      expect(attWins(s => fieldB(30000 * ratio, 30000, s, 'hills'))).toBeLessThanOrEqual(plain);
-      expect(attWins(s => fieldB(30000 * ratio, 30000, s, 'river'))).toBeLessThanOrEqual(plain);
+      const plain = w(s => fieldB(30000 * ratio, 30000, s));
+      expect(w(s => fieldB(30000 * ratio, 30000, s, 'hills'))).toBeLessThanOrEqual(plain);
+      expect(w(s => fieldB(30000 * ratio, 30000, s, 'river'))).toBeLessThanOrEqual(plain);
     }
-  }, 60000);
+  }, 300000);
 });
 
 describe('代打与亲征', () => {

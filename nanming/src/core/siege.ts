@@ -656,7 +656,7 @@ const hashS = (id: string) => [...id].reduce((n, c) => n * 31 + c.charCodeAt(0),
 const destinedS = (sim: SiegeSim, id: string, p: number) => makeRng(sim.seed ^ hashS(id)).next() < p;
 const rollS = (sim: SiegeSim, id: string, p: number) => makeRng((sim.seed ^ Math.round(sim.t * 10) ^ hashS(id)) >>> 0).next() < p;
 export function momentS(sim: SiegeSim, side: 'att' | 'def'): SMoment | null {
-  if (sim.over || sim.t < 5) return null;
+  if (sim.over || sim.t < 5 || Math.round(sim.t * 10) % 5 !== 0) return null;
   const once = (id: string) => !sim.flags['m_' + side + '_' + id];
   const fire = (id: string, m: Omit<SMoment, 'id'>): SMoment => { sim.flags['m_' + side + '_' + id] = 1; return { id, ...m }; };
   const mine = sim.units.filter(u => u.side === side && active(u));

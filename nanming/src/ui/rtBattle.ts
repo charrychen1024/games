@@ -19,6 +19,7 @@ import { setScene, setIntensity, click, gong, battleSfx } from './audio';
 import { barkLine } from './barks';
 import { isReduced } from './motion';
 import { scene, type SceneKind, type Party } from './scene';
+import { autoResolve, lossesOf } from '../core/battle';
 import gsap from 'gsap';
 
 const ic = (name: string) => { const sp = h('span', { style: { display: 'contents' } }); sp.innerHTML = iconSvg(name); return sp; };
@@ -219,9 +220,13 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
       const ratio = Math.round(ssim!.att.start / Math.max(1, ssim!.def.start) * 10) / 10;
       const need = 1.6 + wall / 40;   // 约需几比一（墙六十约三比一）
       const advice = ratio < need * 0.7 ? '城坚兵少：强攻多半折兵而无功，宜先围困断粮，或增兵再攻' : ratio < need ? '胜负难料：先炮击、擂鼓，城门一破再全军登城' : '兵力足以强攻：全军撞门登城，宜速战';
+      // 代价：按本场兵力、城防（含驻军、围城威慑之后的士气）由部将快算五局，写明胜几局、平均折多少（2026-11-28 复核：只说“宜速战”漏了代价）
+      const trials = [1, 2, 3, 4, 5].map(k => autoResolve({ ...b0, seed: (b0.seed * 31 + k * 7919) >>> 0 }));
+      const tWin = trials.filter(r => r.winner === 'att').length, tLoss = Math.round(trials.reduce((n, r) => n + lossesOf(r, 'att'), 0) / trials.length);
+      const cost = `部将快算五局：胜 ${tWin}，我军平均折 ${wan(tLoss)}`;
       const C = (id: string, icon: string, title: string, desc: string, fn: () => void, primary = false) => h('button', { class: 'dchoice' + (primary ? ' primary' : ''), id, onclick: () => { click(); fn(); } }, ic(icon), h('b', null, title), h('small', null, desc));
       ui.append(h('div', { class: 'dchoices' },
-        h('div', { class: 'dc-head' }, h('b', null, '攻城方略'), h('small', null, `我攻 ${wan(ssim!.att.start)}，敌守 ${wan(ssim!.def.start)}（约 ${ratio} 比 1），城防 ${wall} · ${advice}${b0.att.faction !== s.player ? ` · 城破归${b0.att.name}` : ''}`)),
+        h('div', { class: 'dc-head' }, h('b', null, '攻城方略'), h('small', null, `我攻 ${wan(ssim!.att.start)}，敌守 ${wan(ssim!.def.start)}（约 ${ratio} 比 1），城防 ${wall} · ${advice} · ${cost}${b0.att.faction !== s.player ? ` · 城破归${b0.att.name}` : ''}`)),
         C('att-assault', 'battle', '亲自攻城', '你来指挥：选营撞门、登城、炮击、劝降', () => { start(); }, ratio >= need * 0.7),
         C('battle-auto', 'auto', '交部将攻城', '由部将按常法攻城，你只看战况', () => { autoMe = true; start(); }),
         C('att-blockade', 'wall', '围而不攻', '本月不攻，围城断粮；城中粮尽、军心渐衰，下月再定', () => { attWithdraw(ssim!); manual = true; ending(); }, ratio < need * 0.7)));
@@ -438,6 +443,12 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   const onKey = (e: KeyboardEvent) => {
     if (phase === 'end') { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') { e.preventDefault(); done(); } return; }
     if (momentPick && /^[1-9]$/.test(e.key)) { e.preventDefault(); momentPick(Number(e.key) - 1); return; }
+    // 战机卡在时：Tab 在卡之间移焦点，其余战场按键一概不理（不改选背后的部队）
+    if (momentEl) {
+      if (e.key === 'Tab') { e.preventDefault(); const cards = [...momentEl.querySelectorAll<HTMLElement>('.bm-card')]; const i = cards.indexOf(document.activeElement as HTMLElement); cards[(i + (e.shiftKey ? cards.length - 1 : 1)) % cards.length]?.focus(); }
+      else if (e.key === 'Enter' && (document.activeElement as HTMLElement)?.classList.contains('bm-card')) { e.preventDefault(); (document.activeElement as HTMLElement).click(); }
+      return;
+    }
     // 编组：Ctrl（⌘）+5～9 记下所选诸营，5～9 唤回
     if (/^[5-9]$/.test(e.key)) {
       e.preventDefault();
@@ -611,11 +622,14 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     if (autoMe) {
       const k = autoPick(m.options);
       const res = momentEl.querySelector('.bm-result'); if (res) res.textContent = `部将将择“${m.options[k].label}”……（可抢先选）`;
-      setTimeout(() => { if (!done && momentEl) pick(k); }, isReduced() ? 400 : 1800);
+      // 替你择策的时限是决策时间，不随“简化演出”缩短（2026-11-28 复核）
+      setTimeout(() => { if (!done && momentEl) pick(k); }, 1800);
     }
   }
   function showBanner(text: string, kind: 'good' | 'bad') {
-    banner.textContent = text; banner.className = 'sbanner ' + kind;
+    // 大字只写前半句（整句在左下日志里），免得压住两军交锋线（2026-11-28 复核）
+    const short = text.length > 12 ? text.split(/[，,；]/)[0].replace(/[！!。]$/, '') : text;
+    banner.textContent = short; banner.className = 'sbanner ' + kind;
     gsap.fromTo(banner, { opacity: 0, scale: 1.2 }, { opacity: 1, scale: 1, duration: 0.35 });
     gsap.to(banner, { opacity: 0, delay: 2.6, duration: 0.5, onComplete: () => banner.classList.add('hidden') });
   }
@@ -659,8 +673,9 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     // 战果配一幅小画：破城、城降、野战交锋
     const pty = (f: string): Party => { const lk = lookOf(s, f); return { color: colorOf(f), mark: lk.mark, hat: lk.helmet === 'xi' ? 'shun' : lk.helmet === 'plain' ? 'plain' : lk.helmet }; };
     const oc = sim.over!.outcome as string;
-    const sk: SceneKind = ssim ? (oc === 'breach' || oc === 'abandon' ? 'siege' : oc === 'surrender' || oc === 'collapse' ? 'surrender' : 'battle') : naval ? 'naval' : 'battle';
-    const scn = scene(sk, { a: pty(b0.att.faction), b: pty(b0.def.faction), seed: b0.seed });
+    // 与月报同一画法：陷城破门换旗；献城、弃城为移交；未克、围城为“围而未破”（2026-11-28 复核）
+    const sk: SceneKind = ssim ? (oc === 'breach' ? 'siege' : oc === 'surrender' || oc === 'collapse' || oc === 'abandon' ? 'surrender' : 'siege') : naval ? 'naval' : 'battle';
+    const scn = scene(sk, { a: pty(b0.att.faction), b: pty(b0.def.faction), seed: b0.seed, hold: !!ssim && sk === 'siege' && oc !== 'breach' });
     scn.el.classList.add('sr-scene');
     const card = h('div', { class: 'sresult ' + r.tone }, scn.el, h('b', null, r.big), h('p', null, r.text),
       h('small', null, `历时 ${Math.floor(sim.t / 60)} 分 ${Math.round(sim.t % 60)} 秒 · 我军伤亡 ${wan(lost(side))} · 敌军伤亡 ${wan(lost(foe))}`),
@@ -673,7 +688,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
     gsap.to(card.querySelector('.sr-timer'), { scaleX: 0, duration: AUTO_EXIT / 1000, ease: 'none' });
     exitTimer = window.setTimeout(() => done(), AUTO_EXIT);
   }
-  const AUTO_EXIT = 3600;
+  const AUTO_EXIT = 8000;   // 战果停留够读伤亡与说明（2026-11-28 复核：3.6 秒即离场）
   let exitTimer = 0, closed = false;
   const lost = (sd: 'att' | 'def') => Math.round(sim[sd].start - units().filter(u => u.side === sd).reduce((n, u) => n + Math.max(0, u.troops), 0));
 

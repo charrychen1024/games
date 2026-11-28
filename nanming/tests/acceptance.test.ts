@@ -38,7 +38,7 @@ describe('验收二：从月报解释一座城的钱粮变化', () => {
   it('募兵过多 → 后来的缺粮急报指回当初那道募兵令', () => {
     let s = createState1644();
     const c = s.cities.chuzhou;
-    c.grain = 4000; c.agri = 10; c.silver = 600 * 3 + 500; // 府库仅够募兵，无余银市籴
+    c.grain = 4000; c.agri = 10; c.silver = 600 * 3 + 500 + 2000; // 府库够募兵与一月饷银（2026-11-28 起欠饷会逃散），无余银市籴
     const order: Order = { id: 'o-test-recruit', kind: 'recruit', node: 'chuzhou', troops: 600 };
     s = runMonthAuto(s, [order]);
     expect(s.cities.chuzhou.garrison).toBe(3600);

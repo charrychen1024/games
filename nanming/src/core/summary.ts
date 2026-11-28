@@ -12,7 +12,9 @@ export interface MonthSummary {
   citiesGained: string[]; citiesLost: string[];
   peopleIn: string[]; peopleOut: string[]; prisoners: string[];
   people: PersonMove[]; cities: { id: string; gained: boolean }[];
+  /** 直属之军（本家）的战绩；所属诸镇另记 */
   battlesWon: number; battlesLost: number; battlesDrawn: number;
+  vassalWon: number; vassalLost: number; vassalDrawn: number;
 }
 
 const KIND_LABEL: Record<CauseSrc['kind'], string> = { income: '赋税田粮', upkeep: '粮饷开支', order: '政令', policy: '方针', event: '事件', battle: '战事', siege: '围城', remit: '起运', disaster: '灾异', diplomacy: '交涉' };
@@ -50,19 +52,21 @@ export function monthSummary(before: GameState, after: GameState, f = after.play
     if (wasMine && !isMine) { const tag = c.status === 'dead' ? '殁' : c.status === 'captured' ? '被执' : '离去'; peopleOut.push(`${c.name}（${tag}）`); people.push({ id: c.id, tag, good: false }); }
     if (c.status === 'captured' && c.captor === f && (!b || b.status !== 'captured')) { prisoners.push(c.name); people.push({ id: c.id, tag: '俘获', good: true }); }
   }
-  let battlesWon = 0, battlesLost = 0, battlesDrawn = 0;
+  let battlesWon = 0, battlesLost = 0, battlesDrawn = 0, vassalWon = 0, vassalLost = 0, vassalDrawn = 0;
   for (const r of after.battles) {
     if (r.turn !== t) continue;
     const side = topOf(after, r.attacker) === me ? 'attacker' : topOf(after, r.defender) === me ? 'defender' : null;
     if (!side) continue;
-    if (r.draw) battlesDrawn++; else if (r.winner === side) battlesWon++; else battlesLost++;
+    const direct = (side === 'attacker' ? r.attacker : r.defender) === f;
+    if (direct) { if (r.draw) battlesDrawn++; else if (r.winner === side) battlesWon++; else battlesLost++; }
+    else { if (r.draw) vassalDrawn++; else if (r.winner === side) vassalWon++; else vassalLost++; }
   }
   return {
     silver: d(sum(before, 'silver'), sum(after, 'silver'), why('silver')),
     grain: d(sum(before, 'grain'), sum(after, 'grain'), why('grain')),
     troops: d(troops(before), troops(after)),
-    pop: d(sum(before, 'pop'), sum(after, 'pop')),
-    citiesGained, citiesLost, peopleIn, peopleOut, prisoners, battlesWon, battlesLost, battlesDrawn, people,
+    pop: { before: sum(before, 'pop'), after: sum(after, 'pop'), up: [], down: [] },   // 万口不取整，界面按口计
+    citiesGained, citiesLost, peopleIn, peopleOut, prisoners, battlesWon, battlesLost, battlesDrawn, vassalWon, vassalLost, vassalDrawn, people,
     cities: [...[...now].filter(id => !was.has(id)).map(id => ({ id, gained: true })), ...[...was].filter(id => !now.has(id)).map(id => ({ id, gained: false }))],
   };
 }

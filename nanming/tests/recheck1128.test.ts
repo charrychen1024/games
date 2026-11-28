@@ -136,3 +136,49 @@ describe('付款与通行的边界', () => {
     expect(a.location).not.toBe(foeCity);
   });
 });
+
+describe('复核余项', () => {
+  it('驻军欠饷：按缺饷比例逃散、吏治下降；足饷不逃', async () => {
+    const run = (silver: number) => { const s = createGame('hongguang', 1); for (const a of Object.values(s.armies)) delete s.armies[a.id]; const c = s.cities.suzhou; c.garrison = 300000; c.silver = silver; c.grain = 1e8; runEconomy(s); return s.ledger.some(e => e.node === 'suzhou' && /欠饷/.test(e.text) && e.field === 'garrison'); };
+    expect(run(0)).toBe(true);
+    expect(run(1e6)).toBe(false);
+  });
+  it('小城人口生息不被取整抹去', async () => {
+    const { popGrowth } = await import('../src/core/develop');
+    const s = createGame('hongguang', 1); const c = Object.values(s.cities).find(x => x.pop <= 3)!;
+    c.minxin = 70; c.agri = 60; const p0 = c.pop;
+    popGrowth(s, c);
+    expect(c.pop).toBeGreaterThan(p0);
+  });
+  it('电脑调饷沿粮道：路远者在途，不当场到账', async () => {
+    const { aiPayArmies } = await import('../src/core/ai');
+    const s = createGame('hongguang', 1);
+    const a = Object.values(s.armies).find(x => x.faction === 'qing')!;
+    const far = Object.values(s.cities).filter(c => c.controller === 'qing').sort((x, y) => y.silver - x.silver);
+    a.unpaid = 2; a.supply = far[far.length - 1].id; s.cities[a.supply].silver = 0;
+    const before = s.cities[a.supply].silver;
+    aiPayArmies(s);
+    const inTransit = (s.convoys ?? []).some(v => v.to === a.supply && v.silver > 0);
+    expect(inTransit || s.cities[a.supply].silver > before).toBe(true);
+  });
+  it('赠礼盟友：对方离间的把握降低', async () => {
+    const { envoyScore, pactKey } = await import('../src/core/orders');
+    const s = createGame('hongguang', 1);
+    setStance(s, 'hongguang', 'zheng', 'alliance'); delete s.factions.zheng.overlord;
+    for (const v of Object.values(s.factions)) if (v.overlord === 'hongguang') delete v.overlord;
+    const env = Object.values(s.chars).find(c => c.faction === 'qing' && c.status === 'active')!;
+    const o = { id: 'x', kind: 'envoy' as const, char: env.id, target: 'hongguang', aim: 'discord' as const };
+    const p0 = envoyScore(s, 'qing', o).score;
+    s.flags[pactKey('goodwill', 'hongguang', 'zheng')] = s.turn + 12;
+    expect(envoyScore(s, 'qing', o).score).toBeLessThan(p0);
+  });
+  it('本月得失：直属战绩与诸镇战绩分记', async () => {
+    const { monthSummary } = await import('../src/core/summary');
+    const s0 = createGame('hongguang', 1); const s1 = structuredClone(s0);
+    s1.battles.push({ id: 'b1', turn: s0.turn, node: 'x', kind: 'field', attacker: 'hongguang', defender: 'shun', winner: 'attacker', attLoss: 1, defLoss: 1, summary: '', manual: false });
+    s1.battles.push({ id: 'b2', turn: s0.turn, node: 'x', kind: 'field', attacker: 'gaojie', defender: 'shun', winner: 'defender', attLoss: 1, defLoss: 1, summary: '', manual: false });
+    const sm = monthSummary(s0, s1);
+    expect(sm.battlesWon).toBe(1); expect(sm.battlesLost).toBe(0);
+    expect(sm.vassalLost).toBe(1);
+  });
+});

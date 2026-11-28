@@ -665,9 +665,14 @@ export function envoyScore(s: GameState, f: string, o: Extract<Order, { kind: 'e
   if (o.aim === 'discord') {
     score = 30; factors.length = 0; factors.push('底数 30');
     const m = Math.round((env.ab.mou - (leader?.ab.mou ?? 50)) / 2); score += m; factors.push(`谋略相较 ${m >= 0 ? '+' : '−'}${Math.abs(m)}`);
-    const allies = Object.keys(s.factions).filter(x => x !== f && x !== o.target && stance(s, o.target, x) === 'alliance').length;
+    const allyList = Object.keys(s.factions).filter(x => x !== f && x !== o.target && !s.factions[x].defunct && stance(s, o.target, x) === 'alliance');
+    const allies = allyList.length;
     const vass = Object.values(s.factions).filter(x => x.overlord === o.target && !x.defunct).length;
     if (allies || vass) { score += 15; factors.push(`有盟友或下属可间 +15`); } else { score -= 20; factors.push('无隙可乘 −20'); }
+    // 对方新近厚礼结好其盟友：盟约正固，难以离间（2026-11-28 复核：赠礼盟友与否，离间把握相同）
+    const firm = allyList.filter(x => pactOn(s, 'goodwill', o.target, x)).length;
+    if (firm && firm === allies && !vass) { score -= 25; factors.push('其盟友新受厚礼，盟约正固 −25'); }
+    else if (firm) { score -= 10; factors.push('其部分盟友新受厚礼 −10'); }
   }
   return { score, factors };
 }

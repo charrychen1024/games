@@ -99,7 +99,7 @@ describe('战机', () => {
       const b = { ...fieldB(seed), terrain, weather };
       b.def = { ...b.def, tong: 80 };
       const sim = createField(b as any);
-      for (let k = 0; k < 60; k++) { run(sim, 5); const m = momentF(sim, 'att'); if (m) seen.add(m.id); if (sim.over) break; }
+      for (let k = 0; k < 600 && !sim.over; k++) { run(sim, 0.5); for (const x of ['att', 'def'] as const) { const m = momentF(sim, x); if (m) seen.add(m.id); } }
     }
     expect(seen.has('height')).toBe(true);
     expect(seen.has('duel')).toBe(true);

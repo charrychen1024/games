@@ -20,7 +20,7 @@ export const POLICY_HINT: Record<Policy, string> = {
   fortify: '每月花较多银两，城防上升。',
   relief: '开仓放粮，民心上升，消耗仓粮。',
   edu: '每月花些银两，文教上升：主官整饬吏治更高、士绅守节难被劝降、招贤多能吏；七十“文风鼎盛”后士人来投。',
-  levy: '赋税加征五成，民心与吏治每月下降。',
+  levy: '赋税加征，民心三成以上可多收五成、越低越少；民心与吏治每月下降。',
 };
 
 /* 兵的月费按明季“本色（米）+ 折色（银）”：口粮连马料、家口每人每月四斗，饷银驻军四钱五分、出征七钱。
@@ -78,6 +78,8 @@ export function tradePacts(s: GameState, f: string): number {
   }
   return Math.min(3, n);
 }
+/** 加派实增几成：民心三成以上才收得足五成，越低越少（2026-11-28 复核：界面一律写五成） */
+export const levyGain = (c: City) => Math.round(50 * Math.min(1, c.minxin / 30));
 export function monthlyIncome(s: GameState, c: City): { silver: number; grain: number; trade: number } {
   const harvest = harvestFactor(s.turn);
   const ge = govEffects(s, c);
@@ -129,7 +131,7 @@ export function cityForecast(s: GameState, c: City): CityForecast {
   const G: ForecastItem[] = [], S: ForecastItem[] = [];
   const inc = monthlyIncome(s, c);
   const sieged = !!s.sieges[c.id];
-  if (inc.silver) S.push({ label: sieged ? '赋税（被围，几近断绝）' : c.policy === 'levy' ? '赋税（加派五成）' : '赋税', v: inc.silver, kind: 'income' });
+  if (inc.silver) S.push({ label: sieged ? '赋税（被围，几近断绝）' : c.policy === 'levy' ? `赋税（加派实增 ${levyGain(c)}%）` : '赋税', v: inc.silver, kind: 'income' });
   if (inc.grain) G.push({ label: sieged ? '田粮（被围，难入城）' : '田粮', v: inc.grain, kind: 'income' });
   if (inc.trade) S.push({ label: '海贸', v: inc.trade, kind: 'income' });
   const pc = POLICY_COST[c.policy]?.(c.pop);
@@ -302,11 +304,11 @@ export function payArrears(s: GameState, a: import('./types').Army, owed: number
 /** 一个月的内政与钱粮结算 */
 export function runEconomy(s: GameState) {
   const cities = Object.values(s.cities).sort((a, b) => a.id.localeCompare(b.id));
-  const garrisonFed = new Map<string, { need: number; got: number }>();
+  const garrisonFed = new Map<string, { need: number; got: number }>(), garrisonPay = new Map<string, number>();
   // 1. 收入与方针
   for (const c of cities) {
     const inc = monthlyIncome(s, c);
-    bump(s, c.id, 'silver', inc.silver, s.sieges[c.id] ? '被围，赋税几近断绝' : c.policy === 'levy' ? '赋税（加派五成）' : '赋税', { kind: 'income' });
+    bump(s, c.id, 'silver', inc.silver, s.sieges[c.id] ? '被围，赋税几近断绝' : c.policy === 'levy' ? `赋税（加派实增 ${levyGain(c)}%）` : '赋税', { kind: 'income' });
     bump(s, c.id, 'grain', inc.grain, s.sieges[c.id] ? '被围，田粮难入城' : '田粮', { kind: 'income' });
     if (inc.trade) bump(s, c.id, 'silver', inc.trade, '海贸', { kind: 'income' });
     applyPolicy(s, c);
@@ -316,7 +318,9 @@ export function runEconomy(s: GameState) {
     // 记下应发与实发之差：断粮与否按此判，不看月底仓里还剩没剩（2026-11-28 复核：足额发粮仍判逃散）
     const g1 = Math.round(c.garrison * GRAIN_PER_SOLDIER * garrisonGrainMul(c)), g2 = s.sieges[c.id] ? Math.round(c.garrison * GRAIN_PER_SOLDIER * 0.5) : 0;
     const got1 = -bump(s, c.id, 'grain', -g1, `驻军 ${troopsText(c.garrison)} 人口粮${garrisonGrainMul(c) < 1 ? '（沃野军屯）' : ''}`, { kind: 'upkeep', ref: 'garrison' });
-    bump(s, c.id, 'silver', -Math.round(c.garrison * SILVER_PER_SOLDIER), `驻军 ${troopsText(c.garrison)} 人月饷`, { kind: 'upkeep', ref: 'garrison' });
+    const sNeed = Math.round(c.garrison * SILVER_PER_SOLDIER);
+    const sGot = -bump(s, c.id, 'silver', -sNeed, `驻军 ${troopsText(c.garrison)} 人月饷`, { kind: 'upkeep', ref: 'garrison' });
+    if (sNeed > 0 && sGot < sNeed) garrisonPay.set(c.id, (sNeed - sGot) / sNeed);
     const got2 = g2 ? -bump(s, c.id, 'grain', -g2, '守城加给', { kind: 'siege', ref: c.id }) : 0;
     if (g1 + g2 > 0) garrisonFed.set(c.id, { need: g1 + g2, got: got1 + got2 });
   }
@@ -440,6 +444,14 @@ export function runEconomy(s: GameState) {
       const lost = Math.round(c.garrison * 0.1 * Math.min(1, shortRatio * 1.5));
       bump(s, c.id, 'garrison', -lost, '断粮，士卒逃散', { kind: 'upkeep', ref: 'garrison' });
       bump(s, c.id, 'minxin', -6, '城中断粮', { kind: 'upkeep', ref: 'garrison' });
+    }
+    // 驻军欠饷：按缺饷比例逃散（至多半成）、吏治下降（2026-11-28 复核：实发零两与足饷结果相同）
+    const unpaid = garrisonPay.get(c.id) ?? 0;
+    if (unpaid > 0.01 && c.garrison > 0) {
+      const lost = Math.round(c.garrison * 0.05 * unpaid);
+      if (lost > 0) bump(s, c.id, 'garrison', -lost, `欠饷 ${Math.round(unpaid * 100)}%，士卒逃散`, { kind: 'upkeep', ref: 'garrison' });
+      bump(s, c.id, 'order', -Math.round(2 * unpaid * 10) / 10, '驻军欠饷，营伍骚动', { kind: 'upkeep', ref: 'garrison' });
+      if (unpaid >= 0.5 && c.controller === s.player) report(s, { cat: '急报', urgent: true, node: c.id, text: `${nodeName(c.id)}府库空虚，驻军欠饷 ${Math.round(unpaid * 100)}%，士卒逃散 ${lost} 人。可调银、粜粮、劝饷，或裁兵。`, src: { kind: 'upkeep', ref: 'garrison' } });
     }
     popGrowth(s, c);
     checkShortage(s, c);

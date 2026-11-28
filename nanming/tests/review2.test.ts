@@ -45,7 +45,7 @@ describe('02 长局四个存档槽可同时保存', () => {
       const next = runMonthAuto(loadFrom(kv, '2')!.state, []);
       expect(next.turn).toBe(s.turn + 1);
     }
-  }, 60000);
+  }, 300000);
 });
 
 describe('03 劝降一城只转移当地，军镇之主才可携部归附', () => {

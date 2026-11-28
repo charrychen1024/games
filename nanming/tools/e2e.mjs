@@ -614,7 +614,7 @@ try {
     check(`${K}战果配小场景`, await visible('.sresult .sr-scene canvas'));
     const t0 = Date.now();
     const res = await done;
-    check(`${K}结果亮出数秒后自行收场`, Date.now() - t0 < 6000 && await page.evaluate(() => document.querySelector('#battle').classList.contains('hidden')), String(Date.now() - t0));
+    check(`${K}结果亮出数秒后自行收场（停留约八秒，够读伤亡）`, Date.now() - t0 < 10000 && await page.evaluate(() => document.querySelector('#battle').classList.contains('hidden')), String(Date.now() - t0));
     check(`${K}打完，记为亲征`, res.manual === true && res.result.over === true);
   }
 
