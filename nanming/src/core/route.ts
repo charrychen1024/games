@@ -52,10 +52,17 @@ const relOf = (s: GameState, f: string, node: NodeId): 'friend' | 'war' | 'truce
   return stance(s, f, c.controller) === 'truce' ? 'truce' : 'neutral';
 };
 
-/** 行军路线（不含起点）。canSea：水师三成以上可走海路，陆路按两倍半计（尽量不舍舟）。过不去返回 null */
+/** 近海渡船：陆军在本方（或友方）港口征调民船，可渡四日以内的海路（2026-11-27 玩家：岛屿显示无法到达，统一不了） */
+export const FERRY_DAYS = 4;
+export function ferryOk(s: GameState, f: string, u: NodeId, v: NodeId): boolean {
+  const r = routeBetween(u, v);
+  return !!r && r.kind === 'sea' && r.days <= FERRY_DAYS && NODE[u]?.kind === 'port' && relOf(s, f, u) === 'friend';
+}
+/** 行军路线（不含起点）。canSea：水师三成以上可走海路，陆路按两倍半计（尽量不舍舟）。
+ * 无水师者只能从本方港口征调民船渡近海（四日以内），按一倍半再加两日计（集船、登船）。过不去返回 null */
 export function armyRoute(s: GameState, f: string, from: NodeId, to: NodeId, canSea: boolean): NodeId[] | null {
   return search(from, to,
-    (u, v) => { const r = routeBetween(u, v)!; if (r.kind === 'sea' && !canSea) return null; return canSea && r.kind === 'land' ? r.days * 2.5 : r.days; },
+    (u, v) => { const r = routeBetween(u, v)!; if (r.kind === 'sea' && !canSea) return ferryOk(s, f, u, v) ? r.days * 1.5 + 2 : null; return canSea && r.kind === 'land' ? r.days * 2.5 : r.days; },
     v => { const k = relOf(s, f, v); return k === 'truce' ? null : k === 'war' ? AVOID_HOSTILE : k === 'neutral' ? AVOID_NEUTRAL : 0; });
 }
 
@@ -68,7 +75,10 @@ export function routeNotes(s: GameState, f: string, path: NodeId[]): { stops: No
 /** 无路时说明缘故：单看地理有路而按局势过不去，多半是隔着停战一方 */
 export function noRouteReason(s: GameState, f: string, from: NodeId, to: NodeId, canSea: boolean): string {
   const p = shortestPath(from, to, canSea);
-  if (!p) return '无路可达';
+  if (!p) {
+    if (!canSea && shortestPath(from, to, true)) return '须渡海：近海（四日以内）可从本方港口征调民船渡过，须先占一处临海之港；远海须水师（临海临江之城出兵时选“水师”）';
+    return '无路可达';
+  }
   const t = p.slice(0, -1).find(v => relOf(s, f, v) === 'truce');
   return t ? `须经${nodeName(t)}，${s.factions[s.cities[t].controller]?.short ?? '对方'}停战中闭门不纳` : '无路可达';
 }

@@ -1,7 +1,7 @@
 /* 军事：行军（逐日推进）、遭遇、野战与攻城的战局构造、战后处置、易主。
  * 规则：野战失利只让城市失去屏障，只有陷城、献城、正式归附才改变控制权。 */
 import { isRuler } from './regime';
-import { armyRoute } from './route';
+import { armyRoute, ferryOk } from './route';
 import type { Army, ArmyOrder, GameState, NodeId } from './types';
 import { NODE, routeBetween, shortestPath, neighbors } from '../data/geography';
 import { armiesAt, friendly, hostile, report, nodeName, factionName, charName, troopsText, bump, newId, topOf, adjustAtt, sideAndCommander } from './state';
@@ -51,7 +51,11 @@ export function moveArmies(s: GameState): Contact[] {
       const r = routeBetween(a.location, next);
       if (!r) { a.path = []; a.progress = 0; continue; }
       // 已无船可乘：不能沿先前算好的海路走，就地改走陆路（与在此重新下令同一路线）
-      if (a.progress === 0 && r.kind === 'sea' && !canSea(a)) {
+      if (a.progress === 0 && r.kind === 'sea' && !canSea(a) && ferryOk(s, a.faction, a.location, next)) {
+        // 征调民船渡海：集船登舟，士气稍挫
+        a.morale = Math.max(10, a.morale - 5);
+        if (topOf(s, a.faction) === s.player) report(s, { cat: '军报', act: 'march', from: a.faction, node: a.location, text: `${a.name}在${nodeName(a.location)}征调民船，渡海往${nodeName(next)}（士气 −5；无战船护航，海上遇敌吃亏）。`, src: { kind: 'order', ref: a.id } });
+      } else if (a.progress === 0 && r.kind === 'sea' && !canSea(a)) {
         const tgt = a.order.kind !== 'hold' ? a.order.target : a.path[a.path.length - 1];
         const p = armyRoute(s, a.faction, a.location, tgt, false);
         a.path = p ?? [];

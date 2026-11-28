@@ -214,16 +214,23 @@ describe('五、海陆通行一致', () => {
       expect(b.location === 'chaozhou' || b.path.every((n, i) => routeBetween(i ? b.path[i - 1] : b.location, n)?.kind !== 'sea')).toBe(true);
     }
   });
-  it('步卒不会沿预先算好的海路继续走', () => {
+  it('步卒不会沿预先算好的远海海路继续走（近海四日以内可在本方港口征船渡过，2026-11-27）', () => {
+    const s = createGame('zheng', 1);
+    const a = Object.values(s.armies).find(x => x.faction === 'zheng')!;
+    s.cities.guangzhou.controller = 'zheng';
+    s.cities.leizhou.controller = 'qing'; s.relations['qing|zheng'] = { stance: 'war' };   // 雷州近海渡口不在手
+    a.location = 'guangzhou'; a.progress = 0; a.mix = { inf: 1, cav: 0, gun: 0, navy: 0 };
+    a.path = ['qiongzhou']; a.order = { kind: 'move', target: 'qiongzhou', attack: false };   // 旧的远海计划（九日）
+    moveArmies(s);
+    expect(a.location).not.toBe('qiongzhou');
+  });
+  it('厦门到潮州近海两日：步卒可在本方港口征船渡过', () => {
     const s = createGame('zheng', 1);
     const a = Object.values(s.armies).find(x => x.faction === 'zheng')!;
     a.location = 'xiamen'; a.progress = 0; a.mix = { inf: 1, cav: 0, gun: 0, navy: 0 };
-    a.path = ['chaozhou']; a.order = { kind: 'move', target: 'chaozhou', attack: false };   // 旧的海路计划
-    // 漳州有敌把守：步卒走陆路必被挡在漳州，若还沿海路走就会直抵潮州
-    s.cities.zhangzhou.controller = 'qing'; s.cities.zhangzhou.garrison = 5000;
-    s.relations['qing|zheng'] = { stance: 'war' }; s.relations['hongguang|qing'] = { stance: 'war' };
+    a.path = ['chaozhou']; a.order = { kind: 'move', target: 'chaozhou', attack: false };
     moveArmies(s);
-    expect(a.location).toBe('zhangzhou');
+    expect(a.location).toBe('chaozhou');
   });
 });
 
