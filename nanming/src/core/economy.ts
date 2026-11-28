@@ -557,18 +557,32 @@ export function arriveConvoys(s: GameState) {
     if (v.arrive > s.turn) { keep.push(v); continue; }
     const to = s.cities[v.to], from = s.cities[v.from];
     const src = { kind: 'order' as const, ref: v.id, turn: v.sent };
-    const what = [v.grain ? `粮 ${v.grain} 石` : '', v.silver ? `银 ${v.silver} 两` : ''].filter(Boolean).join('、');
+    const what = [v.troops ? `兵 ${v.troops} 人` : '', v.grain ? `粮 ${v.grain} 石` : '', v.silver ? `银 ${v.silver} 两` : '', v.pop ? `百姓约 ${v.pop} 万口` : ''].filter(Boolean).join('、');
     const ok = to && friendly(s, v.faction, to.controller) && !(s.sieges[v.to] && !friendly(s, v.faction, s.sieges[v.to].attacker));
     const mine = topOf(s, v.faction) === s.player;
     if (ok) {
       if (v.grain) bump(s, v.to, 'grain', v.grain, `自${nodeName(v.from)}运到粮（在途 ${v.days} 日）`, src);
       if (v.silver) bump(s, v.to, 'silver', v.silver, `自${nodeName(v.from)}运到银`, src);
+      if (v.troops) bump(s, v.to, 'garrison', v.troops, `${nodeName(v.from)}撤来之兵入城`, src);
+      if (v.pop) { bump(s, v.to, 'pop', v.pop, `${nodeName(v.from)}百姓迁来落籍`, src); bump(s, v.to, 'minxin', -3, '安置迁民', src); }
       if (mine) report(s, { cat: '内政', node: v.to, text: `自${nodeName(v.from)}起运的${what}，在途 ${v.days} 日，运到${nodeName(v.to)}。`, src });
     } else if (from && from.controller === v.faction) {
       if (v.grain) bump(s, v.from, 'grain', v.grain, `运往${nodeName(v.to)}之粮折回`, src);
       if (v.silver) bump(s, v.from, 'silver', v.silver, `运往${nodeName(v.to)}之银折回`, src);
+      if (v.troops) bump(s, v.from, 'garrison', v.troops, `往${nodeName(v.to)}之兵折回`, src);
+      if (v.pop) bump(s, v.from, 'pop', v.pop, `往${nodeName(v.to)}之民折回`, src);
       if (mine) report(s, { cat: '急报', node: v.from, text: `运往${nodeName(v.to)}的${what}，因${nodeName(v.to)}${to && friendly(s, v.faction, to.controller) ? '被围' : '已失'}，折回${nodeName(v.from)}。`, src });
-    } else if (mine) report(s, { cat: '急报', node: v.to, text: `运往${nodeName(v.to)}的${what}，前后两城俱失，在途散失。`, src });
+    } else {
+      // 前后两城俱失：就近投本方另一城（撤离之兵民不至于凭空散尽），无城可投才散失
+      const alt = Object.values(s.cities).filter(x => x.controller === v.faction && !s.sieges[x.id]).map(x => ({ x, p: shortestPath(v.to, x.id, false) })).filter(o => o.p).sort((a, b) => a.p!.length - b.p!.length)[0]?.x;
+      if (alt) {
+        if (v.grain) bump(s, alt.id, 'grain', Math.round(v.grain * 0.7), `${nodeName(v.to)}之粮转投（散失三成）`, src);
+        if (v.silver) bump(s, alt.id, 'silver', Math.round(v.silver * 0.7), `${nodeName(v.to)}之银转投（散失三成）`, src);
+        if (v.troops) bump(s, alt.id, 'garrison', Math.round(v.troops * 0.7), `${nodeName(v.to)}之兵转投（逃散三成）`, src);
+        if (v.pop) bump(s, alt.id, 'pop', Math.round(v.pop * 0.7 * 100) / 100, `流民转投`, src);
+        if (mine) report(s, { cat: '急报', node: alt.id, text: `${what}在途，前后两城俱失，辗转投往${nodeName(alt.id)}，途中散失三成。`, src });
+      } else if (mine) report(s, { cat: '急报', node: v.to, text: `运往${nodeName(v.to)}的${what}，前后两城俱失，在途散失。`, src });
+    }
   }
   s.convoys = keep;
 }

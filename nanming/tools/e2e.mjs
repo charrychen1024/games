@@ -26,7 +26,7 @@ async function nextMonth(manualBattle = false, probe = null) {
   const before = await text('#date-label');
   await page.click('#btn-next');
   const t0 = Date.now();
-  let battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false, newsArtMotion = '', marched = 0, siegeProbe = null;
+  let summary = null, battles = 0, choices = 0, manualDone = false, battleScene = false, newsSeen = false, newsArtMotion = '', marched = 0, siegeProbe = null;
   while (Date.now() - t0 < 150000) {
     if (await visible('[data-choice]')) {
       if (probe && !probe.done) {
@@ -78,12 +78,16 @@ async function nextMonth(manualBattle = false, probe = null) {
       }
       await page.click('#news-skip', { timeout: 1000 }).catch(() => {}); await wait(450); continue;
     }
+    if (await visible('#summary-ok')) {
+      if (!summary) summary = { tiles: await page.locator('#month-summary .ms-tile').count(), text: await text('#modal') };
+      await page.click('#summary-ok', { timeout: 1000 }).catch(() => {}); await wait(200); continue;
+    }
     // 结算、翻月动画、要闻都过去之后才算这个月结束
     if (!(await page.evaluate(() => NM.resolving))) break;
     await wait(150);
   }
   await wait(200);
-  return { before, after: await text('#date-label'), battles, choices, battleScene, newsSeen, newsArtMotion, marched, siegeProbe };
+  return { summary, before, after: await text('#date-label'), battles, choices, battleScene, newsSeen, newsArtMotion, marched, siegeProbe };
 }
 
 try {
@@ -148,6 +152,21 @@ try {
     check('确认后两道一起撤去', (await page.evaluate(() => NM.orders.filter(o => o.id === 'xl' || o.id === 'xr').length)) === 0);
     await page.evaluate(d => { NM.s.cities.suzhou.silver = d.silver; NM.orders = d.keep; NM.renderOrders(); NM.renderTop(); }, dep);
   }
+  // 撤离：退往何城、带走留下各几何
+  await page.evaluate(() => NM.formEvacuate('yangzhou'));
+  await wait(300);
+  check('撤离弹窗写明退往何城、带走与留下', await visible('#evac-dests') && (await text('#evac-take')).includes('兵') && (await text('#evac-left')).length > 0);
+  await page.click('#evac-scorch');
+  await wait(300);
+  check('选焦土后写明焚毁', (await text('#evac-left')).includes('焚毁'));
+  await page.keyboard.press('Escape');
+  await wait(150);
+  // 敌城：取此城可得
+  await page.evaluate(() => { const s = NM.s; const foe = Object.values(s.cities).find(c => c.controller === 'shun'); NM.selectNode(foe.id); });
+  await wait(250);
+  check('敌城面板写明取此城可得（户口、赋税、田粮）', (await text('#city-prize')).includes('户口') && (await text('#city-prize')).includes('赋税'));
+  await page.evaluate(() => NM.selectNode('nanjing'));
+  await wait(150);
   // 在途：远程调拨、出使、行军列表
   await page.evaluate(() => { const s = NM.s; (s.convoys ??= []).push({ id: 'cv1', faction: s.player, from: 'nanjing', to: 'wuchang', grain: 9000, silver: 0, sent: s.turn, arrive: s.turn + 2, days: 70, path: [] }); NM.renderTop(); });
   await page.click('#btn-transit');
@@ -247,6 +266,7 @@ try {
   const probe = {};
   const m1 = await nextMonth(false, probe);
   check('第一个月结算后日期前进', m1.after !== m1.before, `${m1.before} → ${m1.after}`);
+  check('结算之后弹出“本月得失”：钱粮兵民四项与来由', m1.summary && m1.summary.tiles === 4 && /府库/.test(m1.summary.text) && /赋税田粮|粮饷/.test(m1.summary.text), JSON.stringify(m1.summary)?.slice(0, 200));
   check('第一个月有史事抉择（高杰争扬州）', m1.choices >= 1);
   check('强制决断：按 Esc 不关闭', probe.esc === true, JSON.stringify(probe));
   check('强制决断：Tab 焦点留在弹窗内', probe.focusIn === true, JSON.stringify(probe));

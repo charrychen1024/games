@@ -24,6 +24,8 @@ import { planNews, groupNews, type NewsPlan, type NewsGroup } from './newsFx';
 import { NODE, VICTORY_AREAS, shortestPath, pathDays, marchPlan, neighbors, routeBetween } from '../data/geography';
 import { friendly, hostile, stance, troopsText, roughTroops, nodeName, charName, citiesOf, topOf } from '../core/state';
 import { transitOf, etaText, type TransitItem } from '../core/transit';
+import { evacPlan } from '../core/evacuate';
+import { monthSummary, type Delta } from '../core/summary';
 import { popTip, devTip, devStep, reached, MILESTONE_NAME, policyOutlook, advisePolicy, recruitSilverOf, type DevKey } from '../core/develop';
 import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, supplyLegOf, RECRUIT_SILVER, DISBAND_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
 import { projectOrders, validateQueued, cascadeInvalid, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
@@ -60,7 +62,7 @@ const FIELD_NAME: Record<string, string> = { grain: '仓粮', silver: '府库', 
 const FIELD_ICON: Record<string, string> = { grain: 'grain', silver: 'silver', pop: 'pop', minxin: 'minxin', garrison: 'troops', wall: 'wall', order: 'order', agri: 'agri', commerce: 'commerce', edu: 'edu' };
 const CAT_ICON: Record<ReportCat, string> = { 急报: 'urgent', 军报: 'war', 易主: 'capture', 交涉: 'envoy', 内政: 'admin', 人事: 'person', 史事: 'event', 线索: 'clue' };
 const POLICY_ICON: Record<Policy, string> = { balanced: 'order', agri: 'agri', commerce: 'commerce', fortify: 'wall', relief: 'minxin', edu: 'edu', levy: 'reward' };
-const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', supply: 'grain', conduct: 'policy', reinforce: 'reinforce', disband: 'troops', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army', seek: 'chars', prisoner: 'prisoner' };
+const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', supply: 'grain', conduct: 'policy', evacuate: 'exit', reinforce: 'reinforce', disband: 'troops', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army', seek: 'chars', prisoner: 'prisoner' };
 const HINT_KEY = 'nanming:hint';
 
 /** 选势力卡片：难度、一句处境、目标 */
@@ -1113,7 +1115,22 @@ export class App {
           h('span', { class: 'cchip', id: 'city-pop', 'data-tip': popTip(s, c) }, ic('pop'), h('b', null, String(Math.round(c.pop))), h('small', null, '万口')),
           h('span', { class: 'cchip', id: 'city-price', 'data-tip': `粮价随地区、季节、战事与本城存粮浮动；粮贱时籴、粮贵时粜。市面每月可容 ${wan(marketCap(s, c))} 石` }, ic('commerce'), h('b', null, grainPrice(s, c).toFixed(2)), h('small', null, '两/石')),
           c.trade ? h('span', { class: 'cchip' }, ic('port'), h('b', null, `×${c.trade}`), h('small', null, '海贸')) : null));
-      } else sec.append(h('div', { class: 'cfog' }, ic('info'), '非我方之城 · 钱粮虚实难知'));
+      } else {
+        sec.append(h('div', { class: 'cfog' }, ic('info'), '非我方之城 · 钱粮虚实难知'));
+        if (hostile(s, s.player, c.controller)) {
+          // 取此城可得：按其户口与农商粗估（虚实难知，只取约数）
+          const inc = monthlyIncome(s, c);
+          const r = (n: number, k: number) => Math.round(n / k) * k;
+          sec.append(h('div', { class: 'cprize', id: 'city-prize' },
+            h('div', { class: 'sec-title' }, ic('storm'), '取此城可得（约数）'),
+            h('div', { class: 'costs' },
+              h('span', { class: 'cost good' }, ic('pop'), `户口约 ${r(c.pop, 5) || 1} 万`),
+              h('span', { class: 'cost good' }, ic('silver'), `每月赋税约 ${wan(r(inc.silver + inc.trade, 500))} 两`),
+              h('span', { class: 'cost good' }, ic('grain'), `每月田粮约 ${wan(r(inc.grain, 500))} 石`),
+              h('span', { class: 'cost' }, ic('silver'), '府库仓粮所存，入城即得')),
+            h('div', { class: 'note' }, '攻破：守军覆没、残卒按“降卒”军略收编，民心 −15、城防 −10；守将献城：守军随城归附，民心只降 5；敌弃城而走：守军与半数府库被带走（敌若焦土则只得空城）。')));
+        }
+      }
       if (here.length) {
         sec.append(h('div', { class: 'sec-title' }, ic('army'), `城下军队 ${here.length}`));
         for (const a of here.slice(0, 4)) sec.append(this.unitRow(a.id));
@@ -1147,6 +1164,7 @@ export class App {
       { id: 'act-disband', icon: 'troops', label: '裁兵', tip: '裁撤驻军，省口粮饷银（每人遣散银半两，给不足则散兵为盗）', fn: () => this.formDisband(id), done: this.orders.some(o => o.kind === 'disband' && o.node === id && !o.army) },
       { id: 'act-raise', icon: 'army', label: '出兵', tip: '抽驻军编成一军，择将统领', fn: () => this.formRaise(id), done: this.orders.some(o => o.kind === 'raise' && o.node === id), primary: c.garrison >= 3000 },
       { id: 'act-transfer', icon: 'transfer', label: '调拨', tip: '把钱粮运往别城', fn: () => this.formTransfer(id), done: has('transfer') },
+      { id: 'act-evacuate', icon: 'exit', label: s.sieges[id] ? '突围' : '撤离', tip: s.sieges[id] ? '弃城突围：守军七成、府库一半退往本方另一城' : '弃此城而走：兵、银、粮（可连百姓）退往本方另一城，可焦土', fn: () => this.formEvacuate(id), done: has('evacuate') },
       { id: 'act-trade', icon: 'grain', label: '粜籴', tip: '买粮卖粮', fn: () => this.formTrade(id), done: has('trade') },
       { id: 'act-loan', icon: 'silver', label: '劝饷', tip: '向绅商劝捐银两（伤民心）', fn: () => this.formLoan(id), done: has('loan') },
       { id: 'act-appoint', icon: 'appoint', label: '任命', tip: '派人主政此城', fn: () => this.formAppoint(id), done: has('appoint') },
@@ -1372,11 +1390,49 @@ export class App {
     const me = this.party(this.s!.player);
     return { kind: k, opts: { a: me, b: k === 'appoint' ? me : { color: '#7d7466', hat: 'plain' }, seed: this.s!.turn } };
   }
+  /** 弹窗关闭时回调一次（本月得失卡用来等玩家看完） */
+  modalDone?: () => void;
   closeModal() {
+    const done = this.modalDone; this.modalDone = undefined;
     closeSelects(); this.forcedModal = false;
     $('#modal').classList.add('hidden'); clear($('#modal'));
     const o = this.modalOpener; this.modalOpener = null;
     if (o && o.isConnected && !o.closest('#modal')) o.focus({ preventScroll: true });
+    done?.();
+  }
+
+  /** 本月得失：钱粮兵民总数从上月滚到本月，旁列主要来由；城池、人物、俘获、战事得失。看完才开始新的一月 */
+  showSummary(before: GameState, after: GameState): Promise<void> {
+    const sm = monthSummary(before, after);
+    const fast = isReduced();
+    const tile = (icon: string, label: string, d: Delta, unit: string, fmtv: (n: number) => string, id: string) => {
+      const diff = d.after - d.before;
+      const num = h('b', { class: 'ms-num' }, fmtv(fast ? d.after : d.before));
+      const tag = h('span', { class: 'ms-d ' + (diff > 0 ? 'up' : diff < 0 ? 'down' : '') }, diff ? `${diff > 0 ? '+' : '−'}${fmtv(Math.abs(diff))}` : '持平');
+      if (!fast && diff) { const o = { v: d.before }; gsap.to(o, { v: d.after, duration: 1.4, delay: 0.35, ease: 'power2.out', onUpdate: () => { num.textContent = fmtv(o.v); } }); }
+      const why = [...d.up.map(x => h('span', { class: 'ms-why up' }, `${x.label} +${fmtv(x.v)}`)), ...d.down.map(x => h('span', { class: 'ms-why down' }, `${x.label} −${fmtv(-x.v)}`))];
+      return h('div', { class: 'ms-tile', id }, h('div', { class: 'ms-h' }, ic(icon), h('small', null, label)), h('div', { class: 'ms-v' }, num, h('small', null, unit), tag), why.length ? h('div', { class: 'ms-whys' }, ...why) : null);
+    };
+    const list = (icon: string, label: string, good: string[], bad: string[], goodLabel: string, badLabel: string) => (good.length || bad.length)
+      ? h('div', { class: 'ms-row' }, ic(icon), h('small', null, label),
+        good.length ? h('span', { class: 'ms-why up' }, `${goodLabel} ${good.join('、')}`) : null,
+        bad.length ? h('span', { class: 'ms-why down' }, `${badLabel} ${bad.join('、')}`) : null) : null;
+    const rows = [
+      list('city', '城池', sm.citiesGained, sm.citiesLost, '得', '失'),
+      list('chars', '人物', sm.peopleIn, sm.peopleOut, '来投', '失去'),
+      sm.prisoners.length ? list('prisoner', '俘获', sm.prisoners, [], '执', '') : null,
+      sm.battlesWon || sm.battlesLost ? h('div', { class: 'ms-row' }, ic('war'), h('small', null, '战事'), sm.battlesWon ? h('span', { class: 'ms-why up' }, `胜 ${sm.battlesWon} 阵`) : null, sm.battlesLost ? h('span', { class: 'ms-why down' }, `负 ${sm.battlesLost} 阵`) : null) : null,
+    ].filter(Boolean) as HTMLElement[];
+    return new Promise(res => {
+      this.modal('calendar', '本月得失', `${shortDate(before.turn)} · 结算已毕`, [
+        h('div', { class: 'ms-grid', id: 'month-summary' },
+          tile('silver', '府库', sm.silver, '两', wan, 'ms-silver'), tile('grain', '仓粮', sm.grain, '石', wan, 'ms-grain'),
+          tile('troops', '兵力', sm.troops, '人', wan, 'ms-troops'), tile('pop', '户口', sm.pop, '万口', n => (Math.round(n * 10) / 10).toString(), 'ms-pop')),
+        rows.length ? h('div', { class: 'ms-rows' }, ...rows) : h('div', { class: 'note' }, '本月城池、人物无得失，未有战事。')],
+        [{ label: '开始新的一月', icon: 'next', primary: true, id: 'summary-ok', onclick: () => {} }], 'wide');
+      this.modalDone = () => res();
+      if (!fast) gsap.from('#month-summary .ms-tile, #modal .ms-row', { opacity: 0, y: 14, duration: 0.35, stagger: 0.08, ease: 'back.out(1.6)' });
+    });
   }
   cancelBtn() { return { label: '取消', icon: 'close', onclick: () => {} }; }
 
@@ -1780,6 +1836,40 @@ export class App {
     input.oninput = upd; upd();
     this.modal('disband', a ? `裁兵 · ${a.name}` : '裁撤驻军', a ? `${a.name}现有 ${fmt(a.troops)} 人，驻${nodeName(node)}` : `${nodeName(node)}驻军 ${fmt(pc.garrison)} 人（至少留 500）`, [big, h('div', { class: 'field' }, input), costs, note],
       [this.cancelBtn(), { label: '裁兵', icon: 'ok', primary: true, id: 'disband-ok', onclick: () => { this.addOrder({ id: this.newOrderId(), kind: 'disband', node, ...(army ? { army } : {}), troops: +input.value }); } }]);
+  }
+
+  /** 撤离：选退往何城、百姓随迁否、焦土否；写明带走、留下、毁掉各几何，敌得什么 */
+  formEvacuate(node: string, to?: string, people = false, scorch = false) {
+    const s = this.s!, ps = this.proj(), c = ps.cities[node];
+    const dests = Object.values(ps.cities).filter(x => x.controller === s.player && x.id !== node)
+      .map(x => ({ x, p: evacPlan(ps, s.player, node, x.id, {}) })).filter(o => !o.p.error).sort((a, b) => a.p.days - b.p.days);
+    if (!dests.length) { this.toast('无路可退：本方别无可通之城', 'close'); return; }
+    const dest = to && dests.some(d => d.x.id === to) ? to : dests[0].x.id;
+    const p = evacPlan(ps, s.player, node, dest, { people, scorch });
+    const again = (t: string, pe: boolean, sc: boolean) => { this.closeModal(); setTimeout(() => this.formEvacuate(node, t, pe, sc), 0); };
+    const pick = h('div', { class: 'grid-opts', id: 'evac-dests', style: { gridTemplateColumns: 'repeat(3, 1fr)' } }, ...dests.slice(0, 6).map(d =>
+      h('button', { class: 'gopt' + (d.x.id === dest ? ' on' : ''), 'data-to': d.x.id, onclick: () => again(d.x.id, people, scorch) }, ic('city'), h('b', null, nodeName(d.x.id)), h('small', null, `${d.p.days} 日 · 驻 ${wan(d.x.garrison)}`))));
+    const tog = (on: boolean, id: string, icon: string, label: string, tip: string, fn: () => void, disabled?: string) =>
+      h('button', { class: 'segb' + (on ? ' on' : ''), id, disabled: !!disabled, 'data-tip': disabled ?? tip, onclick: fn }, ic(icon), label);
+    const opts = h('div', { class: 'seg', style: { margin: '8px 0' } },
+      tog(people, 'evac-people', 'pop', '百姓随迁', '三成户口随军迁往，到后落籍（目的城民心 −3）；多带些粮', () => again(dest, !people, scorch), p.besieged ? '被围突围，百姓带不走' : undefined),
+      tog(scorch, 'evac-scorch', 'fire', '焦土', '带不走的仓粮府库付之一炬、城防拆毁三成，敌得空城；本城民心 −20、户口 −5%', () => again(dest, people, !scorch)));
+    const W = (n: number) => fmt(Math.round(n));
+    const took = h('div', { class: 'costs', id: 'evac-take' },
+      h('span', { class: 'cost good' }, ic('troops'), `兵 ${W(p.troops)}${p.besieged ? '（突围折三成）' : ''}`),
+      h('span', { class: 'cost good' }, ic('silver'), `银 ${W(p.silver)}${p.besieged ? '（只带出一半）' : ''}`),
+      h('span', { class: 'cost good' }, ic('grain'), p.besieged ? '粮带不走' : `粮 ${W(p.grain)}（挑夫所能）`),
+      p.pop ? h('span', { class: 'cost good' }, ic('pop'), `百姓 ${p.pop} 万口`) : null);
+    const left = h('div', { class: 'costs', id: 'evac-left' },
+      p.burnt ? h('span', { class: 'cost bad' }, ic('fire'), `焚毁 粮 ${W(p.burnt.grain)}、银 ${W(p.burnt.silver)}，城防 −${p.burnt.wall}`) : null,
+      !p.burnt && (p.leftGrain || p.leftSilver) ? h('span', { class: 'cost bad' }, ic('urgent'), `留给敌人 粮 ${W(p.leftGrain)}、银 ${W(p.leftSilver)}`) : null,
+      h('span', { class: 'cost' }, ic('city'), `户口 ${Math.round((c.pop - p.pop) * 10) / 10} 万、每月赋税田粮归敌`));
+    this.modal('exit', p.besieged ? `突围 · ${nodeName(node)}` : `撤离 · ${nodeName(node)}`, `驻军 ${fmt(c.garrison)} · 府库 ${wan(c.silver)} · 仓粮 ${wan(c.grain)} · 月末施行`, [
+      h('div', { class: 'sec-title' }, ic('move'), '退往'), pick, opts,
+      h('div', { class: 'sec-title' }, ic('ok'), `带走 · 路程 ${p.days} 日${p.months > 1 ? `，约 ${p.months} 月到` : '，本月到'}`), took,
+      h('div', { class: 'sec-title' }, ic('close'), '留下'), left,
+      h('div', { class: 'note' }, '撤后此城成空城，仍归本方，敌至即入。在途兵民钱粮列在“在途”表；目的城若先失，就近转投本方别城（散失三成）。')],
+      [this.cancelBtn(), { label: p.besieged ? '突围' : '撤离', icon: 'exit', primary: true, id: 'evac-ok', onclick: () => { this.addOrder({ id: this.newOrderId(), kind: 'evacuate', node, to: dest, ...(people ? { people } : {}), ...(scorch ? { scorch } : {}) }); } }], 'wide');
   }
 
   formReinforce(army: string) {
@@ -2491,6 +2581,8 @@ export class App {
     if (!live()) return;
     const wantAll = await this.showSplash();
     if (!live() || !this.s) return;
+    if (!this.s.ended) await this.showSummary(before, this.s);
+    if (!live() || !this.s) return;
     // 新的一月从本方一带开始
     if (!this.s.ended) this.flyHome();
     this.resolving = false;
@@ -2741,7 +2833,7 @@ function sameTarget(a: Order, b: Order): boolean {
     case 'command': return (b as any).army === a.army;
     case 'appoint': return (b as any).node === a.node;
     case 'persuade': return (b as any).node === a.node;   // 同城只派一路使者，后派者替换前派
-    case 'trade': case 'loan': return (b as any).node === a.node;   // 同城一月一笔
+    case 'trade': case 'loan': case 'evacuate': return (b as any).node === a.node;   // 同城一月一笔
     default: return false;
   }
 }

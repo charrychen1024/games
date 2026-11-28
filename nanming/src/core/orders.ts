@@ -3,6 +3,7 @@ import { supplyRoute, armyRoute, noRouteReason } from './route';
 import type { ArmyOrder, City, GameState, Order } from './types';
 import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance, treasuryOf } from './state';
 import { setArmyOrder, capture } from './military';
+import { evacPlan, applyEvacuate } from './evacuate';
 import { recruitSilverOf, gunBonusOf, eduSteadfast } from './develop';
 import { PLUNDER_INFAMY, RECRUIT_SILVER, DISBAND_SILVER, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, POLICY_NAME, supplyBlock, supplyChoiceError, marketCap, tradeQuote, loanAmount, LOAN_COOLDOWN } from './economy';
 import { rngFor } from './rng';
@@ -10,7 +11,7 @@ import { seekTalent, seekError, prisonerError, ransomError, handlePrisoner, SEEK
 import { shortestPath, neighbors, NODE, pathDays } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
-  trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', supply: '粮台', conduct: '军略', reinforce: '增兵', disband: '裁兵',
+  trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', supply: '粮台', conduct: '军略', evacuate: '撤离', reinforce: '增兵', disband: '裁兵',
   envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立', war: '宣战', raise: '出兵',
   seek: '招贤', prisoner: '俘虏',
 };
@@ -30,6 +31,7 @@ export function describeOrder(s: GameState, o: Order): string {
     case 'army': return `${s.armies[o.army]?.name ?? o.army}${armyOrderText(o.order)}`;
     case 'supply': return `${s.armies[o.army]?.name ?? o.army}改以${nodeName(o.node)}为粮台`;
     case 'conduct': return `${s.armies[o.army]?.name ?? o.army}${conductText(o)}`;
+    case 'evacuate': return `撤离${nodeName(o.node)}，退往${nodeName(o.to)}${o.people ? '（百姓随迁）' : ''}${o.scorch ? '（焦土）' : ''}`;
     case 'reinforce': return o.troops >= 0 ? `${s.armies[o.army]?.name}拨 ${o.troops} 人入${nodeName(o.node)}驻守` : `${nodeName(o.node)}抽驻军 ${-o.troops} 人补入${s.armies[o.army]?.name}`;
     case 'envoy': return `遣${charName(s, o.char)}赴${factionName(s, o.target)}${o.aim === 'alliance' ? '议结盟' : o.aim === 'truce' ? '议停战' : '议和'}`;
     case 'persuade': return `遣${charName(s, o.char)}赴${nodeName(o.node)}劝降`;
@@ -141,6 +143,7 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       if (!a || a.faction !== f) return '不是你的军队';
       return null;
     }
+    case 'evacuate': return evacPlan(s, f, o.node, o.to, o).error ?? null;
     case 'supply': {
       const a = s.armies[o.army];
       if (!a || a.faction !== f) return '不是你的军队';
@@ -365,6 +368,7 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       if (isPlayer) report(s, { cat: '军报', node: a.location, text: `${describeOrder(s, o)}。`, src });
       break;
     }
+    case 'evacuate': applyEvacuate(s, f, o); break;
     case 'conduct': {
       const a = s.armies[o.army];
       if (o.pace !== undefined) { if (o.pace) a.pace = o.pace; else delete a.pace; }

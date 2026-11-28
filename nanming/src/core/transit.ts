@@ -31,7 +31,7 @@ export function transitOf(s: GameState, f = s.player): TransitItem[] {
     const to = s.cities[v.to];
     const lost = !to || !friendly(s, v.faction, to.controller);
     const besieged = !!s.sieges[v.to] && !friendly(s, v.faction, s.sieges[v.to].attacker);
-    const what = [v.grain ? `粮 ${v.grain} 石` : '', v.silver ? `银 ${v.silver} 两` : ''].filter(Boolean).join('、');
+    const what = [v.troops ? `兵 ${v.troops} 人` : '', v.grain ? `粮 ${v.grain} 石` : '', v.silver ? `银 ${v.silver} 两` : '', v.pop ? `百姓 ${v.pop} 万口` : ''].filter(Boolean).join('、');
     out.push({ kind: 'convoy', id: v.id, title: `${nodeName(v.from)} → ${nodeName(v.to)}`, detail: `${what} · 路程 ${v.days} 日`, sent: v.sent, eta: v.arrive,
       progress: Math.max(0, Math.min(1, done / total)), node: v.to,
       warn: lost ? `${nodeName(v.to)}已失，到时折回${nodeName(v.from)}` : besieged ? `${nodeName(v.to)}被围，若到时未解围将折回` : undefined });

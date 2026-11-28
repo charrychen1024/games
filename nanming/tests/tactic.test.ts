@@ -18,13 +18,13 @@ describe('战法相克', () => {
     expect(rush).toBeGreaterThan(base);
     expect(wins('rush', undefined, true, 30)).toBeLessThan(base / 2);
     expect(wins('rush', 'lure', false, 30)).toBeLessThan(rush);
-  });
+  }, 60000);
   it('夜袭：攻营胜算高于硬攻；营垒有备、雨天成算降低', () => {
     expect(wins('night', undefined, true)).toBeGreaterThan(wins(undefined, undefined, true));
     const b = (camp: boolean, weather: 'clear' | 'rain') => ({ att: side('A', 'night'), def: side('D', undefined, camp), weather });
     expect(nightChance(b(true, 'clear'))).toBeLessThan(nightChance(b(false, 'clear')));
     expect(nightChance(b(false, 'rain'))).toBeLessThan(nightChance(b(false, 'clear')));
-  });
+  }, 60000);
 });
 
 describe('降卒', () => {

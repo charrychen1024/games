@@ -204,6 +204,8 @@ export type Order =
   /** 劝捐助饷 */
   | { id: string; kind: 'loan'; node: NodeId }
   | { id: string; kind: 'army'; army: ArmyId; order: ArmyOrder }
+  /** 撤离：弃城而走，兵、银、粮（及百姓）退往本方另一城；焦土则带不走的尽毁 */
+  | { id: string; kind: 'evacuate'; node: NodeId; to: NodeId; people?: boolean; scorch?: boolean }
   /** 改换粮台 */
   | { id: string; kind: 'supply'; army: ArmyId; node: NodeId }
   /** 军略：行军、粮秣、营垒（null 表示复归常例） */
@@ -294,7 +296,7 @@ export interface BattleRecord {
 }
 
 /* ---------- 在途钱粮 ---------- */
-export interface Convoy { id: string; faction: FactionId; from: NodeId; to: NodeId; grain: number; silver: number; sent: number; arrive: number; days: number; path: NodeId[] }
+export interface Convoy { id: string; faction: FactionId; from: NodeId; to: NodeId; grain: number; silver: number; troops?: number; pop?: number; sent: number; arrive: number; days: number; path: NodeId[] }
 
 /* ---------- 局势 ---------- */
 export interface GameState {
