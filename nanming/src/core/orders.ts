@@ -1,7 +1,7 @@
 /* 命令：校验、执行、留痕。玩家与电脑用同一套命令。 */
 import { supplyRoute, armyRoute, noRouteReason } from './route';
-import type { ArmyOrder, City, GameState, Order } from './types';
-import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance, treasuryOf } from './state';
+import type { ArmyOrder, City, GameState, Order, EnvoyAim } from './types';
+import { bump, report, nodeName, factionName, charName, troopsText, friendly, topOf, hostile, adjustLoyalty, adjustAtt, setStance, stance, treasuryOf } from './state';
 import { setArmyOrder, capture } from './military';
 import { evacPlan, applyEvacuate } from './evacuate';
 import { recruitSilverOf, gunBonusOf, eduSteadfast } from './develop';
@@ -11,7 +11,7 @@ import { seekTalent, seekError, prisonerError, ransomError, handlePrisoner, SEEK
 import { shortestPath, neighbors, NODE, pathDays } from '../data/geography';
 
 export const ORDER_LABEL: Record<Order['kind'], string> = {
-  trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', supply: '粮台', conduct: '军略', evacuate: '撤离', reinforce: '增兵', disband: '裁兵',
+  trade: '粜籴', loan: '劝饷', policy: '方针', appoint: '任命', transfer: '调拨', recruit: '募兵', army: '军令', supply: '粮台', conduct: '军略', evacuate: '撤离', gift: '赠礼', breakAlly: '绝盟', reinforce: '增兵', disband: '裁兵',
   envoy: '遣使', persuade: '劝降', command: '号令下属', reward: '犒赏', independence: '自立', war: '宣战', raise: '出兵',
   seek: '招贤', prisoner: '俘虏',
 };
@@ -33,7 +33,9 @@ export function describeOrder(s: GameState, o: Order): string {
     case 'conduct': return `${s.armies[o.army]?.name ?? o.army}${conductText(o)}`;
     case 'evacuate': return `撤离${nodeName(o.node)}，退往${nodeName(o.to)}${o.people ? '（百姓随迁）' : ''}${o.scorch ? '（焦土）' : ''}`;
     case 'reinforce': return o.troops >= 0 ? `${s.armies[o.army]?.name}拨 ${o.troops} 人入${nodeName(o.node)}驻守` : `${nodeName(o.node)}抽驻军 ${-o.troops} 人补入${s.armies[o.army]?.name}`;
-    case 'envoy': return `遣${charName(s, o.char)}赴${factionName(s, o.target)}${o.aim === 'alliance' ? '议结盟' : o.aim === 'truce' ? '议停战' : '议和'}`;
+    case 'envoy': return `遣${charName(s, o.char)}赴${factionName(s, o.target)}${AIM_VERB[o.aim]}`;
+    case 'gift': return `赠${factionName(s, o.target)}银 ${o.silver} 两`;
+    case 'breakAlly': return `与${factionName(s, o.target)}绝盟`;
     case 'persuade': return `遣${charName(s, o.char)}赴${nodeName(o.node)}劝降`;
     case 'command': return `号令${factionName(s, o.vassal)}：${s.armies[o.army]?.name ?? ''}${armyOrderText(o.order)}${o.silver ? `（犒银 ${o.silver} 两）` : ''}`;
     case 'reward': return `犒赏${factionName(s, o.vassal)}银 ${o.silver} 两`;
@@ -43,6 +45,12 @@ export function describeOrder(s: GameState, o: Order): string {
   }
 }
 
+export const AIM_NAME: Record<EnvoyAim, string> = { alliance: '结盟', truce: '停战', peace: '议和', passage: '借道', trade: '互市', discord: '离间' };
+const AIM_VERB: Record<EnvoyAim, string> = { alliance: '议结盟', truce: '议停战', peace: '议和', passage: '议借道', trade: '议互市', discord: '行离间' };
+/** 两家之间某约的到期月份（借道 pass_、互市 trade_、结好 goodwill_；键按两家排序） */
+export const pactKey = (k: 'pass' | 'trade' | 'goodwill', a: string, b: string) => `${k}_${[a, b].sort().join('|')}`;
+export const pactOn = (s: GameState, k: 'pass' | 'trade' | 'goodwill', a: string, b: string) => Number(s.flags[pactKey(k, a, b)] ?? -1) > s.turn;
+export const PACT_MONTHS = 12;
 export const PACE_NAME = { steady: '稳进', normal: '常行', forced: '急行' } as const;
 export const FORAGE_NAME = { depot: '粮台', forage: '就粮', plunder: '抄掠' } as const;
 export const TACTIC_NAME = { none: '临阵应变', rush: '强攻', lure: '诱敌', night: '夜袭' } as const;
@@ -178,6 +186,7 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       if (Object.values(s.armies).some(a => a.commander === o.char)) return '此人正在统兵';
       if (s.missions.some(m => (m.order as any).char === o.char)) return '此人已在出使途中';
       if (o.kind === 'envoy' && (!s.factions[o.target] || o.target === f)) return '对象不对';
+      if (o.kind === 'envoy') { const e = aimError(s, f, o.target, o.aim); if (e) return e; }
       if (o.kind === 'persuade') {
         const city = s.cities[o.node];
         if (!city || friendly(s, f, city.controller)) return '只能劝降敌方或中立城池';
@@ -185,6 +194,13 @@ export function validateOrder(s: GameState, f: string, o: Order): string | null 
       }
       return null;
     }
+    case 'gift': {
+      const t = s.factions[o.target], cap = s.cities[s.factions[f].capital];
+      if (!t || t.defunct || o.target === f) return '对象不对';
+      if (o.silver <= 0 || !cap || cap.silver < o.silver) return '治所府库不足';
+      return null;
+    }
+    case 'breakAlly': return stance(s, f, o.target) === 'alliance' ? null : '两家并无盟约';
     case 'command': {
       const v = s.factions[o.vassal];
       const a = s.armies[o.army];
@@ -369,6 +385,23 @@ export function applyOrder(s: GameState, f: string, o: Order) {
       break;
     }
     case 'evacuate': applyEvacuate(s, f, o); break;
+    case 'gift': {
+      const cap = s.factions[f].capital, tc = s.factions[o.target].capital;
+      bump(s, cap, 'silver', -o.silver, `赠${factionName(s, o.target)}`, src);
+      if (s.cities[tc]?.controller === o.target) bump(s, tc, 'silver', o.silver, `${factionName(s, f)}所赠`, src);
+      s.flags[pactKey('goodwill', f, o.target)] = s.turn + PACT_MONTHS;
+      s.flags[`goodwill_amt_${o.target}_${f}`] = o.silver;
+      const lead = s.chars[s.factions[o.target].leader];
+      if (lead) adjustAtt(s, lead.id, 'hawk', -Math.min(15, Math.round(o.silver / 4000)), `受${factionName(s, f)}厚礼`);
+      if (isPlayer) report(s, { cat: '交涉', ok: true, node: tc, text: `${describeOrder(s, o)}，${factionName(s, o.target)}受之。一年之内两家议事更易（遣使把握 +${giftBonus(o.silver)}），对方主将主战之心稍减。`, src });
+      break;
+    }
+    case 'breakAlly': {
+      setStanceExplicit(s, f, o.target, 'neutral');
+      for (const x of Object.values(s.chars)) if (x.status === 'active' && x.faction === o.target) adjustAtt(s, x.id, 'hawk', 5, `${factionName(s, f)}背盟`);
+      if (isPlayer || o.target === s.player) report(s, { cat: '交涉', urgent: o.target === s.player, node: s.factions[o.target].capital, text: `${factionName(s, f)}与${factionName(s, o.target)}绝盟，两家复归各守疆界。${factionName(s, o.target)}上下切齿（主战 +5）。`, src });
+      break;
+    }
     case 'conduct': {
       const a = s.armies[o.army];
       if (o.pace !== undefined) { if (o.pace) a.pace = o.pace; else delete a.pace; }
@@ -560,7 +593,7 @@ function commandVassal(s: GameState, f: string, o: Extract<Order, { kind: 'comma
 
 /* ---------- 跨月交涉 ---------- */
 /** 对方开出的条件：差一点议成时，对方要一笔银子 */
-export interface Counter { faction: string; target: string; aim: 'alliance' | 'truce' | 'peace'; silver: number; char: string; text: string }
+export interface Counter { faction: string; target: string; aim: EnvoyAim; silver: number; char: string; text: string }
 export function resolveMissions(s: GameState): Counter[] {
   const due = s.missions.filter(m => m.arriveTurn <= s.turn);
   s.missions = s.missions.filter(m => m.arriveTurn > s.turn);
@@ -582,12 +615,14 @@ export function resolveMissions(s: GameState): Counter[] {
 /** 玩家答复对方的条件：付银则议成 */
 export function answerCounter(s: GameState, c: Counter, pay: boolean): string {
   const cap = s.cities[treasuryOf(s, c.faction)];
-  const aimText = c.aim === 'alliance' ? '结盟' : c.aim === 'truce' ? '停战' : '议和';
+  const aimText = AIM_NAME[c.aim];
   let text: string, ok = false;
   if (pay && cap && cap.silver >= c.silver) {
     bump(s, cap.id, 'silver', -c.silver, `${aimText}${factionName(s, c.target)}所索之银`, { kind: 'diplomacy', ref: 'counter:' + c.target });
     bump(s, treasuryOf(s, c.target), 'silver', c.silver, `${factionName(s, c.faction)}${aimText}所付之银`, { kind: 'diplomacy', ref: 'counter:' + c.target });
     if (c.aim === 'alliance') setStanceExplicit(s, c.faction, c.target, 'alliance');
+    else if (c.aim === 'passage') s.flags[pactKey('pass', c.faction, c.target)] = s.turn + PACT_MONTHS;
+    else if (c.aim === 'trade') s.flags[pactKey('trade', c.faction, c.target)] = s.turn + PACT_MONTHS;
     else setStanceExplicit(s, c.faction, c.target, c.aim === 'truce' ? 'truce' : 'neutral', c.aim === 'truce' ? s.turn + 6 : undefined);
     adjustAtt(s, c.char, 'loyalty', 2, `出使${factionName(s, c.target)}，${aimText}成功`);
     ok = true; text = `付银 ${c.silver} 两，与${factionName(s, c.target)}${aimText}议成。`;
@@ -617,6 +652,19 @@ export function envoyScore(s: GameState, f: string, o: Extract<Order, { kind: 'e
   }
   if (leader) { const h = -Math.round(leader.att.hawk / 8); score += h; if (h) factors.push(`${leader.name}${h > 0 ? '主和' : '主战'} ${h >= 0 ? '+' : '−'}${Math.abs(h)}`); }
   if (s.factions[o.target].polity === s.factions[f].polity) { score += 10; factors.push('同奉一朝 +10'); }
+  const gw = Number(s.flags[`goodwill_amt_${o.target}_${f}`] ?? 0);
+  if (pactOn(s, 'goodwill', f, o.target) && gw) { const g = giftBonus(gw); score += g; factors.push(`前有厚礼 +${g}`); }
+  // 借道：弱者畏强而许；互市：两家都求财，商盛者乐从；离间：比谋略
+  const pow = (x: string) => Object.values(s.armies).filter(a => a.faction === x).reduce((n, a) => n + a.troops, 0) + Object.values(s.cities).filter(c => c.controller === x).reduce((n, c) => n + c.garrison, 0);
+  if (o.aim === 'passage') { const r = pow(f) / Math.max(1, pow(o.target)); const b = Math.round(Math.max(-15, Math.min(20, (r - 1) * 15))); score += 5 + b; factors.push(`借道常例 +5`, `兵势 ${b >= 0 ? '+' : '−'}${Math.abs(b)}`); }
+  if (o.aim === 'trade') { score += 15; factors.push('互市两利 +15'); const ports = Object.values(s.cities).filter(c => c.controller === o.target && c.trade).length; if (ports) { score += 5; factors.push('对方有港，商贾乐从 +5'); } }
+  if (o.aim === 'discord') {
+    score = 30; factors.length = 0; factors.push('底数 30');
+    const m = Math.round((env.ab.mou - (leader?.ab.mou ?? 50)) / 2); score += m; factors.push(`谋略相较 ${m >= 0 ? '+' : '−'}${Math.abs(m)}`);
+    const allies = Object.keys(s.factions).filter(x => x !== f && x !== o.target && stance(s, o.target, x) === 'alliance').length;
+    const vass = Object.values(s.factions).filter(x => x.overlord === o.target && !x.defunct).length;
+    if (allies || vass) { score += 15; factors.push(`有盟友或下属可间 +15`); } else { score -= 20; factors.push('无隙可乘 −20'); }
+  }
   return { score, factors };
 }
 
@@ -628,7 +676,8 @@ function resolveEnvoy(s: GameState, f: string, o: Extract<Order, { kind: 'envoy'
   const r = rng.int(-10, 10);
   const total = score + r;
   const ok = total >= 55;
-  const aimText0 = o.aim === 'alliance' ? '结盟' : o.aim === 'truce' ? '停战' : '议和';
+  const aimText0 = AIM_NAME[o.aim];
+  if (o.aim === 'discord') return resolveDiscord(s, f, o, total, factors, r), null;
   // 差一点议成：对方开条件，要一笔银子（玩家一方由玩家定夺，电脑一方作罢）
   if (!ok && (total >= 45 || s.flags.counter_force) && f === s.player) {
     const silver = Math.round(Math.max(10000, (55 - total) * 4000 + 10000) / 1000) * 1000;
@@ -642,16 +691,51 @@ function resolveEnvoy(s: GameState, f: string, o: Extract<Order, { kind: 'envoy'
     if (f === s.player || o.target === s.player) report(s, { cat: '交涉', ok: false, urgent: f === s.player, node: t.capital, origin: s.factions[f]?.capital, text: `${charName(s, o.char)}出使${t.name}议${aimText0}，${charName(s, t.leader)}怒而扣留来使。（合计 ${total}，需 55）`, src: { kind: 'diplomacy', ref: o.id, turn: s.turn } });
     return null;
   }
-  const aimText = o.aim === 'alliance' ? '结盟' : o.aim === 'truce' ? '停战' : '议和';
+  const aimText = AIM_NAME[o.aim];
   const src = { kind: 'diplomacy' as const, ref: o.id, turn: s.turn };
   if (ok) {
     if (o.aim === 'alliance') setStanceExplicit(s, f, o.target, 'alliance');
+    else if (o.aim === 'passage') s.flags[pactKey('pass', f, o.target)] = s.turn + PACT_MONTHS;
+    else if (o.aim === 'trade') s.flags[pactKey('trade', f, o.target)] = s.turn + PACT_MONTHS;
     else setStanceExplicit(s, f, o.target, o.aim === 'truce' ? 'truce' : 'neutral', o.aim === 'truce' ? s.turn + 6 : undefined);
     adjustAtt(s, o.char, 'loyalty', 2, `出使${t.name}，${aimText}成功`);
   }
-  const text = `${charName(s, o.char)}出使${t.name}，${aimText}${ok ? '议成' : '未成'}。${ok && o.aim === 'alliance' ? '两家结为盟好，各守其城，互不相犯。' : ''}（${factors.join('，')}，临事 ${r >= 0 ? '+' : ''}${r}；合计 ${total}，需 55）`;
+  const text = `${charName(s, o.char)}出使${t.name}，${aimText}${ok ? '议成' : '未成'}。${ok && o.aim === 'alliance' ? '两家结为盟好，各守其城，互不相犯。' : ok && o.aim === 'passage' ? `一年之内，我军可经${t.short}之城行军运粮。` : ok && o.aim === 'trade' ? '两家开关互市一年，赋税各增五分。' : ''}（${factors.join('，')}，临事 ${r >= 0 ? '+' : ''}${r}；合计 ${total}，需 55）`;
   if (f === s.player || o.target === s.player) report(s, { cat: '交涉', node: t.capital, ok, origin: s.factions[f]?.capital, text, src });
   return null;
+}
+
+/** 赠礼之银折成遣使把握：每五千两 +3，至多 +15 */
+export const giftBonus = (silver: number) => Math.min(15, Math.round(silver / 5000) * 3);
+/** 某种所求此刻能不能提 */
+export function aimError(s: GameState, f: string, target: string, aim: EnvoyAim): string | null {
+  const st = stance(s, f, target);
+  if (aim === 'alliance' && st === 'alliance') return '已是盟友';
+  if ((aim === 'truce' || aim === 'peace') && st !== 'war') return '两家并未交战';
+  if (aim === 'passage') { if (st === 'war') return '交战之中，不会借道'; if (st === 'alliance') return '盟友之城本可通行'; if (pactOn(s, 'pass', f, target)) return '借道之约尚在'; }
+  if (aim === 'trade') { if (st === 'war') return '交战之中，不能互市'; if (pactOn(s, 'trade', f, target)) return '互市之约尚在'; }
+  return null;
+}
+/** 离间：对方若有盟友，拆散一家；否则若有下属，动摇其服从；不成则使者或被扣 */
+function resolveDiscord(s: GameState, f: string, o: Extract<Order, { kind: 'envoy' }>, total: number, factors: string[], r: number) {
+  const t = s.factions[o.target];
+  const src = { kind: 'diplomacy' as const, ref: o.id, turn: s.turn };
+  const ok = total >= 55;
+  const tail = `（${factors.join('，')}，临事 ${r >= 0 ? '+' : ''}${r}；合计 ${total}，需 55）`;
+  let text = '';
+  if (ok) {
+    const ally = Object.keys(s.factions).find(x => x !== f && x !== o.target && !s.factions[x].defunct && stance(s, o.target, x) === 'alliance');
+    const vass = Object.values(s.factions).filter(x => x.overlord === o.target && !x.defunct).sort((a, b) => (a.loyalty ?? 50) - (b.loyalty ?? 50))[0];
+    if (ally) { setStanceExplicit(s, o.target, ally, 'neutral'); text = `${charName(s, o.char)}潜入${t.name}行离间之计，${t.short}与${s.factions[ally].short}互相猜疑，盟约遂散。`; }
+    else if (vass) { vass.loyalty = Math.max(0, (vass.loyalty ?? 50) - 15); text = `${charName(s, o.char)}暗结${vass.name}，${vass.short}对${t.short}离心（服从 −15）。`; }
+    else text = `${charName(s, o.char)}至${t.name}，无隙可乘，空手而归。`;
+  } else {
+    const caught = total < 40 && rngFor(s.seed, 'discord', s.turn, o.id).chance(0.4);
+    const env = s.chars[o.char];
+    if (caught && env?.status === 'active') { env.status = 'captured'; env.captor = o.target; env.capturedAt = s.turn; env.location = t.capital; }
+    text = `${charName(s, o.char)}行离间之计不成${caught ? '，事泄被执' : ''}。`;
+  }
+  if (f === s.player || o.target === s.player) report(s, { cat: '交涉', ok, node: t.capital, origin: s.factions[f]?.capital, text: text + tail, src });
 }
 
 function setStanceExplicit(s: GameState, a: string, b: string, st: 'alliance' | 'truce' | 'neutral', until?: number) {

@@ -4,6 +4,7 @@
  * 点城墙按兵种定（步营登城、撞门，炮营轰墙，火器压制；守军守段、再点本段修城）。底栏只放看板（各营兵数士气）与全军号令。 */
 import type { GameState } from '../core/types';
 import type { BattleState } from '../core/battle';
+import { cardArt } from './cards';
 import { createSiege, stepSiege, aiCommands, command, drum, defDecision, attWithdraw, toBattleResult, runSiege, legal, segName, persuade, persuadeOdds, momentS, SEGMENTS, GATE_SEG, WALL_Y, type SUnit, type SOrder } from '../core/siege';
 import { createField, stepField, aiField, commandF, drumF, legalF, toFieldResult, runField, KIND_NAME, DUSK, momentF, useSkill, skillBlock, setFormation, SKILLS, FORMATIONS, type FUnit, type FOrder, type Formation } from '../core/field';
 import { SiegeView } from './siegeView';
@@ -485,7 +486,7 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
       }
       for (; lastEv < sim.events.length; lastEv++) onEvent(sim.events[lastEv]);
       // 战机：关键时刻停下来请你定夺（部将代打时也会）
-      if (!momentEl && !sim.over) { const m = ssim ? momentS(ssim, side) : momentF(fsim!, side); if (m) showMoment(m as unknown as { title: string; text: string; options: { label: string; desc: string; apply: (x: never) => void }[] }); }
+      if (!momentEl && !sim.over) { const m = ssim ? momentS(ssim, side) : momentF(fsim!, side); if (m) showMoment(m as unknown as { title: string; text: string; icon?: string; options: MOpt[] }); }
       if (now > sfxNext) { sfxNext = now + 1100; ambientSfx(); }
       if (sim.over && phase === 'fight') ending();
     }
@@ -540,27 +541,59 @@ export async function playRealtime(s: GameState, b0: BattleState, side: 'att' | 
   }
   let momentEl: HTMLElement | null = null;
   let momentPick: ((i: number) => void) | null = null;
-  function showMoment(m: { title: string; text: string; options: { label: string; desc: string; apply: (x: never) => void }[] }) {
+  type MOpt = { label: string; desc: string; icon?: string; odds?: number; apply: (x: never) => { ok: boolean; text: string } | void };
+  /** 战机：一手卡牌，每张一个对策，卡面写成算；选定后翻牌揭晓得手与否 */
+  function showMoment(m: { title: string; text: string; icon?: string; options: MOpt[] }) {
     const wasPaused = paused;
     paused = true;
     battleSfx.shout();
+    let done = false;
     const pick = (i: number) => {
-      const o = m.options[i]; if (!o || !momentEl) return;
+      const o = m.options[i]; if (!o || !momentEl || done) return;
+      done = true;
       click();
-      (o.apply as (x: unknown) => void)(sim);
-      say(`${m.title}：${o.label}`, 'good');
-      momentEl.remove(); momentEl = null; momentPick = null;
-      paused = wasPaused && !autoMe ? false : false;
-      renderUi();
+      const r = (o.apply as (x: unknown) => { ok: boolean; text: string } | void)(sim);
+      const ok = r ? r.ok : true;
+      const card = momentEl.querySelectorAll<HTMLElement>('.bm-card')[i];
+      momentEl.querySelectorAll<HTMLElement>('.bm-card').forEach((c, k) => { if (k !== i) c.classList.add('dim'); });
+      if (card) {
+        const seal = h('div', { class: 'bm-seal ' + (ok ? 'ok' : 'bad') }, ok ? '成' : '败');
+        card.append(seal);
+        if (!isReduced()) { gsap.fromTo(seal, { scale: 3, opacity: 0, rotate: -30 }, { scale: 1, opacity: 1, rotate: -12, duration: 0.3, ease: 'back.out(2)' }); gsap.to(card, { y: -16, scale: 1.06, duration: 0.25 }); }
+      }
+      const txt = r ? r.text : o.label;
+      const res = momentEl.querySelector('.bm-result'); if (res) { res.textContent = txt; res.className = 'bm-result ' + (ok ? 'ok' : 'bad'); }
+      if (r && o.odds !== undefined && o.odds < 1) showBanner(`${ok ? '得手' : '失手'} · ${txt}`, ok ? 'good' : 'bad'); else say(`${m.title}：${txt}`, 'good');
+      setTimeout(() => {
+        momentEl?.remove(); momentEl = null; momentPick = null;
+        paused = wasPaused && !autoMe ? false : false;
+        renderUi();
+      }, isReduced() ? 300 : 1300);
     };
     momentPick = pick;
-    momentEl = h('div', { class: 'bmoment' },
-      h('div', { class: 'bm-h' }, ic('urgent'), h('b', null, `战机 · ${m.title}`)),
-      h('p', null, m.text),
-      h('div', { class: 'bm-opts' }, ...m.options.map((o, i) => h('button', { class: 'bm-opt', 'data-moment': String(i), onclick: () => pick(i) }, h('i', null, String(i + 1)), h('b', null, o.label), h('small', null, o.desc)))));
+    momentEl = h('div', { class: 'bmoment cards' },
+      h('div', { class: 'bm-h' }, ic(m.icon ?? 'urgent'), h('b', null, m.title), h('small', null, m.text)),
+      h('div', { class: 'bm-cards' }, ...m.options.map((o, i) => {
+        const certain = o.odds === undefined || o.odds >= 1;
+        const p = certain ? 100 : Math.round((o.odds ?? 0) * 100);
+        return h('button', { class: 'bm-card' + (certain ? ' sure' : p >= 60 ? ' hi' : p < 35 ? ' lo' : ''), 'data-moment': String(i), 'data-tip': o.desc, onclick: () => pick(i) },
+          h('div', { class: 'bm-art' }, h('img', { src: cardArt(o.icon ?? 'attack', certain ? '#6d6f75' : p >= 60 ? '#8c6a35' : p < 35 ? '#7d1a12' : '#b0702a', i), alt: '', draggable: 'false' }), h('i', { class: 'bm-key' }, String(i + 1))),
+          h('b', { class: 'bm-label' }, o.label),
+          h('div', { class: 'bm-odds' }, certain ? '必行' : `成算 ${p}%`),
+          h('div', { class: 'bm-bar' }, h('i', { style: { width: p + '%' } })));
+      })),
+      h('div', { class: 'bm-result' }, '悬停看各策得失 · 按 1—' + m.options.length + ' 速选'));
     stage.append(momentEl);
-    if (!isReduced()) gsap.from(momentEl, { opacity: 0, y: 20, scale: 0.94, duration: 0.3, ease: 'back.out(2)' });
+    if (!isReduced()) gsap.from(momentEl.querySelectorAll('.bm-card'), { y: 60, opacity: 0, duration: 0.35, stagger: 0.08, ease: 'back.out(1.6)', clearProps: 'transform,opacity' });
     renderUi();
+    // 部将代打：亮出战机给你看，你不选，部将片刻后自择——成算五成以上者冒险，否则取稳妥之策
+    if (autoMe) {
+      const risky = m.options.map((o, i) => ({ i, p: o.odds ?? 1 })).filter(x => x.p < 1).sort((a, b) => b.p - a.p)[0];
+      const safe = m.options.findIndex(o => (o.odds ?? 1) >= 1);
+      const k = risky && (risky.p >= 0.5 || safe < 0) ? risky.i : Math.max(0, safe);
+      const res = momentEl.querySelector('.bm-result'); if (res) res.textContent = `部将将择“${m.options[k].label}”……（可抢先选）`;
+      setTimeout(() => { if (!done && momentEl) pick(k); }, isReduced() ? 400 : 1800);
+    }
   }
   function showBanner(text: string, kind: 'good' | 'bad') {
     banner.textContent = text; banner.className = 'sbanner ' + kind;

@@ -46,6 +46,8 @@ export interface Polity {
 }
 
 export type Stance = 'war' | 'neutral' | 'truce' | 'alliance' | 'overlord' | 'vassal';
+/** 遣使所求：结盟、停战、议和、借道、互市、离间 */
+export type EnvoyAim = 'alliance' | 'truce' | 'peace' | 'passage' | 'trade' | 'discord';
 export interface Faction {
   id: FactionId;
   name: string;
@@ -213,7 +215,10 @@ export type Order =
   | { id: string; kind: 'reinforce'; node: NodeId; army: ArmyId; troops: number }
   /** 裁兵：裁撤本城驻军（army 缺省）或在本城的某军若干人 */
   | { id: string; kind: 'disband'; node: NodeId; army?: ArmyId; troops: number }
-  | { id: string; kind: 'envoy'; char: CharId; target: FactionId; aim: 'alliance' | 'truce' | 'peace' }
+  | { id: string; kind: 'envoy'; char: CharId; target: FactionId; aim: EnvoyAim }
+  /** 赠礼：送银结好；绝盟：撕毁盟约，复归中立 */
+  | { id: string; kind: 'gift'; target: FactionId; silver: number }
+  | { id: string; kind: 'breakAlly'; target: FactionId }
   | { id: string; kind: 'persuade'; char: CharId; node: NodeId }
   | { id: string; kind: 'command'; vassal: FactionId; army: ArmyId; order: ArmyOrder; silver: number }
   | { id: string; kind: 'reward'; vassal: FactionId; silver: number }

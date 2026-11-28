@@ -66,6 +66,18 @@ export function harvestFactor(turn: number): number {
   const lm = lunarOf(turn);
   return lm.month >= 7 && lm.month <= 9 ? 1.7 : lm.month >= 5 && lm.month <= 6 ? 0.9 : 0.75;
 }
+/** 互市之约：每一家（未交战）赋税 +5%，至多三家 */
+export function tradePacts(s: GameState, f: string): number {
+  let n = 0;
+  for (const [k, v] of Object.entries(s.flags)) {
+    if (!k.startsWith('trade_') || Number(v) <= s.turn) continue;
+    const [a, b] = k.slice(6).split('|');
+    if (a !== f && b !== f) continue;
+    const other = a === f ? b : a;
+    if (s.factions[other] && !s.factions[other].defunct && !hostile(s, f, other)) n++;
+  }
+  return Math.min(3, n);
+}
 export function monthlyIncome(s: GameState, c: City): { silver: number; grain: number; trade: number } {
   const harvest = harvestFactor(s.turn);
   const ge = govEffects(s, c);
@@ -74,6 +86,7 @@ export function monthlyIncome(s: GameState, c: City): { silver: number; grain: n
   // 民心四成以下，赋税渐收不上来（至零时只得五成）；加派之利随民心而尽，民心三成以下越加越少
   silver *= c.minxin >= 40 ? 1 : 0.5 + c.minxin / 80;
   if (c.policy === 'levy') silver *= 1 + 0.5 * Math.min(1, c.minxin / 30);
+  silver *= 1 + 0.05 * tradePacts(s, c.controller);
   let grain = c.pop * (c.agri / 100) * (0.55 + c.minxin / 220) * 260 * harvest * ge.grainMul;
   const trade = c.trade ? c.trade * 2600 * (c.commerce / 100) : 0;
   if (sieged) { silver *= 0.1; grain *= 0.15; }

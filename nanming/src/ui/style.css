@@ -1427,3 +1427,29 @@ html.reduced *:not(#toast, #toast *), html.reduced *:not(#toast, #toast *)::befo
 #fall .fall-text small { display: block; color: var(--gold-2); font-size: 14px; letter-spacing: 0.15em; margin-top: 6px; }
 #fall .fall-text p { color: rgba(243, 230, 200, 0.85); font-size: 15px; line-height: 1.7; margin: 10px 0 0; }
 #fall .fall-skip { position: relative; color: var(--dim); font-size: 12px; }
+
+/* 战机：卡牌对策 */
+.bmoment.cards { width: min(640px, 94%); padding: 12px 14px 12px; }
+.bmoment.cards .bm-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bmoment.cards .bm-h .ic { width: 24px; height: 24px; color: var(--gold); }
+.bmoment.cards .bm-h b { font-family: var(--brush); font-size: 24px; color: var(--gold-2); }
+.bmoment.cards .bm-h small { color: var(--text); font-size: 13px; }
+.bm-cards { display: flex; justify-content: center; gap: 12px; margin-top: 10px; perspective: 900px; flex-wrap: wrap; }
+.bm-card { position: relative; width: 150px; padding: 5px 5px 8px; border-radius: 12px; border: 2px solid #8c6a35; background: linear-gradient(180deg, #3b2c20, #1c140e 60%); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6); cursor: pointer; display: flex; flex-direction: column; gap: 4px; text-align: center; transition: border-color 0.18s, opacity 0.2s; color: var(--text); }
+.bm-card:hover, .bm-card:focus-visible { border-color: var(--gold-2); box-shadow: 0 0 18px rgba(240, 207, 134, 0.45), 0 8px 20px rgba(0, 0, 0, 0.6); outline: none; }
+.bm-card.hi { border-color: #c9a24a; } .bm-card.lo { border-color: #8f2a1f; } .bm-card.sure { border-color: #6d6f75; }
+.bm-card.dim { opacity: 0.3; pointer-events: none; }
+.bm-art { position: relative; height: 74px; border-radius: 8px; overflow: hidden; }
+.bm-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bm-key { position: absolute; left: 4px; top: 4px; width: 20px; height: 20px; border-radius: 50%; background: rgba(0, 0, 0, 0.6); color: var(--gold-2); font-style: normal; font-size: 12px; font-weight: 900; display: grid; place-items: center; }
+.bm-label { font-size: 14px; line-height: 1.25; min-height: 36px; display: flex; align-items: center; justify-content: center; }
+.bm-odds { font-size: 15px; font-weight: 900; color: var(--gold-2); }
+.bm-card.lo .bm-odds { color: #ff9a8a; } .bm-card.sure .bm-odds { color: var(--dim); font-size: 13px; }
+.bm-bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.bm-bar i { display: block; height: 100%; background: linear-gradient(90deg, #b98a3c, #f5d58c); }
+.bm-card.lo .bm-bar i { background: linear-gradient(90deg, #7d1a12, #c8352a); } .bm-card.sure .bm-bar i { background: #6d6f75; }
+.bm-seal { position: absolute; right: -10px; top: -10px; width: 46px; height: 46px; border-radius: 8px; border: 3px solid #f0cf86; color: #fff6e2; font-family: var(--brush); font-size: 28px; display: grid; place-items: center; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6); transform: rotate(-12deg); z-index: 3; }
+.bm-seal.ok { background: rgba(168, 120, 32, 0.95); } .bm-seal.bad { background: rgba(200, 53, 42, 0.95); }
+.bm-result { margin-top: 8px; text-align: center; font-size: 12px; color: var(--dim); min-height: 18px; }
+.bm-result.ok { color: #ffe08a; font-size: 15px; font-weight: 900; } .bm-result.bad { color: #ff9a8a; font-size: 15px; font-weight: 900; }
+@media (max-width: 560px) { .bm-card { width: 31%; min-width: 96px; } .bm-art { height: 56px; } }

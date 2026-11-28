@@ -1,5 +1,5 @@
 /* 界面主控：游戏式 HUD。图标 + 大数字 + 短标签，细节点开才看。 */
-import type { GameState, Order, NodeId, ArmyOrder, Policy, ReportEntry, LedgerEntry, Character, ReportCat, Army } from '../core/types';
+import type { GameState, Order, NodeId, ArmyOrder, Policy, ReportEntry, LedgerEntry, Character, ReportCat, Army, EnvoyAim } from '../core/types';
 import { MapRenderer, nodePt, armyPt, roadPts, legFrac } from '../render/map';
 import { h, $, clear, fmt, wan, signed } from './dom';
 import { iconSvg } from './icons';
@@ -29,7 +29,7 @@ import { monthSummary, type Delta } from '../core/summary';
 import { cardShow, type ShowCard } from './cards';
 import { popTip, devTip, devStep, reached, MILESTONE_NAME, policyOutlook, advisePolicy, recruitSilverOf, type DevKey } from '../core/develop';
 import { POLICY_NAME, POLICY_HINT, upkeepOf, monthlyIncome, cityForecast, yearOutlook, reliefGrain, GRAIN_PER_SOLDIER, SILVER_PER_SOLDIER, SILVER_PER_FIELD_SOLDIER, forageShare, supplyChoiceError, supplyLegOf, RECRUIT_SILVER, DISBAND_SILVER, storeOf, grainPrice, marketCap, tradeQuote, loanAmount } from '../core/economy';
-import { projectOrders, validateQueued, cascadeInvalid, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
+import { projectOrders, validateQueued, giftBonus, pactOn, aimError, AIM_NAME, cascadeInvalid, envoyMonths, orderBudget, orderCost, ordersUsed, describeOrder, maxRecruit, recruitLeft, obedience, persuadeChance, envoyScore, armyOrderText } from '../core/orders';
 import { browserKV, saveTo, loadFrom, serialize, deserialize, SLOTS, type Slot } from '../core/save';
 import { yangzhouSiegeState } from '../data/presets';
 import { createGame } from '../data/scenario1644';
@@ -63,7 +63,7 @@ const FIELD_NAME: Record<string, string> = { grain: '仓粮', silver: '府库', 
 const FIELD_ICON: Record<string, string> = { grain: 'grain', silver: 'silver', pop: 'pop', minxin: 'minxin', garrison: 'troops', wall: 'wall', order: 'order', agri: 'agri', commerce: 'commerce', edu: 'edu' };
 const CAT_ICON: Record<ReportCat, string> = { 急报: 'urgent', 军报: 'war', 易主: 'capture', 交涉: 'envoy', 内政: 'admin', 人事: 'person', 史事: 'event', 线索: 'clue' };
 const POLICY_ICON: Record<Policy, string> = { balanced: 'order', agri: 'agri', commerce: 'commerce', fortify: 'wall', relief: 'minxin', edu: 'edu', levy: 'reward' };
-const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', supply: 'grain', conduct: 'policy', evacuate: 'exit', reinforce: 'reinforce', disband: 'troops', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army', seek: 'chars', prisoner: 'prisoner' };
+const ORDER_ICON: Record<Order['kind'], string> = { trade: 'grain', loan: 'silver', policy: 'policy', appoint: 'appoint', transfer: 'transfer', recruit: 'recruit', army: 'army', supply: 'grain', conduct: 'policy', evacuate: 'exit', gift: 'reward', breakAlly: 'close', reinforce: 'reinforce', disband: 'troops', envoy: 'envoy', persuade: 'persuade', command: 'urgent', reward: 'reward', independence: 'crown', war: 'war', raise: 'army', seek: 'chars', prisoner: 'prisoner' };
 const HINT_KEY = 'nanming:hint';
 
 /** 选势力卡片：难度、一句处境、目标 */
@@ -808,6 +808,7 @@ export class App {
       this.lensEl,
       ib('btn-report', 'report', '军情（R）', () => this.toggleReport(), { badge: unread }),
       ib('btn-transit', 'hourglass', '在途：运送、出使、行军', () => this.openTransit(), { badge: transitOf(s).length }),
+      ib('btn-diplomacy', 'envoy', '外交：结盟 · 借道 · 互市 · 离间', () => this.openDiplomacy()),
       ib('btn-factions', 'factions', '天下', () => this.openFactions()),
       ib('btn-chars', 'chars', '人物', () => this.openChars()),
       ib('btn-menu', 'menu', '菜单', () => this.toggleMenu(), { on: !$('#menu').classList.contains('hidden') }),
@@ -1754,25 +1755,77 @@ export class App {
   }
 
 
-  formEnvoy(target: string, aim0?: 'alliance' | 'truce' | 'peace') {
+  /** 赠礼：三档银两，越厚把握越高 */
+  formGift(target: string) {
+    const s = this.s!, cap = s.cities[s.factions[s.player].capital];
+    const cards: GameCard[] = [5000, 20000, 50000].map((v, i) => ({ id: String(v), title: `${wan(v)} 两`, art: cardArt('silver', '#a8781f', i), color: '#a8781f',
+      chips: [{ icon: 'envoy', text: `把握 +${giftBonus(v)}`, tone: 'good' }, { icon: 'war', text: `主战 −${Math.min(15, Math.round(v / 4000))}`, tone: 'good' }],
+      disabled: !cap || cap.silver < v ? '治所府库不足' : undefined }));
+    this.modal('reward', `赠礼 · ${s.factions[target].short}`, '一年之内议事更易', [cardHand(cards, k => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'gift', target, silver: +k }); }, { stampText: '赠' })], [this.cancelBtn()], 'wide');
+  }
+
+  /** 外交：各家势力卡（君主头像、关系、所立之约），点一家进其对策 */
+  openDiplomacy() {
+    const s = this.s!;
+    const power = (id: string) => Object.values(s.cities).filter(c => c.controller === id).length;
+    // 对手（各自为主者）在前、按城多寡；本方下属排在最后
+    const list = Object.values(s.factions).filter(f => f.id !== s.player && !f.defunct && f.id !== 'local' && f.id !== 'helan')
+      .sort((a, b) => Number(a.overlord === s.player) - Number(b.overlord === s.player) || Number(!!a.overlord) - Number(!!b.overlord) || power(b.id) - power(a.id));
+    const ST_IC: Record<string, string> = { war: 'war', neutral: 'hold', truce: 'hourglass', alliance: 'envoy' };
+    const cards: GameCard[] = list.map(f => {
+      const st = f.overlord === s.player ? 'overlord' : stance(s, s.player, f.id);
+      const lead = s.chars[f.leader];
+      const cities = Object.values(s.cities).filter(c => c.controller === f.id).length;
+      const pacts: Chip[] = [];
+      if (pactOn(s, 'pass', s.player, f.id)) pacts.push({ icon: 'move', text: '借道', tone: 'good' });
+      if (pactOn(s, 'trade', s.player, f.id)) pacts.push({ icon: 'commerce', text: '互市', tone: 'good' });
+      if (pactOn(s, 'goodwill', s.player, f.id)) pacts.push({ icon: 'reward', text: '结好', tone: 'good' });
+      return { id: f.id, title: f.name.length <= 5 ? f.name : f.short, sub: lead?.name ?? '', art: lead ? portrait(lead, f.color, f.polity) : cardArt('factions', f.color, cities), portrait: !!lead, color: f.color, badge: `${cities} 城`,
+        chips: [{ icon: ST_IC[st] ?? 'crown', text: STANCE_NAME[st] ?? st, tone: st === 'war' ? 'bad' : st === 'alliance' || st === 'overlord' ? 'good' : 'plain' }, ...pacts] };
+    });
+    this.modal('envoy', '外交', '点一家，定对策', [cardHand(cards, id => { this.closeModal(); setTimeout(() => s.factions[id].overlord === s.player ? this.formReward(id) : this.formEnvoy(id), 0); }, { stampText: '使' })], [this.cancelBtn()], 'wide');
+  }
+
+  formEnvoy(target: string, aim0?: EnvoyAim) {
     const s = this.s!;
     const list = this.freeChars().sort((a, b) => b.ab.wai - a.ab.wai);
-    if (!list.length) { this.toast('无人可出使', 'close'); return; }
     const st = stance(s, s.player, target);
     const tf = s.factions[target];
     if (!aim0) {
-      const aims: GameCard[] = [{ id: 'alliance', title: '结盟', art: cardArt('envoy', '#3f7a4a', 1), chips: [{ icon: 'city', text: '各守其城' }, { icon: 'factions', text: '互不相攻', tone: 'good' }], note: '盟约只是一时之计：盟友之城不算你的，天下只能归于一家；时移势易，盟友也会背盟。' }];
-      if (st === 'war') aims.push({ id: 'truce', title: '停战', art: cardArt('hourglass', '#8c6a35', 2), chips: [{ icon: 'hourglass', text: '六个月' }], note: '期满复归交战。' },
-        { id: 'peace', title: '议和', art: cardArt('ok', '#3f6f8f', 3), chips: [{ icon: 'war', text: '罢兵', tone: 'good' }], note: '两家不再交兵。' });
+      // 对策卡：遣使所求（写把握：按可派之人中最好者估）＋赠礼、绝盟、宣战
+      const best = (aim: EnvoyAim) => list.length ? Math.max(...list.slice(0, 6).map(c => envoyScore(s, s.player, { id: 'x', kind: 'envoy', char: c.id, target, aim }).score)) : 0;
+      const A: [EnvoyAim, string, string, Chip[]][] = [
+        ['alliance', 'envoy', '#3f7a4a', [{ icon: 'factions', text: '互不相攻', tone: 'good' }]],
+        ['truce', 'hourglass', '#8c6a35', [{ icon: 'hourglass', text: '停战半年' }]],
+        ['peace', 'ok', '#3f6f8f', [{ icon: 'war', text: '罢兵', tone: 'good' }]],
+        ['passage', 'move', '#6d6f75', [{ icon: 'move', text: '一年通行', tone: 'good' }]],
+        ['trade', 'commerce', '#b0702a', [{ icon: 'silver', text: '赋税 +5%', tone: 'good' }]],
+        ['discord', 'ambush', '#5a3a6a', [{ icon: 'factions', text: '拆盟 · 动摇下属' }]],
+      ];
+      const cards: GameCard[] = A.map(([aim, icon, col, chips], i) => {
+        const err = list.length ? aimError(s, s.player, target, aim) : '无人可出使';
+        const sc = err ? 0 : Math.round(best(aim));
+        return { id: aim, title: AIM_NAME[aim], art: cardArt(icon, col, i), color: col, chips: [...chips, ...(err ? [] : [{ icon: sc >= 55 ? 'ok' : sc >= 45 ? 'silver' : 'close', text: sc >= 55 ? '可望' : sc >= 45 ? '或要开价' : '难成', tone: sc >= 55 ? 'good' : sc >= 45 ? 'plain' : 'bad' } as Chip])], badge: err ? undefined : `把握 ${sc}`, disabled: err ?? undefined };
+      });
+      cards.push({ id: 'gift', title: '赠礼', art: cardArt('reward', '#a8781f', 7), color: '#a8781f', chips: [{ icon: 'silver', text: '送银结好', tone: 'plain' }, { icon: 'envoy', text: '议事更易', tone: 'good' }] });
+      if (st === 'alliance') cards.push({ id: 'break', title: '绝盟', art: cardArt('close', '#7d1a12', 8), color: '#7d1a12', chips: [{ icon: 'war', text: '对方切齿', tone: 'bad' }] });
+      if (st !== 'war') cards.push({ id: 'war', title: '宣战', art: cardArt('war', '#7d1a12', 9), color: '#7d1a12', chips: [{ icon: 'war', text: '即刻交兵', tone: 'bad' }] });
       this.sceneNext = { kind: 'parley', opts: { a: this.party(s.player), b: this.party(target), seed: s.turn } };
-      this.modal('envoy', `遣使 · ${tf.short}`, `关系：${STANCE_NAME[st] ?? st} · 先定所求`, [cardHand(aims, k => { this.closeModal(); this.formEnvoy(target, k as 'alliance' | 'truce' | 'peace'); }, { stampText: '议' })], [this.cancelBtn()], 'wide');
+      this.modal('envoy', `外交 · ${tf.short}`, `${STANCE_NAME[st] ?? st}${pactOn(s, 'pass', s.player, target) ? ' · 借道中' : ''}${pactOn(s, 'trade', s.player, target) ? ' · 互市中' : ''}`, [cardHand(cards, k => {
+        this.closeModal();
+        if (k === 'gift') return void setTimeout(() => this.formGift(target), 0);
+        if (k === 'break') return void this.addOrder({ id: this.newOrderId(), kind: 'breakAlly', target });
+        if (k === 'war') return void this.addOrder({ id: this.newOrderId(), kind: 'war', target });
+        setTimeout(() => this.formEnvoy(target, k as EnvoyAim), 0);
+      }, { stampText: '议' })], [{ label: '诸家', icon: 'factions', onclick: () => { setTimeout(() => this.openDiplomacy(), 0); } }, this.cancelBtn()], 'wide');
       return;
     }
+    if (!list.length) { this.toast('无人可出使', 'close'); return; }
     const fc = s.factions[s.player].color, pol = s.factions[s.player].polity;
     const cards: GameCard[] = list.map(c => { const r = envoyScore(s, s.player, { id: 'x', kind: 'envoy', char: c.id, target, aim: aim0 }); const m = envoyMonths(s, c.id, tf.capital); return { id: c.id, title: c.name, sub: c.title, art: portrait(c, fc, pol), portrait: true,
       badge: `把握 ${Math.round(r.score)}`, chips: [{ icon: 'envoy', text: `外交 ${c.ab.wai}`, tone: c.ab.wai >= 60 ? 'good' : 'plain' }, { icon: r.score >= 55 ? 'ok' : r.score >= 45 ? 'silver' : 'close', text: r.score >= 55 ? '可望' : r.score >= 45 ? '或要开价' : '难成', tone: r.score >= 55 ? 'good' : r.score >= 45 ? 'plain' : 'bad' }, { icon: 'hourglass', text: m <= 1 ? '下月回报' : `约 ${m} 月后回报` }], note: envoyNote(r.factors, c.name) }; });
     this.sceneNext = { kind: 'parley', opts: { a: this.party(s.player), b: this.party(target), seed: s.turn } };
-    this.modal('envoy', `遣使 · ${tf.short} · ${{ alliance: '结盟', truce: '停战', peace: '议和' }[aim0]}`, `选使者 · 把握 55 以上可望议成（临事有上下十分的变数）；45—55 对方多半开价要银；交战中谈崩，使者约三成被扣`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'envoy', char: id, target, aim: aim0 }); }, { stampText: '使' })], [{ label: '换一种所求', icon: 'envoy', onclick: () => { setTimeout(() => this.formEnvoy(target), 0); } }, this.cancelBtn()], 'wide');
+    this.modal('envoy', `遣使 · ${tf.short} · ${AIM_NAME[aim0]}`, `选使者 · 把握 55 可成`, [cardHand(cards, id => { this.closeModal(); this.addOrder({ id: this.newOrderId(), kind: 'envoy', char: id, target, aim: aim0 }); }, { stampText: '使' })], [{ label: '换一种所求', icon: 'envoy', onclick: () => { setTimeout(() => this.formEnvoy(target), 0); } }, this.cancelBtn()], 'wide');
   }
 
 

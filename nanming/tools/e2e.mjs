@@ -82,6 +82,7 @@ async function nextMonth(manualBattle = false, probe = null) {
       if (!fall) fall = await text('#fall');
       await page.click('#fall', { timeout: 1000 }).catch(() => {}); await wait(500); continue;
     }
+    if (await visible('.bm-card')) { await page.click('.bm-card', { timeout: 1000 }).catch(() => {}); await wait(1500); continue; }
     if (await visible('#summary-ok')) {
       if (!summary) summary = { tiles: await page.locator('#month-summary .res .gcard').count(), text: await text('#modal'), tips: await page.evaluate(() => [...document.querySelectorAll('#month-summary .gc-chip')].map(e => e.dataset.tip).join(',')) };
       await page.click('#summary-ok', { timeout: 1000 }).catch(() => {}); await wait(200); continue;
@@ -156,6 +157,15 @@ try {
     check('确认后两道一起撤去', (await page.evaluate(() => NM.orders.filter(o => o.id === 'xl' || o.id === 'xr').length)) === 0);
     await page.evaluate(d => { NM.s.cities.suzhou.silver = d.silver; NM.orders = d.keep; NM.renderOrders(); NM.renderTop(); }, dep);
   }
+  // 外交：顶栏“外交”→ 诸家头像卡 → 一家的对策卡（结盟、借道、互市、离间、赠礼……）
+  await page.click('#btn-diplomacy');
+  await wait(400);
+  check('外交：诸家以头像卡呈现', (await page.locator('#modal .gcard.pc').count()) >= 3);
+  await page.click('#modal [data-card="shun"]');
+  await wait(900);
+  check('一家的对策卡：结盟、借道、互市、离间、赠礼', (await page.locator('#modal [data-card="passage"]').count()) === 1 && (await page.locator('#modal [data-card="trade"]').count()) === 1 && (await page.locator('#modal [data-card="discord"]').count()) === 1 && (await page.locator('#modal [data-card="gift"]').count()) === 1);
+  await page.keyboard.press('Escape');
+  await wait(150);
   // 撤离：退往何城、带走留下各几何
   await page.evaluate(() => NM.formEvacuate('yangzhou'));
   await wait(300);
@@ -551,8 +561,10 @@ try {
       check('底栏有战法按钮（一战一次）', (await page.locator('#battle-ui [id^="skill-"]').count()) >= 1);
       await page.evaluate(() => { NM_siege.sim.resolve[NM_siege.view.o.me] = 30; });
       await page.waitForSelector('.bmoment', { timeout: 4000 }).catch(() => {});
-      check('关键时刻弹出战机，停下请你定夺', await visible('.bmoment') && (await page.locator('.bm-opt').count()) >= 2);
-      await page.click('.bm-opt').catch(() => {}); await wait(200);
+      check('关键时刻弹出战机卡牌，卡上写成算', await visible('.bmoment') && (await page.locator('.bm-card').count()) >= 2 && /成算|必行/.test(await text('.bmoment')));
+      await page.click('.bm-card').catch(() => {}); await wait(500);
+      check('择定后翻牌揭晓成败', await visible('.bm-seal'));
+      await wait(1300);
       check('择定战机后继续', !(await visible('.bmoment')));
     }
     check(`${K}底栏各营看板只看不点（不是按钮）`, (await page.locator('#battle-ui .ucard').count()) >= 4 && (await page.locator('#battle-ui button.ucard').count()) === 0);

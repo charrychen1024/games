@@ -85,11 +85,40 @@ describe('战机', () => {
     const m = momentF(sim, 'att');
     expect(m?.id).toBe('waver');
     const before = sim.resolve.att;
-    m!.options[0].apply(sim);
-    expect(sim.resolve.att).toBeGreaterThan(before);
+    const o = m!.options[0];
+    expect(o.odds).toBeGreaterThan(0); expect(o.odds).toBeLessThan(1);   // 主将亲临有成有败
+    const r = o.apply(sim)!;
+    if (r.ok) expect(sim.resolve.att).toBeGreaterThan(before); else expect(sim.buff.att.wounded).toBe(1);
+    expect(r.text.length).toBeGreaterThan(0);
     sim.resolve.att = 30;
     expect(momentF(sim, 'att')?.id).not.toBe('waver');
   });
+  it('战机按情形而生、各场不同：丘陵有争高地，雨天火器营有湿火药，强将会阵前搦战', () => {
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 20; seed++) for (const [terrain, weather] of [['hills', 'clear'], ['plain', 'rain'], ['plain', 'clear']] as const) {
+      const b = { ...fieldB(seed), terrain, weather };
+      b.def = { ...b.def, tong: 80 };
+      const sim = createField(b as any);
+      for (let k = 0; k < 60; k++) { run(sim, 5); const m = momentF(sim, 'att'); if (m) seen.add(m.id); if (sim.over) break; }
+    }
+    expect(seen.has('height')).toBe(true);
+    expect(seen.has('duel')).toBe(true);
+    expect(seen.has('rain')).toBe(true);
+    expect(seen.size).toBeGreaterThanOrEqual(5);
+  }, 60000);
+  it('成败有别：同一对策，成算高者多半得手', () => {
+    let okHi = 0, okLo = 0;
+    for (let seed = 1; seed <= 30; seed++) {
+      for (const tong of [90, 20]) {
+        const sim = createField(fieldB(seed)); stepField(sim, 6);
+        sim.att.tong = tong; sim.resolve.att = 30;
+        const m = momentF(sim, 'att')!;
+        const r = m.options[0].apply(sim)!;
+        if (r.ok) { if (tong === 90) okHi++; else okLo++; }
+      }
+    }
+    expect(okHi).toBeGreaterThan(okLo + 5);
+  }, 60000);
   it('攻城：城门一破，攻方得“全军突入”之机', () => {
     const b = createBattle({ id: 's', kind: 'siege', node: 'x', nodeName: '某城', terrain: 'city', weather: 'clear', att: side('攻', 30000), def: side('守', 8000, {}, true), wall: 60, seed: 3 });
     const sim = createSiege(b);
